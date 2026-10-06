@@ -1,4 +1,8 @@
+import { useLiveQuery } from 'dexie-react-hooks'
 import { useEffect, useMemo, useState } from 'react'
+import { Icon } from '../components/Icon'
+import { PageHeader } from '../components/Page'
+import { TabPanel, Tabs } from '../components/Tabs'
 import { TocPicker } from '../components/TocPicker'
 import { loadCatalog, searchCatalog, type CatalogBook } from '../lib/content/catalog'
 import { getTree, LIBRARIES, type Library, type TocNode } from '../lib/content/libretexts'
@@ -6,7 +10,6 @@ import {
   buildLibreTextsSource,
   buildPastedSource,
   resolveUrl,
-  sourceCharacterCount,
   type ResolvedUrl,
 } from '../lib/content/sources'
 import { ITEM_TYPE_LABELS, ITEM_TYPES, type ItemType } from '../lib/generation/schema'
@@ -17,57 +20,53 @@ import { navigate } from '../router'
 
 type SourceTab = 'search' | 'url' | 'paste'
 
-export function Create({ reuseSourceId }: { reuseSourceId?: string }) {
-  const [source, setSource] = useState<StoredSource | null>(null)
-
-  useEffect(() => {
-    if (reuseSourceId) db.sources.get(reuseSourceId).then((found) => found && setSource(found))
-  }, [reuseSourceId])
-
-  return (
-    <div className="page">
-      <h1>Create a question set</h1>
-      <p className="lede">
-        Pick LibreTexts content, choose question types, and generate. Questions are saved in this browser as they are
-        written; review them, then download a QTI file to import into ADAPT.
-      </p>
-      {source ? (
-        <Configure source={source} onBack={() => setSource(null)} />
-      ) : (
-        <SourceStep onSource={setSource} />
-      )}
-    </div>
-  )
+// Step 1 lives at #/, step 2 at #/new/<sourceId>, so Back returns to the
+// source choice and a saved source can be reused for a fresh set.
+export function Create({ sourceId }: { sourceId?: string }) {
+  return sourceId ? <ConfigureStep sourceId={sourceId} /> : <SourceStep />
 }
 
 // ---------------------------------------------------------------- step 1
 
-function SourceStep({ onSource }: { onSource: (source: StoredSource) => void }) {
+const SOURCE_TABS = [
+  ['search', 'Find a book'],
+  ['url', 'Paste a link'],
+  ['paste', 'Paste text'],
+] as const
+
+function SourceStep() {
   const [tab, setTab] = useState<SourceTab>('search')
+  // Focus starts in the search box, but arrowing back to its tab later must
+  // leave focus on the tab.
+  const [switched, setSwitched] = useState(false)
+  const onSource = (source: StoredSource) => navigate(`/new/${source.id}`)
   return (
-    <section className="card">
-      <h2>1. Choose the source</h2>
-      <div className="tabs" role="tablist">
-        {(
-          [
-            ['search', 'Find a book'],
-            ['url', 'Paste a LibreTexts link'],
-            ['paste', 'Paste text'],
-          ] as const
-        ).map(([id, label]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>
-            {label}
-          </button>
-        ))}
-      </div>
-      {tab === 'search' && <BookSearch onSource={onSource} />}
-      {tab === 'url' && <UrlSource onSource={onSource} />}
-      {tab === 'paste' && <PasteSource onSource={onSource} />}
-    </section>
+    <>
+      <PageHeader
+        eyebrow="New question set · Step 1 of 2"
+        title="Choose textbook pages"
+        lede="Questions are written only from the pages you choose."
+      />
+      <Tabs
+        label="How to choose pages"
+        tabs={SOURCE_TABS}
+        selected={tab}
+        onSelect={(next) => {
+          setTab(next)
+          setSwitched(true)
+        }}
+        panelId="source-panel"
+      />
+      <TabPanel className="tab-panel" panelId="source-panel" selected={tab}>
+        {tab === 'search' && <BookSearch onSource={onSource} autoFocus={!switched} />}
+        {tab === 'url' && <UrlSource onSource={onSource} />}
+        {tab === 'paste' && <PasteSource onSource={onSource} />}
+      </TabPanel>
+    </>
   )
 }
 
-function BookSearch({ onSource }: { onSource: (source: StoredSource) => void }) {
+function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) => void; autoFocus: boolean }) {
   const [books, setBooks] = useState<CatalogBook[] | null>(null)
   const [snapshot, setSnapshot] = useState('')
   const [query, setQuery] = useState('')
@@ -134,34 +133,48 @@ function BookSearch({ onSource }: { onSource: (source: StoredSource) => void }) 
   if (book) {
     return (
       <div>
-        <button type="button" className="link" onClick={() => setBook(null)}>
-          ← Back to results
+        <button type="button" className="link back-link text-link" onClick={() => setBook(null)}>
+          <Icon name="arrow-left" size={18} /> Back to search results
         </button>
-        <h3>{book.title}</h3>
+        <h2>{book.title}</h2>
         <p className="muted">
           {book.author && `${book.author} · `}
-          {LIBRARIES[book.library]} · <a href={book.url} target="_blank" rel="noreferrer">Open on LibreTexts</a>
+          {LIBRARIES[book.library]} ·{' '}
+          <a href={book.url} target="_blank" rel="noreferrer">
+            Open on LibreTexts
+          </a>
         </p>
-        {error && <p className="error">{error}</p>}
-        {!tree && busy && <p>Loading table of contents…</p>}
-        {tree && <TocPicker tree={tree} selectAll={false} busy={busy} onConfirm={confirm} />}
-        {progress && <p className="muted">{progress}</p>}
+        {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+        {!tree && busy && <p className="muted">Loading the table of contents…</p>}
+        {tree && <TocPicker tree={tree} selectAll={false} busy={busy} progress={progress} onConfirm={confirm} />}
       </div>
     )
   }
 
+  // Two books can share a title (e.g. two editions); only then is the URL's
+  // last segment worth showing to tell them apart.
+  const titles = new Map<string, number>()
+  for (const result of results) titles.set(result.title, (titles.get(result.title) ?? 0) + 1)
+
   return (
     <div>
-      <div className="row">
-        <label className="grow">
+      <div className="search-row">
+        <label>
           Search {books ? `${books.length.toLocaleString()} LibreTexts books` : 'LibreTexts books'}
-          <input
-            type="search"
-            placeholder="e.g. general chemistry, anatomy, calculus"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoFocus
-          />
+          <span className="search-field">
+            <Icon name="search" />
+            <input
+              type="search"
+              placeholder="Title, subject, or author"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoFocus={autoFocus}
+            />
+          </span>
         </label>
         <label>
           Library
@@ -175,24 +188,37 @@ function BookSearch({ onSource }: { onSource: (source: StoredSource) => void }) 
           </select>
         </label>
       </div>
-      {error && <p className="error">{error}</p>}
-      {!books && !error && <p className="muted">Loading catalog…</p>}
-      <ul className="results">
-        {results.map((result) => (
-          <li key={result.id}>
-            <button type="button" onClick={() => open(result)}>
-              <strong>{result.title}</strong>
-              <span className="muted">
-                {[result.author, LIBRARIES[result.library], result.subject || result.course].filter(Boolean).join(' · ')}
-                {result.pages ? ` · ${result.pages} pages` : ''}
-              </span>
-              <span className="fine">{bookPathHint(result.url)}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {!books && !error && <p className="muted">Loading the catalog…</p>}
+      {results.length > 0 && (
+        <ul className="result-list">
+          {results.map((result) => (
+            <li key={result.id}>
+              <button type="button" onClick={() => open(result)}>
+                <span>
+                  <strong>{result.title}</strong>
+                  <span className="muted">
+                    {[result.author, LIBRARIES[result.library]].filter(Boolean).join(' · ')}
+                    {result.pages ? ` · ${result.pages} pages` : ''}
+                  </span>
+                  {titles.get(result.title)! > 1 && <span className="fine">{bookPathHint(result.url)}</span>}
+                </span>
+                <Icon name="chevron-right" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {books && (query.trim() || library) && results.length === 0 && <p className="muted">No books match.</p>}
-      {snapshot && <p className="fine">Catalog snapshot from {snapshot}. Paste a link to use any newer book.</p>}
+      {snapshot && (
+        <p className="fine mt">
+          Book list from {snapshot}. For a newer book, use Paste a link.
+        </p>
+      )}
     </div>
   )
 }
@@ -245,14 +271,14 @@ function UrlSource({ onSource }: { onSource: (source: StoredSource) => void }) {
   return (
     <div>
       <form
-        className="row"
+        className="search-row"
         onSubmit={(e) => {
           e.preventDefault()
           lookUp()
         }}
       >
-        <label className="grow">
-          A LibreTexts page, chapter, or book URL
+        <label>
+          Link to a LibreTexts page, chapter, or book
           <input
             type="url"
             required
@@ -261,20 +287,27 @@ function UrlSource({ onSource }: { onSource: (source: StoredSource) => void }) {
             onChange={(e) => setUrl(e.target.value)}
           />
         </label>
-        <button type="submit" className="primary" disabled={busy}>
+        <button type="submit" className={resolved ? undefined : 'primary'} disabled={busy}>
           {busy && !resolved ? 'Looking up…' : 'Look up'}
         </button>
       </form>
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <p className="error mt" role="alert">
+          {error}
+        </p>
+      )}
       {resolved && (
-        <>
-          {resolved.book && resolved.book.title !== resolved.page.title && (
-            <p className="muted">From the book “{resolved.book.title}”.</p>
-          )}
-          {resolved.page.license && <p className="muted">License: {resolved.page.license.label}</p>}
-          <TocPicker key={resolved.page.id} tree={resolved.tree} selectAll busy={busy} onConfirm={confirm} />
-          {progress && <p className="muted">{progress}</p>}
-        </>
+        <div className="mt-lg">
+          <p className="muted">
+            {[
+              resolved.book && resolved.book.title !== resolved.page.title && `From “${resolved.book.title}”`,
+              resolved.page.license?.label,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+          <TocPicker key={resolved.page.id} tree={resolved.tree} selectAll busy={busy} progress={progress} onConfirm={confirm} />
+        </div>
       )}
     </div>
   )
@@ -287,6 +320,7 @@ function PasteSource({ onSource }: { onSource: (source: StoredSource) => void })
   const [error, setError] = useState<string | null>(null)
   return (
     <form
+      className="form-stack"
       onSubmit={async (e) => {
         e.preventDefault()
         try {
@@ -296,28 +330,29 @@ function PasteSource({ onSource }: { onSource: (source: StoredSource) => void })
         }
       }}
     >
-      <p className="muted">
-        Copy text from a LibreTexts page (or several) and paste it here. Paragraphs separated by line breaks are kept
-        so each question can cite them.
-      </p>
-      <div className="row">
-        <label className="grow">
+      <label>
+        Textbook text
+        <small>Copy from one or more LibreTexts pages. Keep the line breaks between paragraphs so questions can cite them.</small>
+        <textarea required rows={12} value={text} onChange={(e) => setText(e.target.value)} />
+      </label>
+      <div className="field-row">
+        <label>
           Title
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. 2.3: Evolution of Atomic Theory" />
         </label>
-        <label className="grow">
-          Source URL (optional)
+        <label>
+          Link to the page <small>(optional)</small>
           <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…libretexts.org/…" />
         </label>
       </div>
-      <label>
-        Textbook text
-        <textarea required rows={12} value={text} onChange={(e) => setText(e.target.value)} />
-      </label>
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
       <div className="actions">
         <button type="submit" className="primary" disabled={!text.trim()}>
-          Use this text
+          Continue with this text
         </button>
       </div>
     </form>
@@ -328,7 +363,23 @@ function PasteSource({ onSource }: { onSource: (source: StoredSource) => void })
 
 const DEFAULT_TYPES: ItemType[] = ['multiple_choice', 'true_false', 'multiple_answers', 'fill_in_blank']
 
-function Configure({ source, onBack }: { source: StoredSource; onBack: () => void }) {
+function ConfigureStep({ sourceId }: { sourceId: string }) {
+  const source = useLiveQuery(async () => (await db.sources.get(sourceId)) ?? null, [sourceId])
+  if (source === undefined) return null
+  if (source === null) {
+    return (
+      <>
+        <PageHeader eyebrow="New question set · Step 2 of 2" title="Choose the questions" />
+        <p className="notice">
+          Those pages are no longer saved in this browser. <a href="#/">Choose pages again</a>
+        </p>
+      </>
+    )
+  }
+  return <Configure source={source} />
+}
+
+function Configure({ source }: { source: StoredSource }) {
   const engine = useEngineSettings()
   const generation = useGeneration()
   const [title, setTitle] = useState(`${source.title} — questions`)
@@ -340,7 +391,6 @@ function Configure({ source, onBack }: { source: StoredSource; onBack: () => voi
   // schema check can.
   const reviewPass = review ?? true
   const total = source.pages.length * perPage
-  const characters = sourceCharacterCount(source)
   // The in-browser model does not review math questions (see pipeline.ts).
   const skipsReview = engine.provider === 'local' && types.includes('math')
   const reviews = reviewPass ? Math.round(total * (skipsReview ? 1 - 1 / types.length : 1)) : 0
@@ -371,70 +421,79 @@ function Configure({ source, onBack }: { source: StoredSource; onBack: () => voi
     navigate(`/set/${setId}`)
   }
 
+  const pages = `${source.pages.length} page${source.pages.length === 1 ? '' : 's'}`
   return (
-    <section className="card">
-      <h2>2. Configure questions</h2>
-      <p>
-        <strong>{source.title}</strong> · {source.pages.length} page{source.pages.length === 1 ? '' : 's'} ·{' '}
-        {characters.toLocaleString()} characters
-        {source.license && <> · {source.license.label}</>}{' '}
-        <button type="button" className="link" onClick={onBack}>
-          Change source
-        </button>
-      </p>
-      <label>
-        Set title (becomes the assignment name if you import into an ADAPT course)
-        <input value={title} onChange={(e) => setTitle(e.target.value)} />
-      </label>
-      <fieldset>
-        <legend>Question types (rotated across questions)</legend>
-        <div className="checks">
-          {ITEM_TYPES.map((type) => (
-            <label key={type} className="inline">
-              <input
-                type="checkbox"
-                checked={types.includes(type)}
-                onChange={(e) =>
-                  setTypes((current) => (e.target.checked ? [...current, type] : current.filter((t) => t !== type)))
-                }
-              />{' '}
-              {ITEM_TYPE_LABELS[type]}
-            </label>
-          ))}
+    <>
+      <PageHeader
+        eyebrow="New question set · Step 2 of 2"
+        title="Choose the questions"
+        lede="Pick question types and how many to write. You review every question before exporting."
+      />
+      <div className="source-card">
+        <div>
+          <span className="fine">Pages</span>
+          <strong>{source.title}</strong>
+          <span className="muted">{[pages, source.license?.label].filter(Boolean).join(' · ')}</span>
         </div>
-      </fieldset>
-      <div className="row">
+        <a href="#/" className="button">
+          Change pages
+        </a>
+      </div>
+      <div className="form-stack">
         <label>
+          Set name
+          <input value={title} onChange={(e) => setTitle(e.target.value)} />
+          <small>Becomes the assignment name if you import into an ADAPT course.</small>
+        </label>
+        <fieldset>
+          <legend>Question types</legend>
+          <p className="hint">Questions take turns among the types you tick.</p>
+          <div className="check-grid">
+            {ITEM_TYPES.map((type) => (
+              <label key={type} className="inline">
+                <input
+                  type="checkbox"
+                  checked={types.includes(type)}
+                  onChange={(e) =>
+                    setTypes((current) => (e.target.checked ? [...current, type] : current.filter((t) => t !== type)))
+                  }
+                />
+                {ITEM_TYPE_LABELS[type]}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <label className="narrow-field">
           {source.pages.length === 1 ? 'Number of questions' : 'Questions per page'}
           <input type="number" min={1} max={20} value={perPage} onChange={(e) => setPerPage(clamp(Number(e.target.value), 1, 20))} />
         </label>
-        <label className="inline toggle">
-          <input type="checkbox" checked={reviewPass} onChange={(e) => setReview(e.target.checked)} /> Second-pass review
-          (critique and revise each question; about twice the time
-          {skipsReview && '; math questions are checked by the app instead'})
+        <label className="inline">
+          <input type="checkbox" checked={reviewPass} onChange={(e) => setReview(e.target.checked)} />
+          <span>
+            <strong>Second-pass review</strong>
+            <small>
+              The model checks and revises each question, which catches wrong answer keys. Takes about twice as long.
+              {skipsReview && ' Math questions are checked by the app instead.'}
+            </small>
+          </span>
         </label>
       </div>
-      <p className="summary">
-        {total} question{total === 1 ? '' : 's'} · about {calls} model calls with{' '}
-        {engine.provider === 'openai' ? `OpenAI ${engine.openaiModel} (${engine.effort} reasoning)` : 'the in-browser model'}
-        {engine.provider === 'local' && total > 30 && ' — large sets can take a long time on the in-browser model.'}
-      </p>
+      <div className="action-bar">
+        <p className="muted">
+          About {calls} model calls with{' '}
+          {engine.provider === 'openai' ? `OpenAI ${engine.openaiModel}` : 'the in-browser model'}
+          {engine.provider === 'local' && total > 30 && '. Large sets take a long time in the browser.'}
+        </p>
+        <button type="button" className="primary" disabled={types.length === 0 || generation.running} onClick={start}>
+          {generation.running ? 'Another set is being written…' : `Write ${total} question${total === 1 ? '' : 's'}`}
+        </button>
+      </div>
       {error && (
-        <p className="error">
+        <p className="error mt" role="alert">
           {error} <a href="#/settings">Open Settings</a>
         </p>
       )}
-      <div className="actions">
-        <button
-          type="button"
-          className="primary"
-          disabled={types.length === 0 || generation.running}
-          onClick={start}
-        >
-          {generation.running ? 'Another set is generating…' : `Generate ${total} question${total === 1 ? '' : 's'}`}
-        </button>
-      </div>
-    </section>
+    </>
   )
 }
 

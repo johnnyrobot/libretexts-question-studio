@@ -15,6 +15,7 @@ import {
   type DraftOf,
   type QuestionDraft,
 } from '../lib/generation/schema'
+import { Icon } from './Icon'
 
 // Edits a draft in place and re-validates it against the same rules the
 // model's output had to pass, so an edited item still imports into ADAPT.
@@ -23,10 +24,12 @@ export function ItemEditor({
   draft,
   onSave,
   onCancel,
+  onDelete,
 }: {
   draft: QuestionDraft
   onSave: (draft: QuestionDraft) => void
   onCancel: () => void
+  onDelete?: () => void
 }) {
   const [value, setValue] = useState<QuestionDraft>(() => structuredClone(draft))
   const [error, setError] = useState<string | null>(null)
@@ -51,7 +54,7 @@ export function ItemEditor({
     >
       <label>
         Title
-        <input value={value.title} onChange={(e) => set({ title: e.target.value })} />
+        <input value={value.title} onChange={(e) => set({ title: e.target.value })} autoFocus />
       </label>
       <label>
         Question
@@ -67,7 +70,7 @@ export function ItemEditor({
             : 'Explanation (shown as feedback)'}
         <textarea rows={3} value={value.explanation} onChange={(e) => set({ explanation: e.target.value })} />
       </label>
-      <div className="row">
+      <div className="field-row">
         <label>
           Bloom level
           <select value={value.bloom} onChange={(e) => set({ bloom: e.target.value as QuestionDraft['bloom'] })}>
@@ -100,6 +103,11 @@ export function ItemEditor({
         <button type="button" onClick={onCancel}>
           Cancel
         </button>
+        {onDelete && (
+          <button type="button" className="danger-link push-right" onClick={onDelete}>
+            Delete question
+          </button>
+        )}
       </div>
     </form>
   )
@@ -126,18 +134,28 @@ function TypeFields({ value, set }: { value: QuestionDraft; set: Setter }) {
         <fieldset>
           <legend>Correct answer</legend>
           <label className="inline">
-            <input type="radio" checked={value.answer} onChange={() => set({ answer: true } as Partial<QuestionDraft>)} />{' '}
+            <input
+              type="radio"
+              name="true-false"
+              checked={value.answer}
+              onChange={() => set({ answer: true } as Partial<QuestionDraft>)}
+            />{' '}
             True
           </label>
           <label className="inline">
-            <input type="radio" checked={!value.answer} onChange={() => set({ answer: false } as Partial<QuestionDraft>)} />{' '}
+            <input
+              type="radio"
+              name="true-false"
+              checked={!value.answer}
+              onChange={() => set({ answer: false } as Partial<QuestionDraft>)}
+            />{' '}
             False
           </label>
         </fieldset>
       )
     case 'numerical':
       return (
-        <div className="row">
+        <div className="field-row">
           <label>
             Answer
             <input
@@ -172,7 +190,7 @@ function TypeFields({ value, set }: { value: QuestionDraft; set: Setter }) {
       return <MatchingFields value={value} set={set} />
     case 'fill_in_blank':
       return (
-        <div className="row">
+        <div className="field-row">
           <label>
             Answer
             <input value={value.answer} onChange={(e) => set({ answer: e.target.value } as Partial<QuestionDraft>)} />
@@ -230,10 +248,11 @@ function ChoiceFields({ value, set }: { value: DraftOf<'multiple_choice'> | Draf
           {!single && value.choices.length > 3 && (
             <button
               type="button"
+              className="icon-button"
               aria-label={`Remove choice ${index + 1}`}
               onClick={() => set({ choices: value.choices.filter((_, i) => i !== index) } as Partial<QuestionDraft>)}
             >
-              ✕
+              <Icon name="x" />
             </button>
           )}
         </div>
@@ -292,10 +311,11 @@ function MathFields({ value, set }: { value: DraftOf<'math'>; set: Setter }) {
               {variables.length > 1 ? (
                 <button
                   type="button"
+                  className="icon-button"
                   aria-label={`Remove variable ${index + 1}`}
                   onClick={() => set({ variables: variables.filter((_, i) => i !== index) } as Partial<QuestionDraft>)}
                 >
-                  ✕
+                  <Icon name="x" />
                 </button>
               ) : (
                 <span />
@@ -323,7 +343,7 @@ function MathFields({ value, set }: { value: DraftOf<'math'>; set: Setter }) {
         Constraints (one per line, e.g. a &lt; b)
         <ListTextarea rows={2} values={value.constraints} onValues={(constraints) => set({ constraints } as Partial<QuestionDraft>)} />
       </label>
-      <div className="row">
+      <div className="field-row">
         <label>
           ± tolerance (%)
           <NumberField
@@ -344,7 +364,7 @@ function MathFields({ value, set }: { value: DraftOf<'math'>; set: Setter }) {
           {check.message}
         </p>
       ) : (
-        <p className="fine" role="status">
+        <p className="check-ok" role="status">
           ✓ Valid. Version 1 answer: {formatNumber(Number(check.variants[0].answer.toPrecision(6)))}
           {value.units ? ` ${value.units}` : ''}
         </p>
@@ -448,10 +468,11 @@ function MatchingFields({ value, set }: { value: DraftOf<'matching'>; set: Sette
           {pairs.length > 2 && (
             <button
               type="button"
+              className="icon-button"
               aria-label={`Remove pair ${index + 1}`}
               onClick={() => set({ pairs: pairs.filter((_, i) => i !== index) } as Partial<QuestionDraft>)}
             >
-              ✕
+              <Icon name="x" />
             </button>
           )}
         </div>

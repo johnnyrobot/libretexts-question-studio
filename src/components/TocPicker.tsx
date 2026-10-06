@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { isLikelyContentPage, leafPages, type TocNode } from '../lib/content/libretexts'
+import { Icon } from './Icon'
 
 // Pick any mix of chapters, sections, and pages from a book or chapter tree.
 // Selection is tracked on leaf pages; parents show checked / mixed state.
@@ -9,11 +10,13 @@ export function TocPicker({
   selectAll,
   onConfirm,
   busy,
+  progress,
 }: {
   tree: TocNode
   selectAll: boolean
   onConfirm: (pages: TocNode[]) => void
   busy: boolean
+  progress: string
 }) {
   const leaves = useMemo(() => leafPages(tree), [tree])
   const [selected, setSelected] = useState<Set<string>>(
@@ -32,17 +35,16 @@ export function TocPicker({
 
   return (
     <div className="toc">
-      <div className="toc-toolbar">
-        <strong>{tree.title}</strong>
-        <span className="muted">
-          {chosen.length} of {leaves.length} pages selected
-        </span>
-        <button type="button" onClick={() => setSelected(new Set(leaves.filter(isLikelyContentPage).map((l) => l.id)))}>
+      <div className="toc-summary">
+        <span className="muted">Tick the chapters or pages to use.</span>
+        <button type="button" className="link" onClick={() => setSelected(new Set(leaves.filter(isLikelyContentPage).map((l) => l.id)))}>
           Select all content
         </button>
-        <button type="button" onClick={() => setSelected(new Set())}>
-          Clear
-        </button>
+        {chosen.length > 0 && (
+          <button type="button" className="link" onClick={() => setSelected(new Set())}>
+            Clear
+          </button>
+        )}
       </div>
       <ul className="toc-tree">
         {tree.children.length === 0 ? (
@@ -53,9 +55,12 @@ export function TocPicker({
           ))
         )}
       </ul>
-      <div className="actions">
+      <div className="action-bar">
+        <p className="muted" aria-live="polite">
+          {progress || `${chosen.length} of ${leaves.length} page${leaves.length === 1 ? '' : 's'} selected`}
+        </p>
         <button type="button" className="primary" disabled={chosen.length === 0 || busy} onClick={() => onConfirm(chosen)}>
-          {busy ? 'Loading pages…' : `Use ${chosen.length} page${chosen.length === 1 ? '' : 's'}`}
+          {busy ? 'Loading pages…' : `Continue with ${chosen.length} page${chosen.length === 1 ? '' : 's'}`}
         </button>
       </div>
     </div>
@@ -86,7 +91,11 @@ function TocRow({
     <label className="toc-label">
       <input ref={box} type="checkbox" checked={checked} onChange={(e) => toggle(node, e.target.checked)} />
       <span>{node.title}</span>
-      {node.children.length > 0 && <span className="muted"> ({leaves.length})</span>}
+      {node.children.length > 0 && (
+        <span className="muted">
+          {leaves.length} page{leaves.length === 1 ? '' : 's'}
+        </span>
+      )}
     </label>
   )
   if (node.children.length === 0) return <li className="toc-leaf">{label}</li>
@@ -97,10 +106,10 @@ function TocRow({
           type="button"
           className="disclosure"
           aria-expanded={open}
-          aria-label={`${open ? 'Collapse' : 'Expand'} ${node.title}`}
+          aria-label={`Pages in ${node.title}`}
           onClick={() => setOpen(!open)}
         >
-          {open ? '▾' : '▸'}
+          <Icon name="chevron-right" />
         </button>
         {label}
       </div>

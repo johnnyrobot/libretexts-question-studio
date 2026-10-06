@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { Icon } from '../components/Icon'
+import { PageHeader } from '../components/Page'
 import { LOCAL_MODEL, probeWebGPU, useLoadedLocalModel, type GpuSupport } from '../lib/llm/local-models'
 import { checkOpenAIKey, OPENAI_MODELS, type ReasoningEffort } from '../lib/llm/openai'
 import { createBackup, restoreBackup } from '../lib/storage/backup'
@@ -8,43 +10,46 @@ import { forgetKey, getSessionKey, hasRememberedKey, rememberKey, setSessionKey 
 import { localModelId, saveEngineSettings, useEngineSettings } from '../state/engine'
 import { useGeneration } from '../state/generation'
 
-export function Settings() {
+export type SettingsSection = 'engine' | 'data'
+
+export function Settings({ section }: { section: SettingsSection }) {
+  return section === 'data' ? <DataSettings /> : <EngineSettingsPage />
+}
+
+function EngineSettingsPage() {
   const engine = useEngineSettings()
   return (
-    <div className="page">
-      <h1>Settings</h1>
-      <section className="card">
-        <h2>AI engine</h2>
-        <div className="engine-choice">
-          <label className={`option ${engine.provider === 'local' ? 'selected' : ''}`}>
-            <input
-              type="radio"
-              name="provider"
-              checked={engine.provider === 'local'}
-              onChange={() => saveEngineSettings({ provider: 'local' })}
-            />
-            <span>
-              <strong>In-browser model</strong>
-              <span className="muted">Free and private: textbook text never leaves this device. One-time model download.</span>
-            </span>
-          </label>
-          <label className={`option ${engine.provider === 'openai' ? 'selected' : ''}`}>
-            <input
-              type="radio"
-              name="provider"
-              checked={engine.provider === 'openai'}
-              onChange={() => saveEngineSettings({ provider: 'openai' })}
-            />
-            <span>
-              <strong>OpenAI (your API key)</strong>
-              <span className="muted">Highest quality with GPT-6 Luna. Billed to your OpenAI account.</span>
-            </span>
-          </label>
-        </div>
-      </section>
-      {engine.provider === 'local' ? <LocalSettings /> : <OpenAISettings />}
-      <StorageSettings />
-    </div>
+    <>
+      <PageHeader title="AI engine" lede="Choose the model that writes your questions." />
+      <fieldset className="choice-cards">
+        <legend className="sr-only">AI engine</legend>
+        <label className="option">
+          <input
+            type="radio"
+            name="provider"
+            checked={engine.provider === 'local'}
+            onChange={() => saveEngineSettings({ provider: 'local' })}
+          />
+          <span>
+            <strong>In-browser model</strong>
+            <span className="muted">Free and private. Textbook text never leaves this device. One-time download.</span>
+          </span>
+        </label>
+        <label className="option">
+          <input
+            type="radio"
+            name="provider"
+            checked={engine.provider === 'openai'}
+            onChange={() => saveEngineSettings({ provider: 'openai' })}
+          />
+          <span>
+            <strong>OpenAI, with your API key</strong>
+            <span className="muted">Highest quality, with GPT-6 Luna. Billed to your OpenAI account.</span>
+          </span>
+        </label>
+      </fieldset>
+      <section className="card section-gap">{engine.provider === 'local' ? <LocalSettings /> : <OpenAISettings />}</section>
+    </>
   )
 }
 
@@ -109,31 +114,53 @@ function LocalSettings() {
   }
 
   return (
-    <section className="card">
-      <h2>In-browser model</h2>
+    <>
+      <h2>{LOCAL_MODEL.label}</h2>
       {gpu && !gpu.webgpu && <p className="error">{gpu.reason}</p>}
       {gpu?.webgpu && !gpu.f16 && (
         <p className="notice">This GPU lacks 16-bit shader support, so the larger 32-bit build of the model is used.</p>
       )}
-      <p>
-        <strong>{LOCAL_MODEL.label}</strong> ({LOCAL_MODEL.license}) · <code>{modelId}</code> ·{' '}
-        {!status
-          ? 'checking…'
-          : status.cached
-            ? 'downloaded'
-            : status.bytes
-              ? `${formatBytes(status.bytes)} download`
-              : 'not downloaded'}
-        {vramMB ? ` · needs about ${(vramMB / 1024).toFixed(1)} GB of GPU memory` : ''}
-        {loaded && ' · loaded and ready'}
-      </p>
+      <dl className="facts">
+        <dt>Status</dt>
+        <dd>
+          {loaded ? (
+            <span className="status approved">
+              <Icon name="check" size={18} /> Loaded and ready
+            </span>
+          ) : !status ? (
+            'Checking…'
+          ) : status.cached ? (
+            'Downloaded, not loaded'
+          ) : (
+            'Not downloaded'
+          )}
+        </dd>
+        {!!status && !status.cached && !!status.bytes && (
+          <>
+            <dt>Download</dt>
+            <dd>{formatBytes(status.bytes)}, once</dd>
+          </>
+        )}
+        {!!vramMB && (
+          <>
+            <dt>GPU memory</dt>
+            <dd>About {(vramMB / 1024).toFixed(1)} GB</dd>
+          </>
+        )}
+        <dt>License</dt>
+        <dd>{LOCAL_MODEL.license}</dd>
+      </dl>
       {progress && (
-        <div aria-live="polite">
-          <progress max={1} value={progress.value} />
-          <p className="muted">{progress.text}</p>
+        <div aria-live="polite" className="mt">
+          <progress max={1} value={progress.value} aria-label="Model loading progress" />
+          <p className="fine">{progress.text}</p>
         </div>
       )}
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
       <div className="actions">
         {!loaded && (
           <button type="button" className="primary" disabled={loading || !webllm || !gpu?.webgpu} onClick={load}>
@@ -152,7 +179,7 @@ function LocalSettings() {
         {status?.cached && !loading && webllm && (
           <button
             type="button"
-            className="danger-link"
+            className="danger-link push-right"
             disabled={generation.running}
             onClick={async () => {
               webllm.unloadLocalModel()
@@ -164,12 +191,11 @@ function LocalSettings() {
           </button>
         )}
       </div>
-      <p className="fine">
-        The model downloads from Hugging Face once and stays in this browser. It must be loaded again each time the app is
-        opened (from disk, which is quick). It runs on WebLLM in recent Chrome, Edge, and Safari 26 on desktop; phones are
-        not supported.
+      <p className="fine mt">
+        The model downloads from Hugging Face once and stays in this browser. Load it each time you open the app (from disk,
+        which is quick). It runs on recent desktop Chrome, Edge, and Safari 26, not on phones. Build: <code>{modelId}</code>
       </p>
-    </section>
+    </>
   )
 }
 
@@ -206,9 +232,10 @@ function OpenAISettings() {
   }
 
   return (
-    <section className="card">
+    <>
       <h2>OpenAI</h2>
       <form
+        className="form-stack"
         onSubmit={(e) => {
           e.preventDefault()
           void save()
@@ -224,10 +251,14 @@ function OpenAISettings() {
             value={key}
             onChange={(e) => setKey(e.target.value)}
           />
+          <small>Create a dedicated project key with a monthly budget.</small>
         </label>
         <label className="inline">
-          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Remember on this device
-          (encrypted in this browser’s storage)
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          <span>
+            Remember on this device
+            <small>Encrypted in this browser’s storage.</small>
+          </span>
         </label>
         <div className="actions">
           <button type="submit" className="primary" disabled={!key.trim() || checking}>
@@ -236,7 +267,7 @@ function OpenAISettings() {
           {(remembered || getSessionKey()) && (
             <button
               type="button"
-              className="danger-link"
+              className="danger-link push-right"
               onClick={async () => {
                 await forgetKey()
                 setKey('')
@@ -249,8 +280,12 @@ function OpenAISettings() {
           )}
         </div>
       </form>
-      {status && <p className="notice">{status}</p>}
-      <div className="row">
+      {status && (
+        <p className="notice mt" role="status">
+          {status}
+        </p>
+      )}
+      <div className="field-row mt-lg">
         <label>
           Model
           <select value={engine.openaiModel} onChange={(e) => saveEngineSettings({ openaiModel: e.target.value })}>
@@ -271,16 +306,16 @@ function OpenAISettings() {
           </select>
         </label>
       </div>
-      <p className="fine">
-        Your key is sent only to api.openai.com, directly from this browser, with <code>store: false</code>. The selected
-        textbook text and prompts go to OpenAI under your account’s data policy (OpenAI keeps abuse-monitoring logs for up
-        to 30 days). For safety, create a dedicated project key with a monthly budget.
+      <p className="fine mt-lg">
+        Your key is sent only to api.openai.com, directly from this browser, with <code>store: false</code>. The textbook
+        text and prompts go to OpenAI under your account’s data policy (OpenAI keeps abuse-monitoring logs for up to 30
+        days).
       </p>
-    </section>
+    </>
   )
 }
 
-function StorageSettings() {
+function DataSettings() {
   const [estimate, setEstimate] = useState<{ usage: number; quota: number } | null>(null)
   const [persisted, setPersisted] = useState<boolean | null>(null)
   const [backupStatus, setBackupStatus] = useState<string | null>(null)
@@ -289,71 +324,78 @@ function StorageSettings() {
     navigator.storage?.persisted?.().then(setPersisted)
   }, [])
   return (
-    <section className="card">
-      <h2>Storage</h2>
-      <p>
-        {estimate ? `${formatBytes(estimate.usage)} used of ${formatBytes(estimate.quota)} available to this app.` : '…'}{' '}
-        {persisted === true && 'Storage is persistent (the browser will not clear it automatically).'}
+    <>
+      <PageHeader title="Data and backup" lede="Question sets, downloads, and saved textbook pages live only in this browser." />
+      <section className="section">
+        <h2>Storage</h2>
+        <p>
+          {estimate ? `${formatBytes(estimate.usage)} used of ${formatBytes(estimate.quota)} available.` : '…'}{' '}
+          {persisted === true && 'The browser will not clear this data on its own.'}
+        </p>
         {persisted === false && (
+          <p>
+            <button type="button" className="link" onClick={async () => setPersisted(await requestPersistentStorage())}>
+              Ask the browser to keep this data
+            </button>
+          </p>
+        )}
+        <p className="fine">Install the app (browser menu → Install) so Safari does not clear it after a week without use.</p>
+      </section>
+      <section className="section">
+        <h2>Backup</h2>
+        <p className="muted">
+          Move your question sets to another browser or computer, or keep a copy. The backup is a JSON file with your pages
+          and questions, not your API key.
+        </p>
+        <div className="actions">
           <button
             type="button"
-            className="link"
-            onClick={async () => setPersisted(await requestPersistentStorage())}
+            onClick={async () =>
+              downloadBlob(await createBackup(), `question-studio-backup-${new Date().toISOString().slice(0, 10)}.json`)
+            }
           >
-            Ask the browser to keep this data
+            <Icon name="download" /> Download backup
           </button>
+          <label className="file-button">
+            Restore from backup
+            <input
+              type="file"
+              accept="application/json,.json"
+              onChange={async (e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (!file) return
+                try {
+                  const result = await restoreBackup(file)
+                  setBackupStatus(`Restored ${result.sets} set(s) and ${result.items} question(s).`)
+                } catch (error) {
+                  setBackupStatus(error instanceof Error ? error.message : String(error))
+                }
+              }}
+            />
+          </label>
+        </div>
+        {backupStatus && (
+          <p className="notice mt" role="status">
+            {backupStatus}
+          </p>
         )}
-      </p>
-      <p className="fine">
-        Question sets, exports, and cached textbook pages live in this browser only. Install the app (browser menu → Install)
-        so Safari does not clear it after a week of inactivity.
-      </p>
-      <h3>Backup</h3>
-      <p className="fine">
-        Move your question sets to another browser or computer, or keep a copy. The backup is a JSON file with your sources and
-        questions (not your API key).
-      </p>
-      <div className="actions">
+      </section>
+      <section className="section">
+        <h2>Delete everything</h2>
+        <p className="muted">Removes every question set, download, and saved page from this browser.</p>
         <button
           type="button"
-          onClick={async () =>
-            downloadBlob(await createBackup(), `question-studio-backup-${new Date().toISOString().slice(0, 10)}.json`)
-          }
+          className="danger"
+          onClick={async () => {
+            if (!confirm('Delete every question set, export, and cached page from this browser?')) return
+            await Promise.all([db.items.clear(), db.sets.clear(), db.sources.clear(), db.exports.clear(), db.pages.clear()])
+          }}
         >
-          Download backup
+          Delete all question sets and saved pages
         </button>
-        <label className="inline file-button">
-          Restore from backup
-          <input
-            type="file"
-            accept="application/json,.json"
-            onChange={async (e) => {
-              const file = e.target.files?.[0]
-              e.target.value = ''
-              if (!file) return
-              try {
-                const result = await restoreBackup(file)
-                setBackupStatus(`Restored ${result.sets} set(s) and ${result.items} question(s).`)
-              } catch (error) {
-                setBackupStatus(error instanceof Error ? error.message : String(error))
-              }
-            }}
-          />
-        </label>
-      </div>
-      {backupStatus && <p className="notice">{backupStatus}</p>}
-      <h3>Reset</h3>
-      <button
-        type="button"
-        className="danger-link"
-        onClick={async () => {
-          if (!confirm('Delete every question set, export, and cached page from this browser?')) return
-          await Promise.all([db.items.clear(), db.sets.clear(), db.sources.clear(), db.exports.clear(), db.pages.clear()])
-        }}
-      >
-        Delete all question sets and cached pages
-      </button>
-    </section>
+      </section>
+    </>
   )
 }
 

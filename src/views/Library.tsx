@@ -1,6 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db, deleteSet } from '../lib/storage/db'
-import { navigate } from '../router'
+import { Icon } from '../components/Icon'
+import { PageHeader } from '../components/Page'
+import { db, type StoredSet } from '../lib/storage/db'
 
 export function Library() {
   const sets = useLiveQuery(() => db.sets.orderBy('createdAt').reverse().toArray(), [])
@@ -17,46 +18,72 @@ export function Library() {
 
   if (!sets) return null
   return (
-    <div className="page">
-      <h1>Your question sets</h1>
-      <p className="lede">Everything here is stored only in this browser. Nothing is uploaded and no account is needed.</p>
+    <>
+      <PageHeader
+        title="Question sets"
+        lede="Saved in this browser only. Nothing is uploaded and no account is needed."
+        action={
+          sets.length > 0 && (
+            <a href="#/" className="button primary">
+              <Icon name="plus" /> New question set
+            </a>
+          )
+        }
+      />
       {sets.length === 0 ? (
         <div className="card empty">
           <p>No question sets yet.</p>
-          <button type="button" className="primary" onClick={() => navigate('/')}>
+          <a href="#/" className="button primary">
             Create your first set
-          </button>
+          </a>
         </div>
       ) : (
-        <ul className="set-list">
+        <ul className="set-rows">
           {sets.map((set) => {
             const tally = counts?.[set.id] ?? { total: 0, approved: 0 }
             return (
-              <li key={set.id} className="card">
-                <a href={`#/set/${set.id}`} className="set-link">
-                  <strong>{set.title}</strong>
-                  <span className="muted">
-                    {tally.total} question{tally.total === 1 ? '' : 's'} · {tally.approved} approved ·{' '}
-                    {new Date(set.createdAt).toLocaleDateString()} · {set.provider === 'openai' ? set.model : 'in-browser'}
+              <li key={set.id}>
+                <a href={`#/set/${set.id}`} className="row-link">
+                  <span>
+                    <strong>{set.title}</strong>
+                    <span className="muted">
+                      {new Date(set.createdAt).toLocaleDateString(undefined, { dateStyle: 'medium' })} · {tally.total}{' '}
+                      question{tally.total === 1 ? '' : 's'}
+                    </span>
                   </span>
+                  <SetProgress set={set} {...tally} />
+                  <Icon name="chevron-right" />
                 </a>
-                <span className={`badge ${set.status}`}>{set.status}</span>
-                <button
-                  type="button"
-                  className="danger-link"
-                  onClick={() => {
-                    if (confirm(`Delete “${set.title}” and its ${tally.total} questions from this browser?`)) {
-                      void deleteSet(set.id)
-                    }
-                  }}
-                >
-                  Delete
-                </button>
               </li>
             )
           })}
         </ul>
       )}
-    </div>
+    </>
+  )
+}
+
+const UNFINISHED: Partial<Record<StoredSet['status'], string>> = {
+  generating: 'Being written',
+  cancelled: 'Stopped early',
+  failed: 'Failed',
+}
+
+function SetProgress({ set, total, approved }: { set: StoredSet; total: number; approved: number }) {
+  const unfinished = UNFINISHED[set.status]
+  return (
+    <span className="set-progress">
+      {total > 0 &&
+        (approved === total ? (
+          <span className="status approved">
+            <Icon name="check" size={18} /> All approved
+          </span>
+        ) : (
+          <span>
+            {approved} of {total} approved
+          </span>
+        ))}
+      {unfinished && <span className={`status ${set.status}`}>{unfinished}</span>}
+    </span>
   )
 }

@@ -26,9 +26,9 @@ browser.
    - Choose question types and how many questions per page. The second-pass review is on by default; it catches wrong answer keys.
    - Generate. Questions appear as they are written, and the run continues if you switch screens.
 3. **Review:** approve, edit, or reject each question. Each question can show the exact source paragraphs it cites.
-4. **Download QTI (.zip).** In ADAPT, go to Question Editor → Bulk Import → Canvas QTI, pick a folder and license, and upload the file. Earlier downloads stay listed and can be downloaded again.
+4. **Export to ADAPT** (from the set's page): download the QTI (.zip). In ADAPT, go to Question Editor → Bulk Import → Canvas QTI, pick a folder and license, and upload the file. Earlier downloads stay listed and can be downloaded again.
    - **Math questions:** by default each one goes into that file as one version. Choose **Randomized** to download a second file in which each math question is its own quiz with several versions. ADAPT makes each quiz an assignment; import it into a course with an assignment template whose Dynamic Questioning settings are Random sampling: Yes and Number of randomized assessments: 1, and each student gets one version.
-5. **Settings → Backup** downloads all sets as one JSON file. Restore it in another browser or on another computer.
+5. **Settings → Data and backup** downloads all sets as one JSON file. Restore it in another browser or on another computer.
 
 ## Development
 

@@ -31,7 +31,14 @@ export function MathText({ text, block = false }: { text: string; block?: boolea
         <span
           key={index}
           dangerouslySetInnerHTML={{
-            __html: katex.renderToString(part.tex, { displayMode: part.display, throwOnError: false, trust: false, strict: 'ignore' }),
+            __html: katex.renderToString(part.tex, {
+              displayMode: part.display,
+              throwOnError: false,
+              // KaTeX's default #cc0000 for unknown commands is 2.7:1 on the dark theme.
+              errorColor: 'var(--danger)',
+              trust: false,
+              strict: 'ignore',
+            }),
           }}
         />
       ),
