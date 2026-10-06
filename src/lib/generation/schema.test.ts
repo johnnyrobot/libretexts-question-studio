@@ -18,4 +18,11 @@ describe('LLM schemas', () => {
     for (const none of ['None', ' null ', '', 'n/a', '-']) expect(units(none)).toBeNull()
     expect(units(' m/s ')).toBe('m/s')
   })
+
+  it('reads {{name}} placeholders in math formulas as the variables they name', () => {
+    const { item_type, ...payload } = SAMPLE_DRAFTS.find((d) => d.item_type === 'math')!
+    const draft = parseDraft(item_type, { ...payload, answer_formula: '{{v}} / {{ t }}', constraints: ['{{v}} < {{t}}'] }) as DraftOf<'math'>
+    expect(draft.answer_formula).toBe('(v) / (t)')
+    expect(draft.constraints).toEqual(['(v) < (t)'])
+  })
 })

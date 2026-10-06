@@ -88,9 +88,8 @@ async function fetchWithBackoff<T>(
     const response = await fetch(url, init)
     if (response.ok) return response
     const retryable = response.status === 429 || response.status >= 500
-    if (!retryable || attempt >= delays.length) {
-      throw new LLMError(await errorMessage(response), retryable)
-    }
+    // Final either way: the backoff above has already spent the retries.
+    if (!retryable || attempt >= delays.length) throw new LLMError(await errorMessage(response))
     request.onProgress?.({
       kind: 'status',
       message: `OpenAI returned ${response.status}; retrying in ${delays[attempt] / 1000}s…`,

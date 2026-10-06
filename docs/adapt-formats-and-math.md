@@ -65,17 +65,33 @@ The math question type (`math`, "Math (randomized numbers)") lives in
 3. **Validate in the browser** (`spec.ts`) over at least 25 seeded samples. A spec is rejected when:
    - an answer is NaN, infinite, zero, or above 10^15;
    - the answer never changes;
+   - a variable is not used in the answer formula (models like to make the unknown a variable);
    - the stem leaves out a variable, or shows `{{answer}}` or an expression that always equals it;
    - the constraints are almost never met, or there are fewer distinct versions than needed;
    - a margin rounds below ADAPT's 0.00001;
    - the answer is not exact (four decimals or fewer) when the tolerance is 0.
 
    Errors name the failing values, such as "when t=0", and go back to the model, which gets up to 3 attempts. The editor runs the same check as you type.
+
+   Two common model slips are repaired instead of retried:
+   - `{{name}}` placeholders copied into a formula are read as the variable.
+   - Tolerance 0 on answers that aren't exact becomes 1%. This applies to model output only; the editor still reports the error.
+
+   A response cut off at the in-browser model's 1,800-token limit is retried at a higher temperature instead of failing the item. A math item needs about 400 tokens, so a cut-off response is a runaway generation.
 4. **Versions are deterministic** (mulberry32, seeds 1, 2, 3, ...), so re-exports are byte-identical. Variables print exactly, and computed placeholders print to four significant figures. Answers with a tolerance are rounded to six significant figures for the answer key.
 5. **Export:**
    - **Fixed (default):** version 1 goes into the main quiz as a `numerical_question`.
    - **Randomized:** a second zip has one quiz per math question, holding 2 to 10 versions titled "(version n)". ADAPT creates one assignment per quiz. Import it into a course with an assignment template whose Dynamic Questioning settings are **Random sampling**: Yes and **Number of randomized assessments**: 1. Points Per Question has to be "Specify the points for each question individually", which is the default. (The local `../adapt` checkout calls these "Randomizations" and "Specify number of points".) Version 1 keeps the question's own identifier; later versions hash `<uuid>:v<n>`.
 6. **Exact answer keys:** ADAPT stores a numerical answer as `(low + high) / 2` in doubles, so a plain decimal range can turn 0.346154 into 0.34615399999999996. `numericRange` (in `qti/canvas.ts`) detects this. It then writes the bounds as two doubles whose sum is exactly twice the answer, printed so PHP reads back the same doubles. This applies to the numerical type too.
+
+**Real-model test (Qwen3.5 4B, 2026-10-05).** Source: OpenStax College Physics 2.3 and 2.5, 6 math questions requested, review on.
+
+| Run | Math questions | Multiple-choice fallbacks | Failed |
+|---|---|---|---|
+| Before the repairs | 2, 1 usable | 1 | 3 |
+| After the repairs | 3, all usable | 3 | 0 |
+
+The fallbacks were sections whose concepts the extractor did not mark as quantitative. The review pass still sometimes runs away to the token limit and needs a retry.
 
 Both zips were checked with ADAPT's PHP parser (`tests/adapt-parser`). The
 sample package (version 1 of a math question among the other eight types) was

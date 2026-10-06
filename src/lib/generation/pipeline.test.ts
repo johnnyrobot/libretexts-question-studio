@@ -1,9 +1,9 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SAMPLE_DRAFTS } from '../qti/fixtures'
-import { completeWithRetries, type CompletionRequest, type LLMProvider } from '../llm/types'
+import { completeWithRetries, LLMError, type CompletionRequest, type LLMProvider } from '../llm/types'
 import { db, type StoredSource } from '../storage/db'
-import { planUnits, runGeneration, stripSourceReferences } from './pipeline'
+import { planUnits, repairDraft, runGeneration, stripSourceReferences } from './pipeline'
 import type { ItemType } from './schema'
 
 const source: StoredSource = {
@@ -148,6 +148,37 @@ describe('runGeneration', () => {
     expect(item.critique[0]).toMatch(/math \(randomized numbers\) question was requested/)
   })
 
+  it('retries a response cut off at the output limit, but not other engine errors', async () => {
+    const mathPayload = () => {
+      const { item_type: _, ...payload } = SAMPLE_DRAFTS.find((d) => d.item_type === 'math')!
+      void _
+      return JSON.stringify(payload)
+    }
+    const run = async (failure: LLMError) => {
+      await db.items.clear()
+      const provider = new FakeProvider()
+      const original = provider.complete.bind(provider)
+      const prompts: string[] = []
+      provider.complete = (request) =>
+        request.schemaName === 'math_item'
+          ? completeWithRetries(request, async (prompt, attempt) => {
+              prompts.push(prompt)
+              if (attempt === 1) throw failure
+              return { text: mathPayload(), usage: null }
+            })
+          : original(request)
+      const result = await runGeneration('set-1', source, { itemTypes: ['math'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+      return { result, prompts }
+    }
+    const cutOff = await run(new LLMError('The response was cut off at the output limit.', true))
+    expect(cutOff.result.created).toBe(1)
+    expect(cutOff.prompts[1]).toContain('cut off at the output limit')
+    const notLoaded = await run(new LLMError('The in-browser model is not loaded.'))
+    expect(notLoaded.result.created).toBe(0)
+    expect(notLoaded.prompts).toHaveLength(1)
+    expect(notLoaded.result.failures[0]).toMatch(/not loaded/)
+  })
+
   it('rejects citations outside the section shown to the model', async () => {
     const provider = new FakeProvider()
     const original = provider.complete.bind(provider)
@@ -187,5 +218,23 @@ describe('stripSourceReferences', () => {
     expect(stripSourceReferences('Match each term to its definition as found in the source text.')).toBe(
       'Match each term to its definition.',
     )
+  })
+})
+
+describe('repairDraft', () => {
+  const { item_type: _, ...math } = SAMPLE_DRAFTS.find((d) => d.item_type === 'math')!
+  void _
+
+  it('uses a 1% tolerance when a model marks inexact answers exact', () => {
+    expect(repairDraft('math', { ...math, tolerance_percent: 0 })).toEqual({ ...math, tolerance_percent: 1 })
+  })
+
+  it('leaves exact answers, other mistakes and other types alone', () => {
+    const exact = { ...math, answer_formula: 'v + t', tolerance_percent: 0 }
+    expect(repairDraft('math', exact)).toBe(exact)
+    const broken = { ...math, answer_formula: '2v / t', tolerance_percent: 0 }
+    expect(repairDraft('math', broken)).toBe(broken)
+    const numerical = { tolerance: 0 }
+    expect(repairDraft('numerical', numerical)).toBe(numerical)
   })
 })

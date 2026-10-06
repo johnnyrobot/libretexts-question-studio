@@ -68,12 +68,16 @@ export async function completeWithRetries<T>(
   let usage: CompletionUsage | null = null
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     request.signal?.throwIfAborted()
-    const result = await generate(prompt, attempt)
-    usage = addUsage(usage, result.usage)
     try {
+      const result = await generate(prompt, attempt)
+      usage = addUsage(usage, result.usage)
       const parsed = parseJsonResponse(result.text)
       return { value: request.validate(parsed), usage, attempts: attempt }
     } catch (error) {
+      // Retryable generation errors (an answer cut off at the output limit)
+      // get another attempt; anything else, such as a missing model, does not.
+      if (error instanceof LLMError && !error.retryable) throw error
+      if (request.signal?.aborted) throw error
       lastError = error instanceof Error ? error.message : String(error)
       request.onProgress?.({
         kind: 'status',

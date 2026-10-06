@@ -242,7 +242,7 @@ async function draftItem(
     schema: llmSchemaFor(itemType),
     signal,
     onProgress: callbacks.onModelEvent,
-    validate: (value) => parseDraft(itemType, value, allowed),
+    validate: (value) => parseDraft(itemType, repairDraft(itemType, value), allowed),
   })
   return result.value
 }
@@ -272,11 +272,24 @@ async function reviewItem(
       const issues = z.array(z.string()).max(8).safeParse(record?.issues)
       return {
         issues: issues.success ? issues.data : [],
-        draft: parseDraft(draft.item_type, record?.revised, allowed),
+        draft: parseDraft(draft.item_type, repairDraft(draft.item_type, record?.revised), allowed),
       }
     },
   })
   return result.value
+}
+
+// Small models mark a division "exact" (tolerance 0) and ignore the hint on
+// every retry. When the answers are not exact, 1% is what an author would
+// pick, so it is set here instead of failing the item. Only model output is
+// repaired: an instructor who sets 0 in the editor still gets the error.
+export function repairDraft(itemType: ItemType, value: unknown): unknown {
+  if (itemType !== 'math' || !value || typeof value !== 'object') return value
+  const record = value as Record<string, unknown>
+  if (record.tolerance_percent !== 0) return value
+  const result = ITEM_SCHEMAS.math.safeParse(value)
+  const inexact = !result.success && result.error.issues.some((issue) => issue.code === 'custom' && issue.params?.math === 'inexact_answer')
+  return inexact ? { ...record, tolerance_percent: 1 } : value
 }
 
 // "According to the provided text, …" reads oddly once the question is in a

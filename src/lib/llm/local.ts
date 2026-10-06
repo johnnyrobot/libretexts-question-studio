@@ -149,7 +149,12 @@ export class LocalProvider implements LLMProvider {
       }
       request.signal?.throwIfAborted()
       if (finish === 'length') {
-        throw new LLMError('The in-browser model ran out of output space before finishing the JSON.')
+        // Usually a runaway repetition rather than a long answer: a math item
+        // needs about 400 tokens. A hotter retry usually breaks the loop.
+        throw new LLMError(
+          'The response was cut off at the output limit before the JSON was finished. Keep every text field brief and do not repeat yourself.',
+          true,
+        )
       }
       // Drop any reasoning prefix the model emitted despite thinking being off.
       return { text: text.replace(/^[\s\S]*?<\/think>/, ''), usage }

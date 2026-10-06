@@ -96,11 +96,11 @@ describe('compileMath', () => {
 
     it('division by zero and other non-numbers', () => {
       rejects({ variables: [speed.variables[0], { name: 't', min: 0, max: 2, step: 1 }] }, /not a number when .*t=0/)
-      rejects({ answer_formula: 'sqrt(t - 5)' }, 'not a number')
+      rejects({ answer_formula: 'd * sqrt(t - 5)' }, 'not a number')
     })
 
     it('answers that never change or are zero', () => {
-      rejects({ answer_formula: 'd / d' }, 'for every set of numbers')
+      rejects({ answer_formula: 'd / d * t / t' }, 'for every set of numbers')
       rejects({ answer_formula: 'd - d + t - t + d * 0' }, 'the answer is 0')
     })
 
@@ -115,6 +115,17 @@ describe('compileMath', () => {
       rejects({ stem: 'A car travels {{dist}} km in {{t}} hours.' }, 'unknown name "dist"')
       rejects({ answer_formula: '2d / t' }, 'write multiplication explicitly')
       rejects({ answer_formula: '42' }, 'must use at least one variable')
+      rejects({ answer_formula: 'd / 2' }, 'variable t is not used in answer_formula')
+      rejects(
+        {
+          stem: 'From {{x0}} m it moves for {{t}} s at {{v}} m/s, ending at {{xf}} m. Where does it end?',
+          variables: [...speed.variables, { name: 'x0', min: 0, max: 10, step: 1 }, { name: 'xf', min: 0, max: 99, step: 1 }].map((v) =>
+            v.name === 'd' ? { ...v, name: 'v' } : v,
+          ),
+          answer_formula: 'x0 + v * t',
+        },
+        'variable xf is not used in answer_formula',
+      )
       rejects({ constraints: ['d + t'] }, 'must be a comparison')
     })
 

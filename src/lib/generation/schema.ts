@@ -120,6 +120,11 @@ const numerical = z
     }
   })
 
+// Models copy the stem's {{name}} placeholders into formulas, where the
+// variable is meant: "({{xf}} - {{x0}}) / {{t}}" becomes "((xf) - (x0)) / (t)".
+const formula = (max: number) =>
+  z.preprocess((value) => (typeof value === 'string' ? value.replace(/\{\{([^{}]*)\}\}/g, (_, inner: string) => `(${inner.trim()})`) : value), text(max))
+
 // stem and explanation are templates with {{name}} placeholders; compileMath
 // checks the whole spec over many seeded samples (see math/spec.ts).
 const math = z
@@ -129,8 +134,8 @@ const math = z
       .array(z.object({ name: z.string().regex(VARIABLE_NAME), min: z.number(), max: z.number(), step: z.number().positive() }))
       .min(1)
       .max(6),
-    constraints: z.array(text(200)).max(6),
-    answer_formula: text(500),
+    constraints: z.array(formula(200)).max(6),
+    answer_formula: formula(500),
     // compileMath also rejects anything between 0 and MIN_TOLERANCE_PERCENT.
     tolerance_percent: z.number().min(0).max(MAX_TOLERANCE_PERCENT),
     units,
@@ -140,7 +145,7 @@ const math = z
       compileMath(item)
     } catch (error) {
       if (!(error instanceof MathSpecError)) throw error
-      ctx.addIssue({ code: 'custom', message: error.message })
+      ctx.addIssue({ code: 'custom', message: error.message, params: { math: error.code } })
     }
   })
 

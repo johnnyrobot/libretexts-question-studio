@@ -54,7 +54,15 @@ const ATTEMPTS_PER_SEED = 1_000
 const MAX_MAGNITUDE = 1e15
 const PLACEHOLDER = /\{\{([^{}]*)\}\}/g
 
-export class MathSpecError extends Error {}
+export class MathSpecError extends Error {
+  // Set for failures the pipeline repairs itself instead of spending a retry.
+  readonly code: 'inexact_answer' | undefined
+
+  constructor(message: string, code?: 'inexact_answer') {
+    super(message)
+    this.code = code
+  }
+}
 
 export function compileMath(spec: MathSpec, versions = DEFAULT_VERSIONS): CompiledMath {
   const names = checkVariables(spec.variables)
@@ -64,7 +72,14 @@ export function compileMath(spec: MathSpec, versions = DEFAULT_VERSIONS): Compil
   }
 
   const answer = parseOrThrow(spec.answer_formula, names, 'answer_formula')
-  if (variablesIn(answer).size === 0) throw new MathSpecError('answer_formula must use at least one variable')
+  const used = variablesIn(answer)
+  if (used.size === 0) throw new MathSpecError('answer_formula must use at least one variable')
+  const unused = [...names].filter((name) => !used.has(name))
+  if (unused.length) {
+    throw new MathSpecError(
+      `variable${unused.length > 1 ? 's' : ''} ${unused.join(', ')} ${unused.length > 1 ? 'are' : 'is'} not used in answer_formula; declare only the given quantities the answer is computed from, never the quantity being asked for`,
+    )
+  }
   const constraints = spec.constraints.map((constraint, index) => {
     const node = parseOrThrow(constraint, names, `constraints[${index}]`, true)
     if (node.kind !== 'cmp') throw new MathSpecError(`constraints[${index}] must be a comparison such as "a < b"`)
@@ -115,6 +130,7 @@ export function compileMath(spec: MathSpec, versions = DEFAULT_VERSIONS): Compil
     if (tolerance === 0 && !hasFewDecimals(value)) {
       throw new MathSpecError(
         `with tolerance_percent 0 the answer must be exact, but it is ${formatNumber(value)} when ${where}; set tolerance_percent (about 1) or constrain the numbers`,
+        'inexact_answer',
       )
     }
     const stemText = render(stem, values, 'stem', where)
