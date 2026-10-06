@@ -60,6 +60,7 @@ The math question type (`math`, "Math (randomized numbers)") lives in
    - `variables`: one to six, each with min, max and step.
    - `constraints`: comparisons such as `a < b` that every version must meet.
    - `answer_formula`, `tolerance_percent` (0, or 0.1 to 5) and `units`.
+   - `worked_example`, just before `answer_formula`: values for every variable, the calculation written out with them, and the hand-computed answer. It is checked and then dropped, so it is never saved. The values are a list of `{name, value}` because OpenAI's strict mode does not accept records.
    - `stem` and `explanation` mark values as `{{name}}` or `{{expression}}`. Single braces are left alone, so TeX like `\frac{a}{b}` still works. The explanation may also use `{{answer}}`.
 2. **Parse once:** `expr.ts` is a hand-written parser (no `eval`). It allows `+ - * / ^`, parentheses, `sqrt abs exp ln log10`, trig in radians, `sind cosd tand` in degrees, `floor ceil round min max`, and the constants `pi` and `e`. The same syntax tree is evaluated in JS and turned into the TeX formula shown to instructors.
 3. **Validate in the browser** (`spec.ts`) over at least 25 seeded samples. A spec is rejected when:
@@ -73,9 +74,14 @@ The math question type (`math`, "Math (randomized numbers)") lives in
 
    Errors name the failing values, such as "when t=0", and go back to the model, which gets up to 3 attempts. The editor runs the same check as you type.
 
-   Two common model slips are repaired instead of retried:
-   - `{{name}}` placeholders copied into a formula are read as the variable.
-   - Tolerance 0 on answers that aren't exact becomes 1%. This applies to model output only; the editor still reports the error.
+   Model drafts must also pass the **worked-example check** (`checkWorkedExample`). The formula, evaluated on the example's values, must be within 5% of the model's own answer. This catches a formula that says something other than the model meant, which passes every other check. Qwen3.5 4B wrote `xf - x0 / t` for `(xf - x0) / t`, giving 1919.77 instead of 16.75 in one version. The error names both numbers and points at parentheses and operators.
+
+   Common model slips are repaired instead of retried:
+   - `{{name}}` placeholders copied into a formula are read as the variable. Uneven braces, such as `( {{xf} - {{x0}} } / {{t}} )` or `( {xf} - {x0} ) / {t}`, are read as parentheses when they balance, which keeps the model's grouping. Otherwise braces around a bare name are dropped, then any left over (`repairFormula`).
+   - Tolerance 0 on answers that aren't exact becomes 1%.
+   - Step 0 becomes the largest round step (1, 0.5, 0.1, ...) that both ends are multiples of and that still gives ten or more values. Qwen3.5 4B writes step 0 for ranges that start at a fraction, such as a time of 0.5 to 3 s.
+
+   The tolerance and step repairs apply to model output only; the editor still reports those errors.
 
    A response cut off at the in-browser model's 1,800-token limit is retried at a higher temperature instead of failing the item. A math item needs about 400 tokens, so a cut-off response is a runaway generation.
 4. **Versions are deterministic** (mulberry32, seeds 1, 2, 3, ...), so re-exports are byte-identical. Variables print exactly, and computed placeholders print to four significant figures. Answers with a tolerance are rounded to six significant figures for the answer key.
@@ -90,10 +96,41 @@ The math question type (`math`, "Math (randomized numbers)") lives in
 |---|---|---|---|
 | Before the repairs | 2, 1 usable | 1 | 3 |
 | After the repairs | 3, all usable | 3 | 0 |
+| 2026-10-06: worked example, no review, extractor hint | 6, all correct (4 m 38 s) | 0 | 0 |
 
 The fallbacks were sections whose concepts the extractor did not mark as quantitative.
 
-**Review pass for math (2026-10-06).**
+**Math-only fallbacks (decision 2026-10-06): look for numbers elsewhere on the page.**
+- **Extractor hint:** the concept prompt says how many of the section's questions are calculations and asks for the quantitative relationships first.
+- **Borrowing:** a math or numerical question whose section has none takes the least-used quantitative concept from the nearest other section of the same page. That includes sections that got no questions of their own; they are extracted only while no unused concept has been found.
+- **Fallback:** another type is written only when the whole page has no quantitative concept.
+
+Hint measurements (Qwen3.5 4B, two runs per section, 5 sections of 2.3 and 2.5):
+
+| Text | Without hint | With hint |
+|---|---|---|
+| Physics sections | 8 of 12 concepts quantitative; 2 of 10 runs had none | 12 of 12; every run had one |
+| Physics paragraphs with no digits | 0 of 6 | 2 of 6 (definitions that are formulas in words) |
+| A Renaissance history passage | 0 of 6 | 0 of 6 |
+
+In the end-to-end run the hint alone was enough; no question had to borrow. Borrowing is covered by a unit test.
+
+**Worked-example check (2026-10-06).** Qwen3.5 4B drafts of the same six quantitative concepts, two per concept, with the step and brace repairs added between the second and third rows:
+
+| Prompt | Questions | Model calls | Wrong formula | Rejected by the example check |
+|---|---|---|---|---|
+| Without worked example | 9 of 12 | 22 | 0 | — |
+| With worked example | 8 of 12 | 22 | 0 | 0 |
+| With worked example and the repairs | 12 of 12 | 17 | 1 | 0 |
+
+- **Cost:** about 5 s more per question (roughly 60 tokens).
+- **No false rejections:** every hand calculation that reached the check matched its formula, including 50 + (10 + (10 + 2·4))/2·4 = 106.
+- **It caught nothing in these runs.** The formula errors seen earlier came from the reviewer, which can no longer change a formula.
+- **Limit: it cannot catch a formula that is wrong in substance.** The one wrong formula, `d / v / t + b` for a stopping distance, came after the app rejected an unused variable `d`. The model forced `d` into the formula, and its "hand" example simply evaluated that formula.
+- **Copying:** when the variables are called d and t, the model often copies the prompt's example values (100 km, 4 h). The check is still valid, because it evaluates the model's own formula on those values.
+- **Why the yield rose:** before the repair, step 0 sank 19 of 44 attempts. Afterwards it was repaired in 6 of 16 attempts.
+
+**Review pass for math (2026-10-06).** Decision: on the in-browser model, math questions skip the review pass, saving about 20 s each. OpenAI still reviews them, wording only. Other question types are reviewed as before. The measurements behind the decision:
 - The reviewer only rewords math questions. Its schema has the wording fields only (title, stem, explanation, Bloom, difficulty, citations), and the validated computation is merged back in. Given the chance, Qwen3.5 4B rewrote a correct `(v0 + v) / 2` as `v0 + v / 2`. That passes every check but gives a wrong answer key in every version, and it is the likely source of an `xf - x0 / t` item seen in testing.
 - The review prompt covers content only, because format rules are checked in code. Asked to re-check format rules (variable names, placeholders), the 4B model deliberated inside its `issues` strings ("Let's re-read carefully…") until it looped to the 1,800-token limit.
 - Same draft, reviewed 8 times:

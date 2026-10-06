@@ -24,9 +24,15 @@ export function renderSource(unit: SourceUnit, onlyParagraphs?: number[]): strin
     .join('\n\n')
 }
 
-export function conceptPrompt(unit: SourceUnit, count: number): string {
+// `calculations` is how many of the section's questions must be computed from
+// numbers. Without the hint, the extractor picked conceptual ideas from pages
+// full of formulas, and math questions fell back to multiple choice.
+export function conceptPrompt(unit: SourceUnit, count: number, calculations = 0): string {
+  const wanted = calculations
+    ? `\n${calculations === count ? 'All' : calculations} of the questions will be calculations, so list the excerpt's quantitative relationships (a formula, or numbers with units that a calculation can use) first, as up to ${calculations} of the concepts.`
+    : ''
   return `Identify up to ${count} distinct, assessable concepts in this textbook excerpt (at least one).
-Prefer specific, instructionally meaningful ideas — definitions, relationships, processes, causes and effects, worked quantitative relationships — over headings or trivia.
+Prefer specific, instructionally meaningful ideas — definitions, relationships, processes, causes and effects, worked quantitative relationships — over headings or trivia.${wanted}
 Each concept must cite the paragraph numbers (from the [paragraph N] markers) that teach it. Set quantitative to true only when those paragraphs give numbers, units, or a formula that a calculation question could use. Do not infer facts that are absent from the excerpt.
 
 <page_title>${untrusted(unit.pageTitle)}</page_title>
@@ -112,6 +118,7 @@ export const ITEM_RULES: Record<ItemType, string> = {
 - stem: the question, showing every variable as {{name}} (for example "A car travels {{d}} km in {{t}} hours. What is its average speed?"). It must not give the answer.
 - answer_formula: the answer in terms of the variable names (plain names, no {{ }}), using + - * / ^ ( ) and sqrt abs exp ln log10 sin cos tan (radians) sind cosd tand (degrees) min max round. Write multiplication explicitly (2*x, not 2x). Example: "d / t".
 - constraints: zero or more comparisons that must hold for every version, such as "a < b" or "m1 != m2"; use them to avoid zero, negative or nonsensical cases.
+- worked_example: before writing answer_formula, solve the question once by hand. Pick simple values for every variable (for example [{"name": "d", "value": 100}, {"name": "t", "value": 4}]), write the calculation with those numbers step by step in working, on one line (for example "100 km / 4 h = 25 km/h"), and give the result in the answer's units as answer. answer_formula must compute the same result.
 - tolerance_percent: about 1 for computed decimals, 0 only when every answer is an exact whole number.
 - units: the answer's unit, or null.
 - explanation: the worked solution using placeholders, for example "Average speed is distance over time: {{d}} km / {{t}} h = {{answer}} km/h." {{answer}} and computed placeholders such as {{d/t}} are allowed here.

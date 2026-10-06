@@ -341,7 +341,10 @@ function Configure({ source, onBack }: { source: StoredSource; onBack: () => voi
   const reviewPass = review ?? true
   const total = source.pages.length * perPage
   const characters = sourceCharacterCount(source)
-  const calls = total * (reviewPass ? 2 : 1) + source.pages.length
+  // The in-browser model does not review math questions (see pipeline.ts).
+  const skipsReview = engine.provider === 'local' && types.includes('math')
+  const reviews = reviewPass ? Math.round(total * (skipsReview ? 1 - 1 / types.length : 1)) : 0
+  const calls = total + reviews + source.pages.length
 
   const start = async () => {
     setError(null)
@@ -407,7 +410,8 @@ function Configure({ source, onBack }: { source: StoredSource; onBack: () => voi
         </label>
         <label className="inline toggle">
           <input type="checkbox" checked={reviewPass} onChange={(e) => setReview(e.target.checked)} /> Second-pass review
-          (critique and revise each question; about twice the time)
+          (critique and revise each question; about twice the time
+          {skipsReview && '; math questions are checked by the app instead'})
         </label>
       </div>
       <p className="summary">

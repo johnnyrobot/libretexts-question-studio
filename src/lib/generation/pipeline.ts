@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { LLMProvider, ProgressEvent } from '../llm/types'
+import { checkWorkedExample } from '../math/spec'
 import { db, newId, type StoredItem, type StoredSource } from '../storage/db'
 import {
   conceptPrompt,
@@ -17,6 +18,7 @@ import {
   llmSchemaFor,
   parseDraft,
   toLlmSchema,
+  WORKED_EXAMPLE_SCHEMA,
   type ItemType,
   type QuestionDraft,
 } from './schema'
@@ -67,7 +69,8 @@ export interface UnitPlan {
 }
 
 // Splits each page into sections that fit the model's budget and spreads the
-// page's questions across them in proportion to their length.
+// page's questions across them in proportion to their length. Sections that
+// get no questions are kept: a calculation question can borrow from them.
 export function planUnits(source: StoredSource, perPage: number, budget: number): UnitPlan[] {
   const plans: UnitPlan[] = []
   source.pages.forEach((page, pageIndex) => {
@@ -93,7 +96,7 @@ export function planUnits(source: StoredSource, perPage: number, budget: number)
     let remaining = perPage - counts.reduce((a, b) => a + b, 0)
     const order = lengths.map((length, i) => [length, i] as const).sort((a, b) => b[0] - a[0])
     for (let k = 0; remaining > 0; k = (k + 1) % order.length, remaining--) counts[order[k][1]]++
-    units.forEach((unit, i) => counts[i] > 0 && plans.push({ pageIndex, unit, count: counts[i] }))
+    units.forEach((unit, i) => plans.push({ pageIndex, unit, count: counts[i] }))
   })
   return plans
 }
@@ -111,50 +114,107 @@ export async function runGeneration(
   const existing = await db.items.where('setId').equals(setId).sortBy('position')
   const stems = existing.map((item) => item.draft.stem)
   let position = existing.length
-  let typeCursor = existing.length
   let done = 0
   let created = 0
   const failures: string[] = []
   callbacks.onProgress(0, total)
 
-  for (const { pageIndex, unit, count } of units) {
+  // Types are assigned up front so each section's concept prompt knows how
+  // many calculation questions it has to supply.
+  let typeCursor = existing.length
+  const slotTypes = units.map((u) => Array.from({ length: u.count }, () => plan.itemTypes[typeCursor++ % plan.itemTypes.length]))
+
+  // Each section's concepts are extracted once, when first needed.
+  const extracted = new Map<UnitPlan, Promise<Concept[]>>()
+  const conceptsOf = (index: number, status: string): Promise<Concept[]> => {
+    const target = units[index]
+    let concepts = extracted.get(target)
+    if (!concepts) {
+      callbacks.onStatus(status)
+      const calculations = slotTypes[index].filter((t) => QUANTITATIVE_TYPES.has(t)).length
+      // A section without questions of its own is only searched for numbers.
+      concepts = target.count
+        ? extractConcepts(provider, target.unit, target.count, calculations, signal, callbacks)
+        : extractConcepts(provider, target.unit, 2, 2, signal, callbacks)
+      extracted.set(target, concepts)
+    }
+    return concepts
+  }
+
+  // A calculation question needs numbers in the source; without them small
+  // models invent nonsense. It takes the least-used quantitative concept,
+  // looking first in its own section and then in the nearest other sections of
+  // the same page, which are only extracted while no unused one is found.
+  const uses = new Map<Concept, number>()
+  const findQuantitative = async (index: number): Promise<{ concept: Concept; unit: UnitPlan } | null> => {
+    const { pageIndex, unit } = units[index]
+    const nearest = units
+      .map((_, k) => k)
+      .filter((k) => units[k].pageIndex === pageIndex)
+      .sort((a, b) => Math.abs(a - index) - Math.abs(b - index))
+    let best: { concept: Concept; unit: UnitPlan; uses: number } | null = null
+    for (const k of nearest) {
+      let concepts: Concept[]
+      try {
+        concepts = await conceptsOf(k, `Looking elsewhere in “${unit.pageTitle}” for numbers to calculate with…`)
+      } catch (error) {
+        if (signal.aborted) throw error
+        continue
+      }
+      for (const concept of concepts.filter((c) => c.quantitative)) {
+        const count = uses.get(concept) ?? 0
+        if (!best || count < best.uses) best = { concept, unit: units[k], uses: count }
+      }
+      if (best?.uses === 0) break
+    }
+    if (best) uses.set(best.concept, best.uses + 1)
+    return best
+  }
+
+  for (const [index, current] of units.entries()) {
+    if (!current.count) continue
     signal.throwIfAborted()
-    const allowed = new Set(unit.paragraphs.map(([index]) => index))
-    callbacks.onStatus(`Finding concepts in “${unit.pageTitle}”…`)
     let concepts: Concept[]
     try {
-      concepts = await extractConcepts(provider, unit, count, allowed, signal, callbacks)
+      concepts = await conceptsOf(index, `Finding concepts in “${current.unit.pageTitle}”…`)
     } catch (error) {
       if (signal.aborted) throw error
-      failures.push(`${unit.pageTitle}: ${message(error)}`)
-      done += count
+      failures.push(`${current.unit.pageTitle}: ${message(error)}`)
+      done += current.count
       callbacks.onProgress(done, total)
       continue
     }
 
-    for (let j = 0; j < count; j++) {
+    for (let j = 0; j < current.count; j++) {
       signal.throwIfAborted()
       let concept = concepts[j % concepts.length]
-      let itemType = plan.itemTypes[typeCursor++ % plan.itemTypes.length]
+      let itemType = slotTypes[index][j]
+      // The section the question is written from.
+      let unit = current.unit
       const notes: string[] = []
-      // A calculation question needs numbers in the source; without them small
-      // models invent nonsense, so fall back to another requested type.
       if (QUANTITATIVE_TYPES.has(itemType)) {
-        const numeric = concepts.filter((c) => c.quantitative)
-        if (numeric.length) concept = numeric[j % numeric.length]
-        else {
+        const found = await findQuantitative(index)
+        if (found) {
+          concept = found.concept
+          unit = found.unit.unit
+        } else {
           const requested = ITEM_TYPE_LABELS[itemType].toLowerCase()
           itemType = plan.itemTypes.find((t) => !QUANTITATIVE_TYPES.has(t)) ?? 'multiple_choice'
           notes.push(
-            `A ${requested} question was requested, but this section has no quantitative content, so a ${itemType.replace(/_/g, ' ')} question was written instead.`,
+            `A ${requested} question was requested, but no quantitative content was found on this page, so a ${itemType.replace(/_/g, ' ')} question was written instead.`,
           )
         }
       }
+      const allowed = new Set(unit.paragraphs.map(([i]) => i))
       callbacks.onStatus(`Writing a ${itemType.replace(/_/g, ' ')} question on “${concept.label}”…`)
       try {
         let draft = await draftItem(provider, unit, concept, itemType, stems.slice(-12), allowed, signal, callbacks)
         let critique: string[] = notes
-        if (plan.reviewPass) {
+        // On the in-browser model the reviewer may only reword a math question
+        // (see keepComputation), and its notes on them were mostly false claims
+        // about placeholder format, so the ~20 s review is skipped.
+        const review = plan.reviewPass && !(provider.id === 'local' && draft.item_type === 'math')
+        if (review) {
           callbacks.onStatus(`Reviewing “${draft.title}”…`)
           try {
             const reviewed = await reviewItem(provider, unit, concept, draft, allowed, signal, callbacks)
@@ -173,7 +233,7 @@ export async function runGeneration(
           position: position++,
           status: 'draft',
           draft,
-          sourcePageIndex: pageIndex,
+          sourcePageIndex: current.pageIndex,
           critique,
           createdAt: now,
           updatedAt: now,
@@ -197,14 +257,15 @@ async function extractConcepts(
   provider: LLMProvider,
   unit: SourceUnit,
   count: number,
-  allowed: Set<number>,
+  calculations: number,
   signal: AbortSignal,
   callbacks: GenerationCallbacks,
 ): Promise<Concept[]> {
+  const allowed = new Set(unit.paragraphs.map(([index]) => index))
   const schema = conceptBatch(Math.max(1, count))
   const result = await provider.complete({
     system: SYSTEM_PROMPT,
-    prompt: conceptPrompt(unit, count),
+    prompt: conceptPrompt(unit, count, calculations),
     schemaName: 'concept_batch',
     schema: toLlmSchema(schema),
     maxOutputTokens: provider.id === 'local' ? 900 : undefined,
@@ -243,7 +304,16 @@ async function draftItem(
     schema: llmSchemaFor(itemType),
     signal,
     onProgress: callbacks.onModelEvent,
-    validate: (value) => parseDraft(itemType, repairDraft(itemType, value), allowed),
+    validate: (value) => {
+      const repaired = repairDraft(itemType, value)
+      const draft = parseDraft(itemType, repaired, allowed)
+      if (draft.item_type === 'math') {
+        const example = WORKED_EXAMPLE_SCHEMA.safeParse((repaired as { worked_example?: unknown }).worked_example)
+        if (!example.success) throw new Error(`worked_example: ${formatIssues(example.error)}`)
+        checkWorkedExample(draft, example.data)
+      }
+      return draft
+    },
   })
   return result.value
 }
@@ -295,13 +365,34 @@ function keepComputation(draft: QuestionDraft, revised: unknown): unknown {
 // every retry. When the answers are not exact, 1% is what an author would
 // pick, so it is set here instead of failing the item. Only model output is
 // repaired: an instructor who sets 0 in the editor still gets the error.
+//
+// Qwen3.5 4B also writes step 0 for a range that starts at a fraction, such as
+// a time of 0.5 to 3 s, and repeats it on every retry. The step becomes the
+// largest round number both ends are multiples of that still gives ten or more
+// values.
 export function repairDraft(itemType: ItemType, value: unknown): unknown {
   if (itemType !== 'math' || !value || typeof value !== 'object') return value
-  const record = value as Record<string, unknown>
-  if (record.tolerance_percent !== 0) return value
-  const result = ITEM_SCHEMAS.math.safeParse(value)
+  let record = value as Record<string, unknown>
+  if (Array.isArray(record.variables) && record.variables.some(hasZeroStep)) {
+    record = { ...record, variables: record.variables.map((v) => (hasZeroStep(v) ? { ...v, step: roundStep(v.min, v.max) } : v)) }
+  }
+  if (record.tolerance_percent !== 0) return record
+  const result = ITEM_SCHEMAS.math.safeParse(record)
   const inexact = !result.success && result.error.issues.some((issue) => issue.code === 'custom' && issue.params?.math === 'inexact_answer')
-  return inexact ? { ...record, tolerance_percent: 1 } : value
+  return inexact ? { ...record, tolerance_percent: 1 } : record
+}
+
+const ROUND_STEPS = [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001]
+
+function hasZeroStep(v: unknown): v is { min: number; max: number; step: 0 } {
+  const { min, max, step } = (v ?? {}) as Record<string, unknown>
+  return step === 0 && typeof min === 'number' && typeof max === 'number' && max > min
+}
+
+function roundStep(min: number, max: number): number {
+  const multiple = (x: number, step: number) => Math.abs(x / step - Math.round(x / step)) < 1e-9
+  const fits = ROUND_STEPS.filter((step) => multiple(min, step) && multiple(max, step))
+  return fits.find((step) => (max - min) / step >= 9) ?? fits.at(-1) ?? (max - min) / 10
 }
 
 // "According to the provided text, …" reads oddly once the question is in a

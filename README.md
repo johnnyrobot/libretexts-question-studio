@@ -16,7 +16,7 @@ browser.
 - **ADAPT-ready export.**
   - The export is Canvas-style QTI 1.2, the only QTI format ADAPT's Bulk Import accepts, checked against ADAPT's own PHP parser. It also imports into Canvas.
   - Nine question types: multiple choice, true/false, select all that apply, numerical, math (randomized numbers), matching, fill in the blank, multiple dropdowns, and essay.
-- **Math with computed answers.** For a math question the model writes a template (variables with ranges, constraints, an answer formula), never the final number. The app computes and checks every answer over 25 sets of numbers, then exports versions as numerical questions.
+- **Math with computed answers.** For a math question the model writes a template (variables with ranges, constraints, an answer formula), never the final number. It also works one example by hand, and the formula must agree with it. The app computes and checks every answer over 25 sets of numbers, then exports versions as numerical questions.
 
 ## Using it
 
@@ -65,10 +65,11 @@ tests/adapt-parser/  harness that runs ADAPT's QtiImport.php on our packages
 
 **Pipeline.**
 1. Each page is split into sections that fit the model. For the in-browser model's 8K context that is about 5,500 characters.
-2. Concepts are extracted per section, each citing paragraph numbers.
+2. Concepts are extracted per section, each citing paragraph numbers. The extractor is told how many of the section's questions are calculations.
 3. One question is drafted per concept, rotating through the chosen types, and validated against the type's schema.
+   - A math or numerical question whose section has no numbers takes a quantitative concept from another section of the same page. Only if the page has none is another type written instead.
 4. Validation failures are sent back to the model to fix, up to 3 attempts.
-5. The reviewer pass (on by default) critiques and rewrites each question. Its notes are kept and shown with the question.
+5. The reviewer pass (on by default) critiques and rewrites each question. Its notes are kept and shown with the question. On the in-browser model, math questions skip it.
 6. Every question is saved as soon as it validates.
 
 **Math questions.** [docs/adapt-formats-and-math.md](docs/adapt-formats-and-math.md)

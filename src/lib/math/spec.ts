@@ -162,6 +162,43 @@ export function compileMath(spec: MathSpec, versions = DEFAULT_VERSIONS): Compil
   return { answer, constraints, variants }
 }
 
+// One example the model worked by hand before it wrote the formula.
+export interface WorkedExample {
+  values: { name: string; value: number }[]
+  answer: number
+}
+
+export const WORKED_EXAMPLE_TOLERANCE = 0.05
+
+// A formula can pass every check above and still compute something other than
+// what the model meant: Qwen3.5 4B wrote xf - x0 / t for (xf - x0) / t, a
+// wrong answer key in every version. The model's own hand calculation must
+// agree with the formula to within 5%, which allows for its rounding.
+export function checkWorkedExample(spec: Pick<MathSpec, 'variables' | 'answer_formula'>, example: WorkedExample): void {
+  const names = new Set(spec.variables.map((v) => v.name))
+  const values: Record<string, number> = {}
+  for (const { name, value } of example.values) {
+    const key = name.replace(/[{}]/g, '').trim()
+    if (names.has(key) && Number.isFinite(value)) values[key] = value
+  }
+  const missing = [...names].filter((name) => !(name in values))
+  if (missing.length) {
+    throw new MathSpecError(`worked_example.values must give a number for every variable (missing: ${missing.join(', ')})`)
+  }
+  const where = describe(values)
+  const computed = evaluate(parseOrThrow(spec.answer_formula, names, 'answer_formula'), values)
+  if (!Number.isFinite(computed)) {
+    throw new MathSpecError(`answer_formula is not a number for the worked example (${where}); choose example values that make sense`)
+  }
+  const gap = Math.abs(computed - example.answer)
+  if (!Number.isFinite(example.answer) || gap > WORKED_EXAMPLE_TOLERANCE * Math.max(Math.abs(computed), Math.abs(example.answer))) {
+    throw new MathSpecError(
+      `the worked example disagrees with answer_formula: when ${where}, "${spec.answer_formula}" gives ${formatComputed(computed)}, but worked_example.answer is ${formatNumber(example.answer)}. ` +
+        `Redo the example step by step. If it is right, answer_formula does not compute what the question asks: check its parentheses (a - b / c divides only b) and operators.`,
+    )
+  }
+}
+
 // ---------------------------------------------------------------- checks
 
 function checkVariables(variables: MathVariable[]): Set<string> {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compileMath, type MathSpec } from './spec'
+import { checkWorkedExample, compileMath, type MathSpec } from './spec'
 
 const speed: MathSpec = {
   stem: 'A car travels {{d}} km in {{t}} hours. What is its average speed?',
@@ -161,5 +161,42 @@ describe('compileMath', () => {
       rejects({ tolerance_percent: 8 }, 'must be 0 or between 0.1 and 5')
       rejects({ answer_formula: 'd / t / 100000' }, 'too small for a ±1% margin')
     })
+  })
+})
+
+describe('checkWorkedExample', () => {
+  const motion = {
+    variables: [
+      { name: 'xf', min: 100, max: 3000, step: 50 },
+      { name: 'x0', min: 0, max: 90, step: 10 },
+      { name: 't', min: 2, max: 20, step: 1 },
+    ],
+    answer_formula: '(xf - x0) / t',
+  }
+  const example = (answer: number, values = { xf: 2000, x0: 50, t: 3 }) => ({
+    values: Object.entries(values).map(([name, value]) => ({ name, value })),
+    answer,
+  })
+
+  it('accepts a hand calculation that matches the formula, allowing for rounding', () => {
+    expect(() => checkWorkedExample(motion, example(650))).not.toThrow()
+    expect(() => checkWorkedExample(motion, example(640))).not.toThrow()
+  })
+
+  it('catches a formula that says something other than the model meant', () => {
+    expect(() => checkWorkedExample({ ...motion, answer_formula: 'xf - x0 / t' }, example(650))).toThrow(
+      'when xf=2000, x0=50, t=3, "xf - x0 / t" gives 1983, but worked_example.answer is 650',
+    )
+    expect(() => checkWorkedExample(motion, example(-650))).toThrow('disagrees with answer_formula')
+  })
+
+  it('needs a value for every variable and reads {{name}} as the name', () => {
+    expect(() => checkWorkedExample(motion, { values: [{ name: 'xf', value: 2000 }, { name: 't', value: 3 }], answer: 650 })).toThrow('missing: x0')
+    const braced = { values: [{ name: '{{xf}}', value: 2000 }, { name: 'x0', value: 50 }, { name: ' t ', value: 3 }], answer: 650 }
+    expect(() => checkWorkedExample(motion, braced)).not.toThrow()
+  })
+
+  it('rejects example values the formula cannot evaluate', () => {
+    expect(() => checkWorkedExample(motion, example(1, { xf: 2000, x0: 50, t: 0 }))).toThrow('not a number for the worked example')
   })
 })

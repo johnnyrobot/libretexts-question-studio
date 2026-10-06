@@ -121,9 +121,32 @@ const numerical = z
   })
 
 // Models copy the stem's {{name}} placeholders into formulas, where the
-// variable is meant: "({{xf}} - {{x0}}) / {{t}}" becomes "((xf) - (x0)) / (t)".
-const formula = (max: number) =>
-  z.preprocess((value) => (typeof value === 'string' ? value.replace(/\{\{([^{}]*)\}\}/g, (_, inner: string) => `(${inner.trim()})`) : value), text(max))
+// variable is meant, and not always evenly: "({{xf}} - {{x0}}) / {{t}}",
+// "( {{xf} - {{x0}} } / {{t}} )" and "( {xf} - {x0} ) / {t}" all mean
+// (xf - x0) / t. Formulas have no braces of their own: whole placeholders
+// become parentheses, and leftover braces that balance are read as
+// parentheses too, which keeps the model's grouping. Otherwise braces around a
+// bare name are dropped, and then any that are left. For model drafts the
+// worked-example check catches a repair that changed the meaning.
+export function repairFormula(value: string): string {
+  const placeholders = value.replace(/\{\{([^{}]*)\}\}/g, (_, inner: string) => `(${inner.trim()})`)
+  if (!/[{}]/.test(placeholders)) return placeholders
+  const parens = (text: string) => text.replace(/\{/g, '(').replace(/\}/g, ')')
+  if (bracesBalance(placeholders)) return parens(placeholders)
+  const named = placeholders.replace(/\{+\s*([a-z][a-z0-9_]*)\s*\}+/gi, '$1')
+  return bracesBalance(named) ? parens(named) : named.replace(/[{}]/g, '')
+}
+
+function bracesBalance(text: string): boolean {
+  let depth = 0
+  for (const char of text) {
+    if (char === '{') depth++
+    else if (char === '}' && --depth < 0) return false
+  }
+  return depth === 0
+}
+
+const formula = (max: number) => z.preprocess((value) => (typeof value === 'string' ? repairFormula(value) : value), text(max))
 
 // stem and explanation are templates with {{name}} placeholders; compileMath
 // checks the whole spec over many seeded samples (see math/spec.ts).
@@ -131,19 +154,42 @@ const formula = (max: number) =>
 // computation is merged back in from the validated draft (see pipeline.ts).
 export const MATH_WORDING_SCHEMA = z.object(common)
 
+const mathFields = {
+  variables: z
+    .array(z.object({ name: z.string().regex(VARIABLE_NAME), min: z.number(), max: z.number(), step: z.number().positive() }))
+    .min(1)
+    .max(6),
+  constraints: z.array(formula(200)).max(6),
+  answer_formula: formula(500),
+  // compileMath also rejects anything between 0 and MIN_TOLERANCE_PERCENT.
+  tolerance_percent: z.number().min(0).max(MAX_TOLERANCE_PERCENT),
+  units,
+}
+
+// The model works one example by hand before it writes answer_formula; the
+// pipeline checks the formula against it (checkWorkedExample) and drops it, so
+// it is never saved. Values are a list of {name, value}, not a record, because
+// OpenAI's strict mode does not accept records.
+export const WORKED_EXAMPLE_SCHEMA = z.object({
+  values: z.array(z.object({ name: z.string(), value: z.number() })).min(1).max(6),
+  working: text(300),
+  answer: z.number(),
+})
+
+// What the model fills in when it drafts a math question. Properties are
+// generated in order, so the example comes just before the formula.
+const MATH_DRAFT_SCHEMA = z.object({
+  ...common,
+  variables: mathFields.variables,
+  constraints: mathFields.constraints,
+  worked_example: WORKED_EXAMPLE_SCHEMA,
+  answer_formula: mathFields.answer_formula,
+  tolerance_percent: mathFields.tolerance_percent,
+  units,
+})
+
 const math = z
-  .object({
-    ...common,
-    variables: z
-      .array(z.object({ name: z.string().regex(VARIABLE_NAME), min: z.number(), max: z.number(), step: z.number().positive() }))
-      .min(1)
-      .max(6),
-    constraints: z.array(formula(200)).max(6),
-    answer_formula: formula(500),
-    // compileMath also rejects anything between 0 and MIN_TOLERANCE_PERCENT.
-    tolerance_percent: z.number().min(0).max(MAX_TOLERANCE_PERCENT),
-    units,
-  })
+  .object({ ...common, ...mathFields })
   .superRefine((item, ctx) => {
     try {
       compileMath(item)
@@ -313,7 +359,7 @@ export function formatIssues(error: z.ZodError): string {
 // JSON Schema handed to the model. Length limits are dropped (OpenAI strict mode
 // does not accept them and grammar engines handle them poorly); zod enforces them.
 export function llmSchemaFor(itemType: ItemType): JsonSchema {
-  return toLlmSchema(ITEM_SCHEMAS[itemType])
+  return toLlmSchema(itemType === 'math' ? MATH_DRAFT_SCHEMA : ITEM_SCHEMAS[itemType])
 }
 
 export function toLlmSchema(schema: z.ZodType): JsonSchema {
