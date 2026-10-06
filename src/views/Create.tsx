@@ -429,64 +429,66 @@ function Configure({ source }: { source: StoredSource }) {
         title="Choose the questions"
         lede="Pick question types and how many to write. You review every question before exporting."
       />
-      <div className="source-card">
-        <div>
-          <span className="fine">Pages</span>
-          <strong>{source.title}</strong>
-          <span className="muted">{[pages, source.license?.label].filter(Boolean).join(' · ')}</span>
-        </div>
-        <a href="#/" className="button">
-          Change pages
-        </a>
-      </div>
-      <div className="form-stack">
-        <label>
-          Set name
-          <input value={title} onChange={(e) => setTitle(e.target.value)} />
-          <small>Becomes the assignment name if you import into an ADAPT course.</small>
-        </label>
-        <fieldset>
-          <legend>Question types</legend>
-          <p className="hint">Questions take turns among the types you tick.</p>
-          <div className="check-grid">
-            {ITEM_TYPES.map((type) => (
-              <label key={type} className="inline">
-                <input
-                  type="checkbox"
-                  checked={types.includes(type)}
-                  onChange={(e) =>
-                    setTypes((current) => (e.target.checked ? [...current, type] : current.filter((t) => t !== type)))
-                  }
-                />
-                {ITEM_TYPE_LABELS[type]}
-              </label>
-            ))}
+      <div className="configure-layout">
+        <div className="source-card">
+          <div>
+            <span className="fine">Pages</span>
+            <strong>{source.title}</strong>
+            <span className="muted">{[pages, source.license?.label].filter(Boolean).join(' · ')}</span>
           </div>
-        </fieldset>
-        <label className="narrow-field">
-          {source.pages.length === 1 ? 'Number of questions' : 'Questions per page'}
-          <input type="number" min={1} max={20} value={perPage} onChange={(e) => setPerPage(clamp(Number(e.target.value), 1, 20))} />
-        </label>
-        <label className="inline">
-          <input type="checkbox" checked={reviewPass} onChange={(e) => setReview(e.target.checked)} />
-          <span>
-            <strong>Second-pass review</strong>
-            <small>
-              The model checks and revises each question, which catches wrong answer keys. Takes about twice as long.
-              {skipsReview && ' Math questions are checked by the app instead.'}
-            </small>
-          </span>
-        </label>
-      </div>
-      <div className="action-bar">
-        <p className="muted">
-          About {calls} model calls with{' '}
-          {engine.provider === 'openai' ? `OpenAI ${engine.openaiModel}` : 'the in-browser model'}
-          {engine.provider === 'local' && total > 30 && '. Large sets take a long time in the browser.'}
-        </p>
-        <button type="button" className="primary" disabled={types.length === 0 || generation.running} onClick={start}>
-          {generation.running ? 'Another set is being written…' : `Write ${total} question${total === 1 ? '' : 's'}`}
-        </button>
+          <a href="#/" className="button">
+            Change pages
+          </a>
+        </div>
+        <div className="form-stack">
+          <label>
+            Set name
+            <input value={title} onChange={(e) => setTitle(e.target.value)} />
+            <small>Becomes the assignment name if you import into an ADAPT course.</small>
+          </label>
+          <fieldset>
+            <legend>Question types</legend>
+            <p className="hint">Questions take turns among the types you tick.</p>
+            <div className="check-grid">
+              {ITEM_TYPES.map((type) => (
+                <label key={type} className="inline">
+                  <input
+                    type="checkbox"
+                    checked={types.includes(type)}
+                    onChange={(e) =>
+                      setTypes((current) => (e.target.checked ? [...current, type] : current.filter((t) => t !== type)))
+                    }
+                  />
+                  {ITEM_TYPE_LABELS[type]}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <label className="narrow-field">
+            {source.pages.length === 1 ? 'Number of questions' : 'Questions per page'}
+            <input type="number" min={1} max={20} value={perPage} onChange={(e) => setPerPage(clamp(Number(e.target.value), 1, 20))} />
+          </label>
+          <label className="inline">
+            <input type="checkbox" checked={reviewPass} onChange={(e) => setReview(e.target.checked)} />
+            <span>
+              <strong>Second-pass review</strong>
+              <small>
+                The model checks and revises each question, which catches wrong answer keys. Takes about twice as long.
+                {skipsReview && ' Math questions are checked by the app instead.'}
+              </small>
+            </span>
+          </label>
+        </div>
+        <div className="action-bar">
+          <p className="muted">
+            About {calls} model calls with{' '}
+            {engine.provider === 'openai' ? `OpenAI ${engine.openaiModel}` : 'the in-browser model'}
+            {engine.provider === 'local' && total > 30 && '. Large sets take a long time in the browser.'}
+          </p>
+          <button type="button" className="primary" disabled={types.length === 0 || generation.running} onClick={start}>
+            {generation.running ? 'Another set is being written…' : `Write ${total} question${total === 1 ? '' : 's'}`}
+          </button>
+        </div>
       </div>
       {error && (
         <p className="error mt" role="alert">

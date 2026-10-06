@@ -90,12 +90,15 @@ function TocRow({
   const label = (
     <label className="toc-label">
       <input ref={box} type="checkbox" checked={checked} onChange={(e) => toggle(node, e.target.checked)} />
-      <span>{node.title}</span>
-      {node.children.length > 0 && (
-        <span className="muted">
-          {leaves.length} page{leaves.length === 1 ? '' : 's'}
-        </span>
-      )}
+      <span>
+        {node.title}
+        {node.children.length > 0 && (
+          <span className="muted">
+            {' '}
+            {leaves.length} page{leaves.length === 1 ? '' : 's'}
+          </span>
+        )}
+      </span>
     </label>
   )
   if (node.children.length === 0) return <li className="toc-leaf">{label}</li>

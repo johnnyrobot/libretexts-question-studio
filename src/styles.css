@@ -29,7 +29,12 @@
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   --sidebar: 280px;
-  --measure: 880px;
+  /* The main area fills the window. Collections add columns as it widens;
+     forms and prose keep these widths so lines stay readable. */
+  --gutter: clamp(1.25rem, 3vw, 3.5rem);
+  --page-max: 160rem;
+  --form-max: 52rem;
+  --measure: 72ch;
   color-scheme: light;
 }
 
@@ -413,14 +418,19 @@ button.theme-switch:hover:not(:disabled) {
 }
 
 main {
-  max-width: calc(var(--measure) + 7rem);
+  container: main / inline-size;
+  max-width: var(--page-max);
   margin: 0 auto;
-  padding: 2.5rem 3.5rem 7rem;
+  padding: 2.5rem var(--gutter) 7rem;
+}
+
+main p {
+  max-width: var(--measure);
 }
 
 .banner {
   margin: 0;
-  padding: 0.75rem 3.5rem;
+  padding: 0.75rem var(--gutter);
   background: var(--warning-soft);
   border-bottom: 1px solid var(--hairline);
   font-size: 1rem;
@@ -543,6 +553,7 @@ label.inline > span {
   display: flex;
   flex-direction: column;
   gap: 2rem;
+  max-width: var(--form-max);
 }
 
 .narrow-field {
@@ -813,11 +824,13 @@ button.danger-link {
 }
 
 .empty {
+  max-width: var(--form-max);
   text-align: center;
   padding: 3.5rem 2rem;
 }
 
 .empty p {
+  margin-inline: auto;
   font-size: 1.1875rem;
   color: var(--text-secondary);
 }
@@ -907,6 +920,7 @@ button.danger-link {
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 1rem;
+  max-width: var(--form-max);
 }
 
 .search-row > :first-child {
@@ -934,15 +948,20 @@ button.danger-link {
   padding-left: 2.75rem;
 }
 
-.result-list {
+.result-list,
+.set-rows {
   list-style: none;
   margin: 1.5rem 0;
   padding: 0;
-  border-top: 1px solid var(--hairline);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: 0.75rem;
 }
 
-.result-list li {
-  border-bottom: 1px solid var(--hairline);
+.result-list li,
+.set-rows li {
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
 }
 
 .result-list button,
@@ -951,10 +970,11 @@ button.danger-link {
   align-items: center;
   gap: 1rem;
   width: 100%;
+  height: 100%;
   min-height: 4rem;
-  padding: 1rem 0.75rem;
+  padding: 1rem 1.125rem;
   border: 0;
-  border-radius: 0;
+  border-radius: 11px;
   background: none;
   color: var(--text);
   text-align: left;
@@ -1014,6 +1034,13 @@ button.danger-link {
 .toc-tree {
   border-top: 1px solid var(--hairline);
   padding-top: 0.5rem;
+  /* A long book reads like an index: chapters flow down, then across. */
+  columns: 28rem;
+  column-gap: 3rem;
+}
+
+.toc-tree > li {
+  break-inside: avoid;
 }
 
 .toc-branch {
@@ -1035,8 +1062,11 @@ label.toc-label {
   font-size: 1.0625rem;
 }
 
+/* The page count wraps with the title rather than squeezing it. */
 .toc-label .muted {
+  margin-left: 0.25rem;
   font-size: 0.9375rem;
+  white-space: nowrap;
 }
 
 button.disclosure {
@@ -1102,27 +1132,26 @@ button.disclosure[aria-expanded='true'] .icon {
 /* ---------------------------------------------------------------- library */
 
 .set-rows {
-  list-style: none;
   margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--hairline);
-}
-
-.set-rows li {
-  border-bottom: 1px solid var(--hairline);
 }
 
 .set-rows .row-link {
-  min-height: 5rem;
-  padding: 1.125rem 0.75rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem 1rem;
+  padding: 1.25rem 1.375rem;
+}
+
+.set-rows .row-link > .icon {
+  grid-row: 1;
+  grid-column: 2;
 }
 
 .set-progress {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.125rem;
-  text-align: right;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
   font-size: 1rem;
 }
 
@@ -1168,8 +1197,9 @@ button.disclosure[aria-expanded='true'] .icon {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 36rem), 1fr));
+  align-items: start;
   gap: 1.5rem;
 }
 
@@ -1595,6 +1625,84 @@ details[open] > summary {
   outline-offset: 2px;
 }
 
+/* ------------------------------------------------- side-by-side layouts */
+
+/* Pages with a task and something to consult split in two once the main area
+   has room, and stack in reading order below that. */
+
+.section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: 2.5rem 3.5rem;
+}
+
+.section-grid > .section,
+.section-grid > .section:first-of-type {
+  margin-top: 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--hairline);
+}
+
+.steps {
+  max-width: var(--measure);
+}
+
+@container main (min-width: 60rem) {
+  .engine-layout {
+    display: grid;
+    grid-template-columns: minmax(16rem, 24rem) minmax(0, 56rem);
+    gap: 2.5rem;
+    align-items: start;
+  }
+
+  .engine-layout > .choice-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .engine-layout > .card {
+    margin-top: 0;
+  }
+}
+
+@container main (min-width: 64rem) {
+  .configure-layout {
+    display: grid;
+    grid-template-columns: minmax(0, var(--form-max)) minmax(18rem, 26rem);
+    grid-template-areas:
+      'form source'
+      'bar source';
+    column-gap: 3.5rem;
+    align-items: start;
+  }
+
+  .configure-layout > .form-stack {
+    grid-area: form;
+  }
+
+  .configure-layout > .action-bar {
+    grid-area: bar;
+  }
+
+  .configure-layout > .source-card {
+    grid-area: source;
+    flex-direction: column;
+    align-items: flex-start;
+    margin: 0;
+  }
+
+  .export-layout {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3.5rem;
+    align-items: start;
+    max-width: 112rem;
+  }
+
+  .export-layout > * > :first-child {
+    margin-top: 0;
+  }
+}
+
 /* ------------------------------------------------------------ narrow screens */
 
 @media (max-width: 900px) {
@@ -1710,15 +1818,6 @@ details[open] > summary {
     align-items: flex-start;
   }
 
-  .set-rows .row-link {
-    flex-wrap: wrap;
-  }
-
-  .set-progress {
-    align-items: flex-start;
-    text-align: left;
-  }
-
   .variable-grid {
     grid-template-columns: minmax(4rem, 1.2fr) repeat(3, minmax(0, 1fr)) 2.75rem;
   }
@@ -1750,12 +1849,16 @@ details[open] > summary {
   padding: 0.25rem 0;
 }
 
-/* A long inline formula scrolls inside its block instead of widening the page. */
+/* A long inline formula scrolls inside its block instead of widening the page.
+   The padding gives a fraction on the last line room to hang below it without
+   a vertical scrollbar; the negative margin keeps the spacing unchanged. */
 .stem,
 .answer,
 .explanation,
 .source-text blockquote {
   overflow-x: auto;
+  padding-bottom: 0.5rem;
+  margin-bottom: -0.5rem;
 }
 
 h1,

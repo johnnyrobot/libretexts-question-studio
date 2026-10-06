@@ -21,34 +21,36 @@ function EngineSettingsPage() {
   return (
     <>
       <PageHeader title="AI engine" lede="Choose the model that writes your questions." />
-      <fieldset className="choice-cards">
-        <legend className="sr-only">AI engine</legend>
-        <label className="option">
-          <input
-            type="radio"
-            name="provider"
-            checked={engine.provider === 'local'}
-            onChange={() => saveEngineSettings({ provider: 'local' })}
-          />
-          <span>
-            <strong>In-browser model</strong>
-            <span className="muted">Free and private. Textbook text never leaves this device. One-time download.</span>
-          </span>
-        </label>
-        <label className="option">
-          <input
-            type="radio"
-            name="provider"
-            checked={engine.provider === 'openai'}
-            onChange={() => saveEngineSettings({ provider: 'openai' })}
-          />
-          <span>
-            <strong>OpenAI, with your API key</strong>
-            <span className="muted">Highest quality, with GPT-6 Luna. Billed to your OpenAI account.</span>
-          </span>
-        </label>
-      </fieldset>
-      <section className="card section-gap">{engine.provider === 'local' ? <LocalSettings /> : <OpenAISettings />}</section>
+      <div className="engine-layout">
+        <fieldset className="choice-cards">
+          <legend className="sr-only">AI engine</legend>
+          <label className="option">
+            <input
+              type="radio"
+              name="provider"
+              checked={engine.provider === 'local'}
+              onChange={() => saveEngineSettings({ provider: 'local' })}
+            />
+            <span>
+              <strong>In-browser model</strong>
+              <span className="muted">Free and private. Textbook text never leaves this device. One-time download.</span>
+            </span>
+          </label>
+          <label className="option">
+            <input
+              type="radio"
+              name="provider"
+              checked={engine.provider === 'openai'}
+              onChange={() => saveEngineSettings({ provider: 'openai' })}
+            />
+            <span>
+              <strong>OpenAI, with your API key</strong>
+              <span className="muted">Highest quality, with GPT-6 Luna. Billed to your OpenAI account.</span>
+            </span>
+          </label>
+        </fieldset>
+        <section className="card section-gap">{engine.provider === 'local' ? <LocalSettings /> : <OpenAISettings />}</section>
+      </div>
     </>
   )
 }
@@ -326,75 +328,77 @@ function DataSettings() {
   return (
     <>
       <PageHeader title="Data and backup" lede="Question sets, downloads, and saved textbook pages live only in this browser." />
-      <section className="section">
-        <h2>Storage</h2>
-        <p>
-          {estimate ? `${formatBytes(estimate.usage)} used of ${formatBytes(estimate.quota)} available.` : '…'}{' '}
-          {persisted === true && 'The browser will not clear this data on its own.'}
-        </p>
-        {persisted === false && (
+      <div className="section-grid">
+        <section className="section">
+          <h2>Storage</h2>
           <p>
-            <button type="button" className="link" onClick={async () => setPersisted(await requestPersistentStorage())}>
-              Ask the browser to keep this data
-            </button>
+            {estimate ? `${formatBytes(estimate.usage)} used of ${formatBytes(estimate.quota)} available.` : '…'}{' '}
+            {persisted === true && 'The browser will not clear this data on its own.'}
           </p>
-        )}
-        <p className="fine">Install the app (browser menu → Install) so Safari does not clear it after a week without use.</p>
-      </section>
-      <section className="section">
-        <h2>Backup</h2>
-        <p className="muted">
-          Move your question sets to another browser or computer, or keep a copy. The backup is a JSON file with your pages
-          and questions, not your API key.
-        </p>
-        <div className="actions">
+          {persisted === false && (
+            <p>
+              <button type="button" className="link" onClick={async () => setPersisted(await requestPersistentStorage())}>
+                Ask the browser to keep this data
+              </button>
+            </p>
+          )}
+          <p className="fine">Install the app (browser menu → Install) so Safari does not clear it after a week without use.</p>
+        </section>
+        <section className="section">
+          <h2>Backup</h2>
+          <p className="muted">
+            Move your question sets to another browser or computer, or keep a copy. The backup is a JSON file with your pages
+            and questions, not your API key.
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              onClick={async () =>
+                downloadBlob(await createBackup(), `question-studio-backup-${new Date().toISOString().slice(0, 10)}.json`)
+              }
+            >
+              <Icon name="download" /> Download backup
+            </button>
+            <label className="file-button">
+              Restore from backup
+              <input
+                type="file"
+                accept="application/json,.json"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0]
+                  e.target.value = ''
+                  if (!file) return
+                  try {
+                    const result = await restoreBackup(file)
+                    setBackupStatus(`Restored ${result.sets} set(s) and ${result.items} question(s).`)
+                  } catch (error) {
+                    setBackupStatus(error instanceof Error ? error.message : String(error))
+                  }
+                }}
+              />
+            </label>
+          </div>
+          {backupStatus && (
+            <p className="notice mt" role="status">
+              {backupStatus}
+            </p>
+          )}
+        </section>
+        <section className="section">
+          <h2>Delete everything</h2>
+          <p className="muted">Removes every question set, download, and saved page from this browser.</p>
           <button
             type="button"
-            onClick={async () =>
-              downloadBlob(await createBackup(), `question-studio-backup-${new Date().toISOString().slice(0, 10)}.json`)
-            }
+            className="danger"
+            onClick={async () => {
+              if (!confirm('Delete every question set, export, and cached page from this browser?')) return
+              await Promise.all([db.items.clear(), db.sets.clear(), db.sources.clear(), db.exports.clear(), db.pages.clear()])
+            }}
           >
-            <Icon name="download" /> Download backup
+            Delete all question sets and saved pages
           </button>
-          <label className="file-button">
-            Restore from backup
-            <input
-              type="file"
-              accept="application/json,.json"
-              onChange={async (e) => {
-                const file = e.target.files?.[0]
-                e.target.value = ''
-                if (!file) return
-                try {
-                  const result = await restoreBackup(file)
-                  setBackupStatus(`Restored ${result.sets} set(s) and ${result.items} question(s).`)
-                } catch (error) {
-                  setBackupStatus(error instanceof Error ? error.message : String(error))
-                }
-              }}
-            />
-          </label>
-        </div>
-        {backupStatus && (
-          <p className="notice mt" role="status">
-            {backupStatus}
-          </p>
-        )}
-      </section>
-      <section className="section">
-        <h2>Delete everything</h2>
-        <p className="muted">Removes every question set, download, and saved page from this browser.</p>
-        <button
-          type="button"
-          className="danger"
-          onClick={async () => {
-            if (!confirm('Delete every question set, export, and cached page from this browser?')) return
-            await Promise.all([db.items.clear(), db.sets.clear(), db.sources.clear(), db.exports.clear(), db.pages.clear()])
-          }}
-        >
-          Delete all question sets and saved pages
-        </button>
-      </section>
+        </section>
+      </div>
     </>
   )
 }

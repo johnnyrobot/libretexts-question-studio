@@ -370,134 +370,140 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
 
       {running && <p className="notice">Questions are still being written. Export when the run finishes.</p>}
 
-      <section className="card download-card">
-        <div className="download-main">
-          <Icon name="file" size={36} />
-          <div>
-            <strong>QTI file (.zip)</strong>
-            <span className="muted">
-              {exportable} question{exportable === 1 ? '' : 's'}
-              {randomizeMath && exportableMath > 0 && ', not counting randomized math'}
-            </span>
-          </div>
-          <button
-            type="button"
-            className="primary"
-            disabled={exportable === 0 || running}
-            onClick={() => download(() => exportSet(set.id, { includeDrafts, randomizeMath }))}
-          >
-            <Icon name="download" /> Download
-          </button>
-        </div>
-        {drafts > 0 && (
-          <label className="inline">
-            <input type="checkbox" checked={includeDrafts} onChange={(e) => setIncludeDrafts(e.target.checked)} />
-            Also include the {drafts} question{drafts === 1 ? ' that still needs' : 's that still need'} review
-          </label>
-        )}
-        {approved === 0 && !includeDrafts && (
-          <p className="muted">
-            No questions are approved yet. <a href={`#/set/${set.id}`}>Review questions</a>
-          </p>
-        )}
-        {exportError && (
-          <p className="error" role="alert">
-            {exportError}
-          </p>
-        )}
-      </section>
-
-      {exportableMath > 0 && (
-        <section className="section-gap">
-          <h2>Math questions ({exportableMath})</h2>
-          <fieldset className="choice-cards">
-            <legend className="sr-only">How to export math questions</legend>
-            <label className="option">
-              <input type="radio" name="math-export" checked={!randomizeMath} onChange={() => setRandomizeMath(false)} />
-              <span>
-                <strong>One version each</strong>
-                <span className="muted">Included in the file above. Every student sees the same numbers.</span>
-              </span>
-            </label>
-            <label className="option">
-              <input type="radio" name="math-export" checked={randomizeMath} onChange={() => setRandomizeMath(true)} />
-              <span>
-                <strong>Randomized</strong>
-                <span className="muted">A separate file. Each student gets one of several versions.</span>
-              </span>
-            </label>
-          </fieldset>
-          {randomizeMath && (
-            <div className="card mt">
-              <div className="search-row">
-                <label className="narrow-field">
-                  Versions per question
-                  <input
-                    type="number"
-                    min={2}
-                    max={MAX_VERSIONS}
-                    value={versions}
-                    onChange={(e) => setVersions(Math.min(MAX_VERSIONS, Math.max(2, Math.round(Number(e.target.value)) || 2)))}
-                  />
-                </label>
-                <button type="button" disabled={running} onClick={() => download(() => exportMathVersions(set.id, includeDrafts, versions))}>
-                  <Icon name="download" /> Download math versions
-                </button>
-              </div>
-              <p className="fine mt">
-                ADAPT turns each math question into its own assignment. Import this file into a course on its own, with an
-                assignment template whose Dynamic Questioning settings are <strong>Random sampling</strong>: Yes and{' '}
-                <strong>Number of randomized assessments</strong>: 1. Leave Points Per Question on “Specify the points for
-                each question individually” (the default).
-              </p>
-            </div>
-          )}
-        </section>
-      )}
-
-      <section className="section-gap">
-        <h2>Import into ADAPT</h2>
-        <ol className="steps">
-          <li>
-            In ADAPT, open <strong>Question Editor → Bulk Import</strong> (instructor account).
-          </li>
-          <li>
-            Choose <strong>Canvas QTI</strong> as the import template. Pick a folder, author, and license
-            {source?.license ? ` (${source.license.label} for this source)` : ''}, and optionally a course and assignment
-            template.
-          </li>
-          <li>Upload the .zip and press Import. Each question is listed as it is imported.</li>
-        </ol>
-        <p className="fine">
-          The file is Canvas-style QTI 1.2, so it also imports into Canvas and most LMSs that accept Canvas quiz exports. In
-          ADAPT, fill-in-the-blank accepts only the first answer, and essays become open-ended questions.
-        </p>
-      </section>
-
-      {exports && exports.length > 0 && (
-        <section className="section-gap">
-          <h2>Earlier downloads</h2>
-          <ul className="downloads">
-            {exports.map((record) => (
-              <li key={record.id}>
-                <span className="filename">
-                  <button type="button" className="link" onClick={() => downloadBlob(record.zip, record.filename)}>
-                    {record.filename}
-                  </button>
-                  <br />
-                  <span className="fine">
-                    {record.itemIds.length} questions ·{' '}
-                    {new Date(record.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
-                  </span>
+      <div className="export-layout">
+        <div>
+          <section className="card download-card">
+            <div className="download-main">
+              <Icon name="file" size={36} />
+              <div>
+                <strong>QTI file (.zip)</strong>
+                <span className="muted">
+                  {exportable} question{exportable === 1 ? '' : 's'}
+                  {randomizeMath && exportableMath > 0 && ', not counting randomized math'}
                 </span>
-                <button type="button" className="danger-link" onClick={() => db.exports.delete(record.id)}>
-                  Remove
-                </button>
+              </div>
+              <button
+                type="button"
+                className="primary"
+                disabled={exportable === 0 || running}
+                onClick={() => download(() => exportSet(set.id, { includeDrafts, randomizeMath }))}
+              >
+                <Icon name="download" /> Download
+              </button>
+            </div>
+            {drafts > 0 && (
+              <label className="inline">
+                <input type="checkbox" checked={includeDrafts} onChange={(e) => setIncludeDrafts(e.target.checked)} />
+                Also include the {drafts} question{drafts === 1 ? ' that still needs' : 's that still need'} review
+              </label>
+            )}
+            {approved === 0 && !includeDrafts && (
+              <p className="muted">
+                No questions are approved yet. <a href={`#/set/${set.id}`}>Review questions</a>
+              </p>
+            )}
+            {exportError && (
+              <p className="error" role="alert">
+                {exportError}
+              </p>
+            )}
+          </section>
+
+          {exportableMath > 0 && (
+            <section className="section-gap">
+              <h2>Math questions ({exportableMath})</h2>
+              <fieldset className="choice-cards">
+                <legend className="sr-only">How to export math questions</legend>
+                <label className="option">
+                  <input type="radio" name="math-export" checked={!randomizeMath} onChange={() => setRandomizeMath(false)} />
+                  <span>
+                    <strong>One version each</strong>
+                    <span className="muted">Included in the file above. Every student sees the same numbers.</span>
+                  </span>
+                </label>
+                <label className="option">
+                  <input type="radio" name="math-export" checked={randomizeMath} onChange={() => setRandomizeMath(true)} />
+                  <span>
+                    <strong>Randomized</strong>
+                    <span className="muted">A separate file. Each student gets one of several versions.</span>
+                  </span>
+                </label>
+              </fieldset>
+              {randomizeMath && (
+                <div className="card mt">
+                  <div className="search-row">
+                    <label className="narrow-field">
+                      Versions per question
+                      <input
+                        type="number"
+                        min={2}
+                        max={MAX_VERSIONS}
+                        value={versions}
+                        onChange={(e) => setVersions(Math.min(MAX_VERSIONS, Math.max(2, Math.round(Number(e.target.value)) || 2)))}
+                      />
+                    </label>
+                    <button type="button" disabled={running} onClick={() => download(() => exportMathVersions(set.id, includeDrafts, versions))}>
+                      <Icon name="download" /> Download math versions
+                    </button>
+                  </div>
+                  <p className="fine mt">
+                    ADAPT turns each math question into its own assignment. Import this file into a course on its own, with an
+                    assignment template whose Dynamic Questioning settings are <strong>Random sampling</strong>: Yes and{' '}
+                    <strong>Number of randomized assessments</strong>: 1. Leave Points Per Question on “Specify the points for
+                    each question individually” (the default).
+                  </p>
+                </div>
+              )}
+            </section>
+          )}
+        </div>
+
+        <div>
+          <section className="section-gap">
+            <h2>Import into ADAPT</h2>
+            <ol className="steps">
+              <li>
+                In ADAPT, open <strong>Question Editor → Bulk Import</strong> (instructor account).
               </li>
-            ))}
-          </ul>
-        </section>
-      )}
+              <li>
+                Choose <strong>Canvas QTI</strong> as the import template. Pick a folder, author, and license
+                {source?.license ? ` (${source.license.label} for this source)` : ''}, and optionally a course and assignment
+                template.
+              </li>
+              <li>Upload the .zip and press Import. Each question is listed as it is imported.</li>
+            </ol>
+            <p className="fine">
+              The file is Canvas-style QTI 1.2, so it also imports into Canvas and most LMSs that accept Canvas quiz exports. In
+              ADAPT, fill-in-the-blank accepts only the first answer, and essays become open-ended questions.
+            </p>
+          </section>
+
+          {exports && exports.length > 0 && (
+            <section className="section-gap">
+              <h2>Earlier downloads</h2>
+              <ul className="downloads">
+                {exports.map((record) => (
+                  <li key={record.id}>
+                    <span className="filename">
+                      <button type="button" className="link" onClick={() => downloadBlob(record.zip, record.filename)}>
+                        {record.filename}
+                      </button>
+                      <br />
+                      <span className="fine">
+                        {record.itemIds.length} questions ·{' '}
+                        {new Date(record.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+                      </span>
+                    </span>
+                    <button type="button" className="danger-link" onClick={() => db.exports.delete(record.id)}>
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
+      </div>
     </>
   )
 }
