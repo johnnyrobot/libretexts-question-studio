@@ -28,7 +28,8 @@ quiz.zip
 - The quiz is found through the manifest resource whose type is
   `associatedcontent/imscc_xmlv1p1/learning-application-resource`.
 - `assessment_meta.xml`'s `<title>` and `<description>` become the assignment
-  name and instructions when importing into a course.
+  name and instructions when importing into a course. Students see the
+  instructions, so the description must not hold notes meant for instructors.
 - Items must sit directly in the root `<section>`. With nested sections, only the
   first nested section is read.
 

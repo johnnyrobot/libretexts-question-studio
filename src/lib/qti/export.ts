@@ -10,7 +10,7 @@ import { buildQuizPackage, mathVersion, type QuizPackageInput } from './canvas'
 // a numerical question in the main quiz. Randomized: they leave the main quiz
 // and exportMathVersions writes one quiz per math question holding every
 // version. ADAPT makes each quiz an assignment, and an assignment template
-// with Randomizations on (1 randomized assessment) shows each student one.
+// with Random sampling on (1 randomized assessment) shows each student one.
 
 export interface ExportOptions {
   includeDrafts: boolean
@@ -64,9 +64,11 @@ async function load(setId: string, includeDrafts: boolean) {
   if (items.length === 0) {
     throw new Error(includeDrafts ? 'There are no questions to export.' : 'Approve at least one question to export.')
   }
+  // ADAPT shows this to students as the assignment's instructions when a quiz
+  // is imported into a course, so it carries no notes meant for instructors.
   const description = source?.url
-    ? `Questions generated from ${source.title} (${source.url}). Review before assigning.`
-    : `Questions generated from ${source?.title ?? 'a LibreTexts source'}. Review before assigning.`
+    ? `Questions based on ${source.title} (${source.url}).`
+    : `Questions based on ${source?.title ?? 'a LibreTexts source'}.`
   return { set, description, items }
 }
 

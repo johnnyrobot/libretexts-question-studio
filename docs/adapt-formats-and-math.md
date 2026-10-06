@@ -74,15 +74,17 @@ The math question type (`math`, "Math (randomized numbers)") lives in
 4. **Versions are deterministic** (mulberry32, seeds 1, 2, 3, ...), so re-exports are byte-identical. Variables print exactly, and computed placeholders print to four significant figures. Answers with a tolerance are rounded to six significant figures for the answer key.
 5. **Export:**
    - **Fixed (default):** version 1 goes into the main quiz as a `numerical_question`.
-   - **Randomized:** a second zip has one quiz per math question, holding 2 to 10 versions titled "(version n)". ADAPT creates one assignment per quiz. Import it into a course with an assignment template where **Randomizations** is Yes and **Number of randomized assessments** is 1. ADAPT only allows that with "Specify number of points" under Points Per Question. Version 1 keeps the question's own identifier; later versions hash `<uuid>:v<n>`.
+   - **Randomized:** a second zip has one quiz per math question, holding 2 to 10 versions titled "(version n)". ADAPT creates one assignment per quiz. Import it into a course with an assignment template whose Dynamic Questioning settings are **Random sampling**: Yes and **Number of randomized assessments**: 1. Points Per Question has to be "Specify the points for each question individually", which is the default. (The local `../adapt` checkout calls these "Randomizations" and "Specify number of points".) Version 1 keeps the question's own identifier; later versions hash `<uuid>:v<n>`.
 6. **Exact answer keys:** ADAPT stores a numerical answer as `(low + high) / 2` in doubles, so a plain decimal range can turn 0.346154 into 0.34615399999999996. `numericRange` (in `qti/canvas.ts`) detects this. It then writes the bounds as two doubles whose sum is exactly twice the answer, printed so PHP reads back the same doubles. This applies to the numerical type too.
 
 Both zips were checked with ADAPT's PHP parser (`tests/adapt-parser`). The
 sample package (version 1 of a math question among the other eight types) was
 imported live into adapt.libretexts.org on 2026-10-05; see
-[adapt-qti-import.md](adapt-qti-import.md#live-import-check). The randomized
-zip has not been imported live, and neither has the course and assignment
-template flow.
+[adapt-qti-import.md](adapt-qti-import.md#live-import-check). The randomized zip
+was imported live the same day, into a hidden test course with such a template.
+ADAPT created one assignment per math question. Each one listed "Number of
+Questions 5" and "Number of Randomized Questions Chosen 1", and the 10 versions
+imported with no errors.
 
 **PGML examples from the research** (rendered and graded on staging-render; not used by the app):
 - [examples/deriv.pg](examples/deriv.pg): a randomized polynomial with a formula answer and a numeric answer.

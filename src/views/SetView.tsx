@@ -144,9 +144,9 @@ export function SetView({ setId }: { setId: string }) {
             {randomizeMath && (
               <p className="fine">
                 ADAPT turns each math question into its own assignment. Import this file into a course separately from the main
-                file, with an assignment template where <strong>Randomizations</strong> is Yes and{' '}
-                <strong>Number of randomized assessments</strong> is 1. ADAPT requires “Specify number of points” under Points
-                Per Question to turn randomizations on.
+                file, with an assignment template whose Dynamic Questioning settings are <strong>Random sampling</strong>: Yes
+                and <strong>Number of randomized assessments</strong>: 1. Points Per Question must stay on “Specify the points
+                for each question individually” (the default).
               </p>
             )}
           </fieldset>

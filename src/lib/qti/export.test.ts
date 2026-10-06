@@ -50,6 +50,14 @@ describe('exportSet', () => {
     expect(record.filename).toBe('leaf-quiz-adapt-qti.zip')
   })
 
+  it('writes a description students can read as assignment instructions', async () => {
+    const record = await exportSet('set', { includeDrafts: false, randomizeMath: false })
+    const files = unzipSync(new Uint8Array(await record.zip.arrayBuffer()))
+    const meta = strFromU8(Object.entries(files).find(([path]) => path.endsWith('assessment_meta.xml'))![1])
+    expect(meta).toContain('<description>&lt;div&gt;&lt;p&gt;Questions based on Leaves.&lt;/p&gt;&lt;/div&gt;</description>')
+    expect(meta).not.toMatch(/review/i)
+  })
+
   it('leaves math questions out of the main quiz when they are randomized', async () => {
     const record = await exportSet('set', { includeDrafts: false, randomizeMath: true })
     const [quiz] = await quizzes(record.zip)
