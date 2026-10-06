@@ -127,6 +127,10 @@ const formula = (max: number) =>
 
 // stem and explanation are templates with {{name}} placeholders; compileMath
 // checks the whole spec over many seeded samples (see math/spec.ts).
+// What the reviewer may change in a math question: the wording only. The
+// computation is merged back in from the validated draft (see pipeline.ts).
+export const MATH_WORDING_SCHEMA = z.object(common)
+
 const math = z
   .object({
     ...common,

@@ -4,7 +4,7 @@ import { SAMPLE_DRAFTS } from '../qti/fixtures'
 import { completeWithRetries, LLMError, type CompletionRequest, type LLMProvider } from '../llm/types'
 import { db, type StoredSource } from '../storage/db'
 import { planUnits, repairDraft, runGeneration, stripSourceReferences } from './pipeline'
-import type { ItemType } from './schema'
+import type { DraftOf, ItemType } from './schema'
 
 const source: StoredSource = {
   id: 'src-1',
@@ -177,6 +177,31 @@ describe('runGeneration', () => {
     expect(notLoaded.result.created).toBe(0)
     expect(notLoaded.prompts).toHaveLength(1)
     expect(notLoaded.result.failures[0]).toMatch(/not loaded/)
+  })
+
+  it('lets the reviewer reword a math question but not change what it computes', async () => {
+    const provider = new FakeProvider()
+    const original = provider.complete.bind(provider)
+    const { item_type: _, ...math } = SAMPLE_DRAFTS.find((d) => d.item_type === 'math')!
+    void _
+    provider.complete = (request) =>
+      request.schemaName === 'item_review'
+        ? completeWithRetries(request, async () => ({
+            text: JSON.stringify({
+              issues: ['The parentheses in the formula are redundant.'],
+              revised: { ...math, title: 'Reworded title', answer_formula: 'v + t / 2', tolerance_percent: 5 },
+            }),
+            usage: null,
+          }))
+        : original(request)
+    const result = await runGeneration('set-1', source, { itemTypes: ['math'], perPage: 1, reviewPass: true }, provider, new AbortController().signal, callbacks)
+    expect(result.created).toBe(1)
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    const draft = item.draft as DraftOf<'math'>
+    expect(draft.title).toBe('Reworded title')
+    expect(draft.answer_formula).toBe(math.answer_formula)
+    expect(draft.tolerance_percent).toBe(math.tolerance_percent)
+    expect(item.critique).toContain('The parentheses in the formula are redundant.')
   })
 
   it('rejects citations outside the section shown to the model', async () => {

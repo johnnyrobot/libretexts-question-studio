@@ -91,7 +91,20 @@ The math question type (`math`, "Math (randomized numbers)") lives in
 | Before the repairs | 2, 1 usable | 1 | 3 |
 | After the repairs | 3, all usable | 3 | 0 |
 
-The fallbacks were sections whose concepts the extractor did not mark as quantitative. The review pass still sometimes runs away to the token limit and needs a retry.
+The fallbacks were sections whose concepts the extractor did not mark as quantitative.
+
+**Review pass for math (2026-10-06).**
+- The reviewer only rewords math questions. Its schema has the wording fields only (title, stem, explanation, Bloom, difficulty, citations), and the validated computation is merged back in. Given the chance, Qwen3.5 4B rewrote a correct `(v0 + v) / 2` as `v0 + v / 2`. That passes every check but gives a wrong answer key in every version, and it is the likely source of an `xf - x0 / t` item seen in testing.
+- The review prompt covers content only, because format rules are checked in code. Asked to re-check format rules (variable names, placeholders), the 4B model deliberated inside its `issues` strings ("Let's re-read carefully…") until it looped to the 1,800-token limit.
+- Same draft, reviewed 8 times:
+
+| | Before | After |
+|---|---|---|
+| Runaways | 2 of 4 | 0 of 8 |
+| Time per review | ~75 s | ~21 s |
+| Formula changed by the reviewer | 1 of 7 | impossible |
+
+- Still weak: 5 of the 8 reviews needed a retry for unbalanced TeX braces around placeholders. The reviewer's notes on math are mostly mistaken claims about placeholder format.
 
 Both zips were checked with ADAPT's PHP parser (`tests/adapt-parser`). The
 sample package (version 1 of a math question among the other eight types) was

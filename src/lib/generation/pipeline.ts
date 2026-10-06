@@ -13,6 +13,7 @@ import {
   formatIssues,
   ITEM_SCHEMAS,
   ITEM_TYPE_LABELS,
+  MATH_WORDING_SCHEMA,
   llmSchemaFor,
   parseDraft,
   toLlmSchema,
@@ -258,7 +259,7 @@ async function reviewItem(
 ): Promise<{ draft: QuestionDraft; issues: string[] }> {
   const schema = z.object({
     issues: z.array(z.string().trim().min(1).max(400)).max(8),
-    revised: ITEM_SCHEMAS[draft.item_type],
+    revised: draft.item_type === 'math' ? MATH_WORDING_SCHEMA : ITEM_SCHEMAS[draft.item_type],
   })
   const result = await provider.complete({
     system: SYSTEM_PROMPT,
@@ -272,11 +273,22 @@ async function reviewItem(
       const issues = z.array(z.string()).max(8).safeParse(record?.issues)
       return {
         issues: issues.success ? issues.data : [],
-        draft: parseDraft(draft.item_type, repairDraft(draft.item_type, record?.revised), allowed),
+        draft: parseDraft(draft.item_type, repairDraft(draft.item_type, keepComputation(draft, record?.revised)), allowed),
       }
     },
   })
   return result.value
+}
+
+// The reviewer may reword a math question but not change what it computes. In
+// testing, Qwen3.5 4B "simplified" a correct (v0 + v) / 2 into v0 + v / 2, which
+// still passes every check but gives a wrong answer key in every version. Its
+// schema asks only for the wording, and the validated computation is merged
+// back in here.
+function keepComputation(draft: QuestionDraft, revised: unknown): unknown {
+  if (draft.item_type !== 'math' || !revised || typeof revised !== 'object') return revised
+  const { variables, constraints, answer_formula, tolerance_percent, units } = draft
+  return { ...revised, variables, constraints, answer_formula, tolerance_percent, units }
 }
 
 // Small models mark a division "exact" (tolerance 0) and ignore the hint on

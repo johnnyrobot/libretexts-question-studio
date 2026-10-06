@@ -67,9 +67,12 @@ ${renderSource(unit, concept.source_paragraphs)}
 
 export function reviewPrompt(unit: SourceUnit, concept: Concept, draft: QuestionDraft): string {
   const { item_type, ...payload } = draft
-  return `Act as a separate, critical assessment reviewer. Check the draft ${item_type.replace(/_/g, ' ')} question against the source paragraphs for: factual errors, more than one defensible answer, answer leakage in the stem, implausible or "all/none of the above" distractors, grammatical cues, explanation errors, and Bloom/difficulty mismatch.
-List the concrete issues you found (an empty list if none), then return the complete revised question with every issue fixed. Even when nothing is wrong, polish the wording. Keep the same question type and concept_label, follow the same rules as the original draft, and cite only paragraphs from ${JSON.stringify(concept.source_paragraphs)}.
-${ITEM_RULES[item_type]}
+  return `Act as a separate, critical assessment reviewer. Check the content of the draft ${item_type.replace(/_/g, ' ')} question against the source paragraphs: ${REVIEW_FOCUS[item_type] ?? REVIEW_FOCUS.default}
+Format rules (field names, placeholders, tolerances, variable names) are checked automatically, so do not report them.
+List only real problems you are sure of, each as one short sentence. Do not think out loud, do not list things that are correct, and never repeat a sentence. If nothing is wrong, return an empty list.
+Then return the complete revised question with every listed problem fixed, polishing the wording even when nothing is wrong. Keep the same question type and concept_label, and cite only paragraphs from ${JSON.stringify(concept.source_paragraphs)}.
+The revised question must follow these rules:
+${REVIEW_RULES[item_type] ?? ITEM_RULES[item_type]}
 ${MATH_RULES}
 
 <page_title>${untrusted(unit.pageTitle)}</page_title>
@@ -82,6 +85,21 @@ ${renderSource(unit, concept.source_paragraphs)}
 <draft>
 ${untrusted(JSON.stringify(payload, null, 2))}
 </draft>`
+}
+
+const PLACEHOLDERS_IN_MATH = `Every value is a placeholder with two braces, also inside \\( \\) math: write \\(\\frac{ {{d}} }{ {{t}} }\\), never \\(\\frac{d}{t}\\) or \\(\\frac{{d}}{{t}}\\), and wrap an exponent or subscript placeholder in braces: x^{ {{n}} }.`
+
+// What the reviewer judges. Small models asked to re-check format rules (which
+// the schemas enforce exactly) deliberate inside the issue strings until they
+// loop, so the review covers content only.
+const REVIEW_FOCUS: Partial<Record<ItemType | 'default', string>> = {
+  default: `factual errors, more than one defensible answer, answer leakage in the stem, implausible or "all/none of the above" distractors, grammatical cues, explanation errors, and Bloom/difficulty mismatch.`,
+  math: `does the stem describe a sensible situation that matches answer_formula and states the units; are the variable ranges realistic; and does the explanation describe the same calculation as answer_formula. The variables, constraints, answer_formula, tolerance_percent and units were verified by the app and stay exactly as they are, so return only the reworded title, stem and explanation.`,
+}
+
+// Rules for the reviewer's revision where they differ from the drafting rules.
+const REVIEW_RULES: Partial<Record<ItemType, string>> = {
+  math: `Rules: the stem is plain sentences that state the units and show each value as the same {{name}} placeholders the draft uses; it must not give the answer. The explanation is the worked solution and may use {{answer}} and computed placeholders such as {{d/t}}. ${PLACEHOLDERS_IN_MATH}`,
 }
 
 export const ITEM_RULES: Record<ItemType, string> = {
@@ -97,7 +115,7 @@ export const ITEM_RULES: Record<ItemType, string> = {
 - tolerance_percent: about 1 for computed decimals, 0 only when every answer is an exact whole number.
 - units: the answer's unit, or null.
 - explanation: the worked solution using placeholders, for example "Average speed is distance over time: {{d}} km / {{t}} h = {{answer}} km/h." {{answer}} and computed placeholders such as {{d/t}} are allowed here.
-Inside \\( \\) math, wrap a placeholder used as an exponent or subscript in braces: x^{{{n}}}.`,
+${PLACEHOLDERS_IN_MATH}`,
   matching: `Rules: three to six pairs; each prompt is a short term or description and each match is the short item it pairs with. All prompts are distinct and all matches are distinct. Optionally add up to two distractor matches that pair with nothing. The stem tells the student what to match.`,
   fill_in_blank: `Rules: the stem is a sentence containing exactly one blank written as four underscores ____ and no other underscores. answer is the single word or short phrase (one to three words) from the source that fills the blank; alternates lists acceptable variants such as alternative spellings or singular/plural (or an empty list). The rest of the sentence must not give the answer away.`,
   dropdowns: `Rules: the stem is one to three sentences containing two to four dropdown placeholders written as [b1], [b2], ... with matching ids in blanks. Each blank has the correct word or phrase and one to three plausible distractors of the same kind. The stem must contain no other square brackets and no \\[ \\] display math.`,
