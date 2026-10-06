@@ -77,8 +77,12 @@ The math question type (`math`, "Math (randomized numbers)") lives in
    - **Randomized:** a second zip has one quiz per math question, holding 2 to 10 versions titled "(version n)". ADAPT creates one assignment per quiz. Import it into a course with an assignment template where **Randomizations** is Yes and **Number of randomized assessments** is 1. ADAPT only allows that with "Specify number of points" under Points Per Question. Version 1 keeps the question's own identifier; later versions hash `<uuid>:v<n>`.
 6. **Exact answer keys:** ADAPT stores a numerical answer as `(low + high) / 2` in doubles, so a plain decimal range can turn 0.346154 into 0.34615399999999996. `numericRange` (in `qti/canvas.ts`) detects this. It then writes the bounds as two doubles whose sum is exactly twice the answer, printed so PHP reads back the same doubles. This applies to the numerical type too.
 
-Both zips were checked with ADAPT's PHP parser (`tests/adapt-parser`). A live
-import into adapt.libretexts.org has not been done yet.
+Both zips were checked with ADAPT's PHP parser (`tests/adapt-parser`). The
+sample package (version 1 of a math question among the other eight types) was
+imported live into adapt.libretexts.org on 2026-10-05; see
+[adapt-qti-import.md](adapt-qti-import.md#live-import-check). The randomized
+zip has not been imported live, and neither has the course and assignment
+template flow.
 
 **PGML examples from the research** (rendered and graded on staging-render; not used by the app):
 - [examples/deriv.pg](examples/deriv.pg): a randomized polynomial with a formula answer and a numeric answer.

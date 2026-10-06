@@ -87,6 +87,19 @@ The exporter (`src/lib/qti/canvas.ts`) follows all of these. The schemas
 - The author and source URL entered on the import form are not saved on imported
   questions (an ADAPT bug: the controller reads columns the job never writes).
 
+## Live import check
+
+On 2026-10-05, `tests/adapt-parser/out/sample.zip` (one question of every type,
+plus version 1 of a math question) went through production
+adapt.libretexts.org: Bulk Import → Canvas QTI, Public = No, no course, folder
+Main. All 9 questions imported with no errors. Numerical and matching also
+worked, though the form's list of supported types leaves them out.
+
+Spot checks in the question preview:
+- **Math version:** the numbers were filled in and MathJax rendered the feedback. The answer key read exactly 0.375. ADAPT shows the accepted range to 4 decimals (0.3713 to 0.3787).
+- **Multiple choice:** both stem paragraphs, `&`, quotes and `x < y` came through. A `<b>Helium</b>` choice showed as literal text, ADAPT shuffled the choices, and per-choice feedback was kept.
+- **Matching and dropdowns:** the answer keys were correct.
+
 ## Checking a package against ADAPT's parser
 
 `tests/adapt-parser/` runs ADAPT's real `app/QtiImport.php` under PHP 7.4,
