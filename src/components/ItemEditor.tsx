@@ -1,4 +1,11 @@
-import { Fragment, useMemo, useState, type InputHTMLAttributes } from 'react'
+import {
+  Fragment,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type InputHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from 'react'
 import { formatNumber } from '../lib/math/format'
 import { compileMath, MathSpecError, MAX_TOLERANCE_PERCENT } from '../lib/math/spec'
 import {
@@ -172,17 +179,7 @@ function TypeFields({ value, set }: { value: QuestionDraft; set: Setter }) {
           </label>
           <label>
             Also accept (comma separated)
-            <input
-              value={value.alternates.join(', ')}
-              onChange={(e) =>
-                set({
-                  alternates: e.target.value
-                    .split(',')
-                    .map((s) => s.trim())
-                    .filter(Boolean),
-                } as Partial<QuestionDraft>)
-              }
-            />
+            <ListInput values={value.alternates} onValues={(alternates) => set({ alternates } as Partial<QuestionDraft>)} />
           </label>
         </div>
       )
@@ -259,7 +256,6 @@ function MathFields({ value, set }: { value: DraftOf<'math'>; set: Setter }) {
   const variables = value.variables
   const update = (index: number, patch: Partial<(typeof variables)[number]>) =>
     set({ variables: variables.map((v, i) => (i === index ? { ...v, ...patch } : v)) } as Partial<QuestionDraft>)
-  const [constraintsText, setConstraintsText] = useState(() => value.constraints.join('\n'))
   const check = useMemo(() => {
     try {
       return compileMath(value)
@@ -325,14 +321,7 @@ function MathFields({ value, set }: { value: DraftOf<'math'>; set: Setter }) {
       </label>
       <label>
         Constraints (one per line, e.g. a &lt; b)
-        <textarea
-          rows={2}
-          value={constraintsText}
-          onChange={(e) => {
-            setConstraintsText(e.target.value)
-            set({ constraints: e.target.value.split('\n').map((line) => line.trim()).filter(Boolean) } as Partial<QuestionDraft>)
-          }}
-        />
+        <ListTextarea rows={2} values={value.constraints} onValues={(constraints) => set({ constraints } as Partial<QuestionDraft>)} />
       </label>
       <div className="row">
         <label>
@@ -394,6 +383,46 @@ function NumberField({
   )
 }
 
+// A list edited as text: comma separated in an input, one per line in a
+// textarea. The typed text is kept as is, so a trailing comma or space survives
+// until the next entry is typed; the draft only ever sees trimmed, non-empty
+// entries. The text is rebuilt only when the list changes from outside.
+function useListText(values: string[], onValues: (values: string[]) => void, separator: ',' | '\n') {
+  const join = (list: string[]) => list.join(separator === ',' ? ', ' : '\n')
+  const [text, setText] = useState(() => join(values))
+  const [shown, setShown] = useState(values)
+  if (values.length !== shown.length || values.some((v, i) => v !== shown[i])) {
+    setShown(values)
+    setText(join(values))
+  }
+  return {
+    value: text,
+    onChange: (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const parsed = e.target.value
+        .split(separator)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+      setText(e.target.value)
+      setShown(parsed)
+      onValues(parsed)
+    },
+  }
+}
+
+type ListProps = { values: string[]; onValues: (values: string[]) => void }
+
+function ListInput({ values, onValues, ...props }: ListProps & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+  return <input {...props} {...useListText(values, onValues, ',')} />
+}
+
+function ListTextarea({
+  values,
+  onValues,
+  ...props
+}: ListProps & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'>) {
+  return <textarea {...props} {...useListText(values, onValues, '\n')} />
+}
+
 function MatchingFields({ value, set }: { value: DraftOf<'matching'>; set: Setter }) {
   const pairs = value.pairs
   return (
@@ -434,17 +463,7 @@ function MatchingFields({ value, set }: { value: DraftOf<'matching'>; set: Sette
       )}
       <label>
         Extra matches that pair with nothing (comma separated)
-        <input
-          value={value.distractors.join(', ')}
-          onChange={(e) =>
-            set({
-              distractors: e.target.value
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean),
-            } as Partial<QuestionDraft>)
-          }
-        />
+        <ListInput values={value.distractors} onValues={(distractors) => set({ distractors } as Partial<QuestionDraft>)} />
       </label>
     </fieldset>
   )
@@ -461,18 +480,11 @@ function DropdownFields({ value, set }: { value: DraftOf<'dropdowns'>; set: Sett
         <div key={index} className="choice-row">
           <code>[{blank.id}]</code>
           <input aria-label={`Correct option for ${blank.id}`} value={blank.correct} onChange={(e) => update(index, { correct: e.target.value })} />
-          <input
+          <ListInput
             aria-label={`Other options for ${blank.id}`}
             placeholder="Other options, comma separated"
-            value={blank.distractors.join(', ')}
-            onChange={(e) =>
-              update(index, {
-                distractors: e.target.value
-                  .split(',')
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              })
-            }
+            values={blank.distractors}
+            onValues={(distractors) => update(index, { distractors })}
           />
         </div>
       ))}
