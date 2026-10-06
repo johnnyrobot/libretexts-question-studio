@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@mlc-ai/web-llm": "^0.2.85",
-    "@wllama/wllama": "^3.8.1",
     "dexie": "^4.4.6",
     "dexie-react-hooks": "^4.4.0",
     "fflate": "^0.8.3",

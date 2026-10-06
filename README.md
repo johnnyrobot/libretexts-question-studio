@@ -11,7 +11,7 @@ browser.
   - Close the tab and come back: nothing has to be regenerated.
 - **LibreTexts only.** Find a book from the full LibreTexts catalog, paste any LibreTexts page, chapter or book URL, or paste text copied from a page. Then pick whole chapters, sections or single pages.
 - **Two AI engines:**
-  - **In-browser** (default): Qwen3.5 2B, 4B or 9B on WebGPU via WebLLM, or MiniCPM5 2B via wllama (llama.cpp). Free and private, and the text never leaves the device. One-time 1–5 GB download.
+  - **In-browser** (default): Qwen3.5 4B on WebGPU via WebLLM. Free and private, and the text never leaves the device. One-time 2.4 GB download.
   - **OpenAI, bring your own key:** GPT-6 Luna (or GPT-5.6 Luna) at high reasoning effort, called directly from the browser.
 - **ADAPT-ready export.**
   - The export is Canvas-style QTI 1.2, the only QTI format ADAPT's Bulk Import accepts, checked against ADAPT's own PHP parser. It also imports into Canvas.

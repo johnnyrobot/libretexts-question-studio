@@ -22,6 +22,11 @@ on 2026-10-05.
 
 ### Models
 
+**Decision (2026-10-05):** the app offers one in-browser model, **Qwen3.5 4B**.
+Qwen3.5 2B, Qwen3.5 9B and MiniCPM5 2B were removed, along with the wllama
+runtime MiniCPM5 needed. The notes below are kept as the record of what was
+compared.
+
 All are Apache-2.0 and prebuilt for WebLLM. GPU memory is WebLLM's estimate at a 4K context. Qwen3.5's hybrid attention adds only about 100–250 MB to go to the app's 8K context.
 
 | Model | Runtime and id | Download | GPU memory |
@@ -57,9 +62,9 @@ All are Apache-2.0 and prebuilt for WebLLM. GPU memory is WebLLM's estimate at a
 - Retries sample at a higher temperature.
 - The second-pass review is now **on by default** for every engine, because a wrong answer key is something only a reviewer can catch.
 
-**Model ranking:**
-- **Qwen3.5 4B** stays the default.
-- **MiniCPM5 2B** is the "fast" choice, and the only one that can fall back to the CPU.
+**Model ranking at the time:**
+- **Qwen3.5 4B** stayed the default, and is now the only option.
+- **MiniCPM5 2B** was the "fast" choice and the only one that could fall back to the CPU. It has since been removed.
 
 ### MiniCPM5-2B (openbmb, Apache-2.0, 2026-09-06)
 
@@ -85,7 +90,7 @@ All are Apache-2.0 and prebuilt for WebLLM. GPU memory is WebLLM's estimate at a
 - **wllama:** the official GGUF runs today. llama.cpp turns the JSON schema into a grammar, and wllama passes `chat_template_kwargs: {enable_thinking: false}` and `min_p: 0` (the model card warns that llama.cpp's default `min_p` causes repetition loops).
 - **Cross-origin isolation:** wllama would only run multi-threaded on the CPU with COOP/COEP headers. With WebGPU, all layers run on the GPU.
 
-**Status:** added as an option.
+**Status:** offered from 2026-10-05 until it was removed later that day; see the decision above.
 
 ### Laya (convaiinnovations, Apache-2.0, 2026-09)
 
@@ -107,7 +112,7 @@ All are Apache-2.0 and prebuilt for WebLLM. GPU memory is WebLLM's estimate at a
 **Other models considered:**
 - **Phi-4-mini 3.8B** (MIT, 2.2 GB) and **Ministral 3 3B** (Apache-2.0, 2.0 GB): both are in WebLLM and worth A/B testing against Qwen3.5-4B.
 - **Llama 3.2 1B/3B:** community license.
-- **Gemma 4 E2B/E4B** (now Apache-2.0): not in WebLLM yet.
+- **Gemma 4 E2B/E4B** (now Apache-2.0): not in WebLLM yet. Rechecked 2026-10-05: WebLLM 0.2.85's prebuilt list has only Gemma 2 and Gemma 3 1B. A GGUF build would need wllama, which the app no longer includes.
 - **LFM2.5-1.2B:** the license restricts commercial use above $10M revenue.
 - **Phones:** iOS tabs are killed at roughly 1.5–3 GB, so phones are out of scope.
 

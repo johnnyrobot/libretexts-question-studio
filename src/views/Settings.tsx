@@ -1,12 +1,5 @@
 import { useEffect, useState } from 'react'
-import {
-  LOCAL_MODELS,
-  probeWebGPU,
-  useLoadedLocalModel,
-  type GpuSupport,
-  type LocalModelInfo,
-  type LocalModelKey,
-} from '../lib/llm/local-models'
+import { LOCAL_MODEL, probeWebGPU, useLoadedLocalModel, type GpuSupport } from '../lib/llm/local-models'
 import { checkOpenAIKey, OPENAI_MODELS, type ReasoningEffort } from '../lib/llm/openai'
 import { createBackup, restoreBackup } from '../lib/storage/backup'
 import { db, requestPersistentStorage } from '../lib/storage/db'
@@ -55,64 +48,20 @@ export function Settings() {
   )
 }
 
-// One shape for both runtimes, so the panel does not care which one a model uses.
-interface Runtime {
-  isCached: () => Promise<boolean>
-  downloadBytes: () => Promise<number | null>
-  vramMB: () => number | null
-  load: (onProgress: (report: { progress: number; text: string }) => void) => Promise<void>
-  unload: () => void
-  remove: () => Promise<void>
-}
-
-async function runtimeFor(info: LocalModelInfo, modelId: string): Promise<Runtime> {
-  if (info.runtime === 'gguf') {
-    const gguf = await import('../lib/llm/local-gguf')
-    return {
-      isCached: () => gguf.isGgufCached(info),
-      downloadBytes: async () => info.bytes,
-      vramMB: () => info.vramMB,
-      load: (onProgress) => gguf.loadGgufModel(info, onProgress),
-      unload: gguf.unloadGgufModel,
-      remove: () => gguf.deleteGgufModel(info),
-    }
-  }
-  const webllm = await import('../lib/llm/local')
-  return {
-    isCached: () => webllm.isModelCached(modelId),
-    downloadBytes: () => webllm.downloadBytes(modelId),
-    vramMB: () => webllm.vramRequiredMB(modelId),
-    load: (onProgress) => webllm.loadLocalModel(modelId, (r) => onProgress({ progress: r.progress, text: r.text })),
-    unload: webllm.unloadLocalModel,
-    remove: async () => {
-      webllm.unloadLocalModel()
-      await webllm.deleteCachedModel(modelId)
-    },
-  }
-}
-
-// Unloading must use the runtime that holds the model, which may differ from
-// the one selected now.
-async function unloadAll() {
-  const [webllm, gguf] = await Promise.all([import('../lib/llm/local'), import('../lib/llm/local-gguf')])
-  webllm.unloadLocalModel()
-  gguf.unloadGgufModel()
-}
+type WebLLM = typeof import('../lib/llm/local')
 
 function LocalSettings() {
   const engine = useEngineSettings()
   const generation = useGeneration()
   const loadedModel = useLoadedLocalModel()
   const [gpu, setGpu] = useState<GpuSupport | null>(null)
-  const [runtime, setRuntime] = useState<{ modelId: string; runtime: Runtime } | null>(null)
+  const [webllm, setWebllm] = useState<WebLLM | null>(null)
   const [info, setInfo] = useState<{ modelId: string; cached: boolean; bytes: number | null } | null>(null)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState<{ value: number; text: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const model = LOCAL_MODELS[engine.localModel]
   const modelId = localModelId(engine)
   const loaded = loadedModel === modelId
-  const needsWebGPU = model.runtime === 'webllm'
 
   useEffect(() => {
     probeWebGPU().then(setGpu)
@@ -124,30 +73,32 @@ function LocalSettings() {
 
   useEffect(() => {
     let current = true
-    runtimeFor(model, modelId)
-      .then(async (rt) => {
+    import('../lib/llm/local')
+      .then(async (runtime) => {
         if (!current) return
-        setRuntime({ modelId, runtime: rt })
-        const [cached, bytes] = await Promise.all([rt.isCached().catch(() => false), rt.downloadBytes()])
+        setWebllm(runtime)
+        const [cached, bytes] = await Promise.all([
+          runtime.isModelCached(modelId).catch(() => false),
+          runtime.downloadBytes(modelId),
+        ])
         if (current) setInfo({ modelId, cached, bytes })
       })
       .catch((e) => current && setError(`Could not load the model runtime: ${e.message}`))
     return () => {
       current = false
     }
-  }, [model, modelId])
+  }, [modelId])
 
-  const active = runtime?.modelId === modelId ? runtime.runtime : null
   const status = info?.modelId === modelId ? info : null
+  const vramMB = webllm?.vramRequiredMB(modelId) ?? null
 
   const load = async () => {
-    if (!active) return
+    if (!webllm) return
     setError(null)
     setLoading(true)
     await requestPersistentStorage()
     try {
-      await unloadAll()
-      await active.load((report) => setProgress({ value: report.progress, text: report.text }))
+      await webllm.loadLocalModel(modelId, (report) => setProgress({ value: report.progress, text: report.text }))
       setInfo({ modelId, cached: true, bytes: status?.bytes ?? null })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -160,41 +111,12 @@ function LocalSettings() {
   return (
     <section className="card">
       <h2>In-browser model</h2>
-      {gpu && !gpu.webgpu && (
-        <p className="error">
-          {gpu.reason} MiniCPM5 can still run on the CPU, but expect minutes per question.
-        </p>
-      )}
+      {gpu && !gpu.webgpu && <p className="error">{gpu.reason}</p>}
       {gpu?.webgpu && !gpu.f16 && (
-        <p className="notice">This GPU lacks 16-bit shader support, so the larger 32-bit Qwen builds are used.</p>
+        <p className="notice">This GPU lacks 16-bit shader support, so the larger 32-bit build of the model is used.</p>
       )}
-      <fieldset disabled={loading || generation.running}>
-        <legend>Model</legend>
-        {(Object.keys(LOCAL_MODELS) as LocalModelKey[]).map((key) => {
-          const option = LOCAL_MODELS[key]
-          return (
-            <label key={key} className={`option ${engine.localModel === key ? 'selected' : ''}`}>
-              <input
-                type="radio"
-                name="local-model"
-                checked={engine.localModel === key}
-                onChange={() => saveEngineSettings({ localModel: key })}
-              />
-              <span>
-                <strong>
-                  {option.label}
-                  {key === 'qwen3.5-4b' && ' (recommended)'}
-                </strong>
-                <span className="muted">
-                  {option.note} {option.license}.
-                </span>
-              </span>
-            </label>
-          )
-        })}
-      </fieldset>
       <p>
-        <code>{modelId}</code> ·{' '}
+        <strong>{LOCAL_MODEL.label}</strong> ({LOCAL_MODEL.license}) · <code>{modelId}</code> ·{' '}
         {!status
           ? 'checking…'
           : status.cached
@@ -202,7 +124,7 @@ function LocalSettings() {
             : status.bytes
               ? `${formatBytes(status.bytes)} download`
               : 'not downloaded'}
-        {active?.vramMB() ? ` · needs about ${((active.vramMB() ?? 0) / 1024).toFixed(1)} GB of GPU memory` : ''}
+        {vramMB ? ` · needs about ${(vramMB / 1024).toFixed(1)} GB of GPU memory` : ''}
         {loaded && ' · loaded and ready'}
       </p>
       {progress && (
@@ -214,12 +136,7 @@ function LocalSettings() {
       {error && <p className="error">{error}</p>}
       <div className="actions">
         {!loaded && (
-          <button
-            type="button"
-            className="primary"
-            disabled={loading || !active || (needsWebGPU && !gpu?.webgpu)}
-            onClick={load}
-          >
+          <button type="button" className="primary" disabled={loading || !webllm || !gpu?.webgpu} onClick={load}>
             {loading
               ? 'Loading…'
               : status?.cached
@@ -227,18 +144,19 @@ function LocalSettings() {
                 : `Download and load${status?.bytes ? ` (${formatBytes(status.bytes)})` : ''}`}
           </button>
         )}
-        {loaded && active && (
-          <button type="button" disabled={generation.running} onClick={() => active.unload()}>
+        {loaded && webllm && (
+          <button type="button" disabled={generation.running} onClick={() => webllm.unloadLocalModel()}>
             Unload (free GPU memory)
           </button>
         )}
-        {status?.cached && !loading && active && (
+        {status?.cached && !loading && webllm && (
           <button
             type="button"
             className="danger-link"
             disabled={generation.running}
             onClick={async () => {
-              await active.remove()
+              webllm.unloadLocalModel()
+              await webllm.deleteCachedModel(modelId)
               setInfo({ modelId, cached: false, bytes: status.bytes })
             }}
           >
@@ -247,9 +165,9 @@ function LocalSettings() {
         )}
       </div>
       <p className="fine">
-        Models download from Hugging Face once and stay in this browser. They must be loaded again each time the app is
-        opened (from disk, which is quick). Qwen3.5 runs on WebLLM; MiniCPM5 runs on wllama (llama.cpp). Works in recent
-        Chrome, Edge, and Safari 26 on desktop; phones are not supported.
+        The model downloads from Hugging Face once and stays in this browser. It must be loaded again each time the app is
+        opened (from disk, which is quick). It runs on WebLLM in recent Chrome, Edge, and Safari 26 on desktop; phones are
+        not supported.
       </p>
     </section>
   )

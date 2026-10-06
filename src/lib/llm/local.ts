@@ -81,10 +81,10 @@ export function unloadLocalModel(): void {
 function describeLoadError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   if (/quota|storage/i.test(message)) {
-    return 'The browser ran out of storage for the model. Free some disk space or choose a smaller model.'
+    return 'The browser ran out of storage for the model. Free some disk space and try again.'
   }
   if (/device.*lost|out of memory|OOM|allocation/i.test(message)) {
-    return 'The GPU ran out of memory loading this model. Choose a smaller model.'
+    return 'The GPU ran out of memory loading the model. Close other GPU-heavy tabs or apps, or use an OpenAI key.'
   }
   return `The model could not be loaded: ${message}`
 }
