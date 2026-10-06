@@ -1,9 +1,13 @@
-import { Fragment } from 'react'
-import { BLANK_RUN, DROPDOWN_PLACEHOLDER, type QuestionDraft } from '../lib/generation/schema'
+import { Fragment, useMemo } from 'react'
+import { BLANK_RUN, DROPDOWN_PLACEHOLDER, type DraftOf, type QuestionDraft } from '../lib/generation/schema'
+import { toTex } from '../lib/math/expr'
+import { formatNumber } from '../lib/math/format'
+import { compileMath, MathSpecError } from '../lib/math/spec'
 import { MathText } from './MathText'
 
 // Instructor-facing preview: shows the answer key, not a student view.
 export function ItemPreview({ draft }: { draft: QuestionDraft }) {
+  if (draft.item_type === 'math') return <MathPreview draft={draft} />
   return (
     <div className="preview">
       <Stem draft={draft} />
@@ -136,6 +140,90 @@ function AnswerKey({ draft }: { draft: QuestionDraft }) {
         </div>
       )
   }
+}
+
+// Version 1 as students see it, then how every version is computed.
+function MathPreview({ draft }: { draft: DraftOf<'math'> }) {
+  const compiled = useMemo(() => {
+    try {
+      return compileMath(draft)
+    } catch (error) {
+      if (error instanceof MathSpecError) return error
+      throw error
+    }
+  }, [draft])
+  if (compiled instanceof MathSpecError) {
+    return (
+      <div className="preview">
+        <p className="error">This math question no longer validates: {compiled.message}</p>
+      </div>
+    )
+  }
+  const [first] = compiled.variants
+  return (
+    <div className="preview">
+      <div className="stem">
+        <MathText text={first.stem} block />
+      </div>
+      <p className="answer">
+        Answer: <strong>{formatNumber(first.answer)}</strong>
+        {first.margin > 0 && <> ± {formatNumber(first.margin)}</>}
+        {draft.units && <> {draft.units}</>}
+        <span className="muted"> · version 1 of {compiled.variants.length} shown</span>
+      </p>
+      <div className="math-spec">
+        <span className="label">How the answer is computed</span>
+        <p>
+          <MathText text={`\\(\\text{answer} = ${toTex(compiled.answer)}\\)`} />
+          {draft.tolerance_percent > 0 ? `, accepted within ±${draft.tolerance_percent}%` : ', exact'}
+        </p>
+        {compiled.constraints.length > 0 && (
+          <p>
+            Only numbers where{' '}
+            {compiled.constraints.map((node, index) => (
+              <Fragment key={index}>
+                {index > 0 && ', '}
+                <MathText text={`\\(${toTex(node)}\\)`} />
+              </Fragment>
+            ))}
+          </p>
+        )}
+        <div className="table-scroll">
+          <table className="versions">
+            <thead>
+              <tr>
+                <th scope="col">Version</th>
+                {draft.variables.map((v) => (
+                  <th key={v.name} scope="col" title={`${formatNumber(v.min)} to ${formatNumber(v.max)}, step ${formatNumber(v.step)}`}>
+                    <code>{v.name}</code>
+                  </th>
+                ))}
+                <th scope="col">Answer</th>
+              </tr>
+            </thead>
+            <tbody>
+              {compiled.variants.map((variant, index) => (
+                <tr key={index}>
+                  <td>{index + 1}</td>
+                  {draft.variables.map((v) => (
+                    <td key={v.name}>{formatNumber(variant.values[v.name])}</td>
+                  ))}
+                  <td>
+                    {formatNumber(Number(variant.answer.toPrecision(6)))}
+                    {variant.margin > 0 && <span className="muted"> ± {formatNumber(variant.margin)}</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="explanation">
+        <span className="label">Explanation (version 1)</span>
+        <MathText text={first.explanation} block />
+      </div>
+    </div>
+  )
 }
 
 export function SourceCitations({

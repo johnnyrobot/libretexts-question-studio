@@ -87,4 +87,20 @@ export const SAMPLE_DRAFTS: QuestionDraft[] = [
     model_answer: 'Chlorophyll absorbs red and blue light and reflects green light.',
     bloom: 'understand',
   },
+  {
+    ...base,
+    item_type: 'math',
+    title: 'Rate of oxygen release',
+    stem: 'A leaf releases {{v}} mL of oxygen in {{t}} minutes. At what average rate does it release oxygen?',
+    explanation: 'Rate is volume over time: \\(r = \\frac{ {{v}} }{ {{t}} }\\) = {{answer}} mL/min, about {{v/t*60}} mL per hour.',
+    variables: [
+      { name: 'v', min: 2, max: 12, step: 0.5 },
+      { name: 't', min: 4, max: 20, step: 1 },
+    ],
+    constraints: ['v < t'],
+    answer_formula: 'v / t',
+    tolerance_percent: 1,
+    units: 'mL/min',
+    bloom: 'apply',
+  },
 ]

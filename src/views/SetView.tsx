@@ -3,7 +3,8 @@ import { useState } from 'react'
 import { ItemEditor } from '../components/ItemEditor'
 import { ItemPreview, SourceCitations } from '../components/ItemPreview'
 import { ITEM_TYPE_LABELS } from '../lib/generation/schema'
-import { downloadBlob, exportSet } from '../lib/qti/export'
+import { DEFAULT_VERSIONS, MAX_VERSIONS } from '../lib/math/spec'
+import { downloadBlob, exportMathVersions, exportSet } from '../lib/qti/export'
 import { db, type ItemStatus, type StoredItem, type StoredSource } from '../lib/storage/db'
 import { cancelGeneration, useGeneration } from '../state/generation'
 import { navigate } from '../router'
@@ -21,6 +22,8 @@ export function SetView({ setId }: { setId: string }) {
   const generation = useGeneration()
   const [filter, setFilter] = useState<Filter>('all')
   const [includeDrafts, setIncludeDrafts] = useState(false)
+  const [randomizeMath, setRandomizeMath] = useState(false)
+  const [versions, setVersions] = useState(DEFAULT_VERSIONS)
   const [exportError, setExportError] = useState<string | null>(null)
 
   if (set === undefined || items === undefined) return null
@@ -36,12 +39,14 @@ export function SetView({ setId }: { setId: string }) {
   const visible = items.filter((item) => filter === 'all' || item.status === filter)
   const approved = items.filter((item) => item.status === 'approved').length
   const drafts = items.filter((item) => item.status === 'draft').length
-  const exportable = includeDrafts ? items.filter((i) => i.status !== 'rejected').length : approved
+  const exportableItems = items.filter((i) => (includeDrafts ? i.status !== 'rejected' : i.status === 'approved'))
+  const exportableMath = exportableItems.filter((i) => i.draft.item_type === 'math').length
+  const exportable = exportableItems.length - (randomizeMath ? exportableMath : 0)
 
-  const doExport = async () => {
+  const download = async (build: () => Promise<{ zip: Blob; filename: string }>) => {
     setExportError(null)
     try {
-      const record = await exportSet(setId, includeDrafts)
+      const record = await build()
       downloadBlob(record.zip, record.filename)
     } catch (e) {
       setExportError(e instanceof Error ? e.message : String(e))
@@ -94,11 +99,58 @@ export function SetView({ setId }: { setId: string }) {
               <input type="checkbox" checked={includeDrafts} onChange={(e) => setIncludeDrafts(e.target.checked)} /> Include
               unreviewed drafts
             </label>
-            <button type="button" className="primary" disabled={exportable === 0 || running} onClick={doExport}>
+            <button
+              type="button"
+              className="primary"
+              disabled={exportable === 0 || running}
+              onClick={() => download(() => exportSet(setId, { includeDrafts, randomizeMath }))}
+            >
               Download QTI (.zip) · {exportable}
             </button>
           </div>
         </div>
+        {exportableMath > 0 && (
+          <fieldset className="math-export">
+            <legend>Math questions ({exportableMath})</legend>
+            <label className="inline">
+              <input type="radio" name="math-export" checked={!randomizeMath} onChange={() => setRandomizeMath(false)} /> One
+              version each, in the QTI file above
+            </label>
+            <label className="inline">
+              <input type="radio" name="math-export" checked={randomizeMath} onChange={() => setRandomizeMath(true)} />{' '}
+              Randomized: a separate file where each math question has several versions and each student gets one
+            </label>
+            {randomizeMath && (
+              <div className="row math-versions">
+                <label className="inline">
+                  Versions per question
+                  <input
+                    type="number"
+                    min={2}
+                    max={MAX_VERSIONS}
+                    value={versions}
+                    onChange={(e) => setVersions(Math.min(MAX_VERSIONS, Math.max(2, Math.round(Number(e.target.value)) || 2)))}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={running}
+                  onClick={() => download(() => exportMathVersions(setId, includeDrafts, versions))}
+                >
+                  Download math versions (.zip) · {exportableMath} × {versions}
+                </button>
+              </div>
+            )}
+            {randomizeMath && (
+              <p className="fine">
+                ADAPT turns each math question into its own assignment. Import this file into a course separately from the main
+                file, with an assignment template where <strong>Randomizations</strong> is Yes and{' '}
+                <strong>Number of randomized assessments</strong> is 1. ADAPT requires “Specify number of points” under Points
+                Per Question to turn randomizations on.
+              </p>
+            )}
+          </fieldset>
+        )}
         {exportError && <p className="error">{exportError}</p>}
         <details>
           <summary>How to import into ADAPT</summary>

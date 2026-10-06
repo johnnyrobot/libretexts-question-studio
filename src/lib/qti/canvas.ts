@@ -1,5 +1,9 @@
 import { zipSync, strToU8 } from 'fflate'
 import { BLANK_RUN, type DraftOf, type QuestionDraft } from '../generation/schema'
+import { formatNumber } from '../math/format'
+import { compileMath, type MathVariant } from '../math/spec'
+
+export { formatNumber }
 
 // Canvas-flavoured QTI 1.2 quiz packages: the only QTI that ADAPT's importer
 // accepts (adapt/app/Jobs/ProcessValidateQtiFile.php, adapt/app/QtiImport.php).
@@ -118,6 +122,10 @@ export function buildItemXml(item: QuizItem, points = 1): string {
       return multipleAnswersItem(item.id, draft, points)
     case 'numerical':
       return numericalItem(item.id, draft, points)
+    case 'math':
+      // On its own a math question exports its first version; export.ts can
+      // also write every version as a quiz for ADAPT's randomization.
+      return numericalItem(item.id, mathVersion(draft, compileMath(draft).variants[0]), points)
     case 'matching':
       return matchingItem(item.id, draft, points)
     case 'fill_in_blank':
@@ -126,6 +134,21 @@ export function buildItemXml(item: QuizItem, points = 1): string {
       return dropdownsItem(item.id, draft, points)
     case 'essay':
       return essayItem(item.id, draft, points)
+  }
+}
+
+// One version of a math question as a fixed numerical question.
+export function mathVersion(draft: DraftOf<'math'>, variant: MathVariant, title = draft.title): DraftOf<'numerical'> {
+  const { variables: _v, constraints: _c, answer_formula: _a, tolerance_percent: _t, ...common } = draft
+  void [_v, _c, _a, _t]
+  return {
+    ...common,
+    item_type: 'numerical',
+    title,
+    stem: variant.stem,
+    explanation: variant.explanation,
+    answer: variant.answer,
+    tolerance: variant.margin,
   }
 }
 
@@ -201,9 +224,7 @@ function multipleAnswersItem(id: string, draft: DraftOf<'multiple_answers'>, poi
 }
 
 function numericalItem(id: string, draft: DraftOf<'numerical'>, points: number): string {
-  // ADAPT reads a vargte/varlte range as value = midpoint, margin = half-width.
-  const low = formatNumber(draft.answer - draft.tolerance)
-  const high = formatNumber(draft.answer + draft.tolerance)
+  const [low, high] = numericRange(draft.answer, draft.tolerance)
   const stem = draft.units ? `${draft.stem} (Answer in ${draft.units}.)` : draft.stem
   return item(id, draft.title, 'numerical_question', points, [
     presentation(
@@ -217,6 +238,33 @@ function numericalItem(id: string, draft: DraftOf<'numerical'>, points: number):
     ]),
     ...standardFeedback(draft.explanation),
   ])
+}
+
+// ADAPT reads a vargte/varlte range as value = (low + high) / 2 and margin =
+// half-width rounded to 5 decimals, in doubles, just as JavaScript computes
+// them. A plain decimal range can store 0.346154 as 0.34615399999999996,
+// which ADAPT then shows as the answer. When it would, the bounds are written
+// as two doubles whose sum is exactly twice the answer, printed with enough
+// digits that PHP parses back the same doubles.
+export function numericRange(answer: number, tolerance: number): [string, string] {
+  const center = Number(formatNumber(answer))
+  if (tolerance === 0) return [formatNumber(center), formatNumber(center)]
+  const margin = Math.round(tolerance * 1e5) / 1e5
+  const stores = ([low, high]: [string, string]) => {
+    const value = (Number(low) + Number(high)) / 2
+    return value === center && Math.round((Number(high) - value) * 1e5) / 1e5 === margin
+  }
+  const plain: [string, string] = [formatNumber(center - tolerance), formatNumber(center + tolerance)]
+  if (stores(plain)) return plain
+  // 2 * center - low can land on a rounding tie; a neighbouring low cannot.
+  const start = center - tolerance
+  const ulp = 2 ** (Math.floor(Math.log2(Math.abs(start) || 1)) - 52)
+  for (const step of [0, 1, -1, 2, -2, 3, -3]) {
+    const low = start + step * ulp
+    const exact: [string, string] = [String(low), String(2 * center - low)]
+    if (stores(exact) && !/e/i.test(exact.join(''))) return exact
+  }
+  return plain
 }
 
 function matchingItem(id: string, draft: DraftOf<'matching'>, points: number): string {
@@ -377,10 +425,11 @@ function itemFeedback(identifier: string, text: string): string {
 
 // ------------------------------------------------------------------- helpers
 
-// Canvas-style identifiers: "g" + 32 hex characters, stable per item.
+// Canvas-style identifiers: "g" + 32 hex characters, stable per item. A UUID
+// keeps its own hex; any other id (such as "<uuid>:v2") is hashed.
 export function ident(id: string): string {
-  const hex = id.toLowerCase().replace(/[^0-9a-f]/g, '')
-  if (hex.length >= 32) return 'g' + hex.slice(0, 32)
+  const hex = id.toLowerCase().replace(/-/g, '')
+  if (/^[0-9a-f]{32}$/.test(hex)) return 'g' + hex
   return 'g' + simpleHash(id)
 }
 
@@ -430,13 +479,4 @@ export function paragraphsHtml(value: string): string {
     .filter(Boolean)
     .map((p) => `<p>${displayHtml(p).replace(/\s*\r?\n\s*/g, '<br>')}</p>`)
   return `<div>${paragraphs.join('')}</div>`
-}
-
-export function formatNumber(value: number): string {
-  if (Number.isInteger(value)) return String(value)
-  const fixed = Number(value.toPrecision(12))
-  const text = String(fixed)
-  if (!/e/i.test(text)) return text
-  // Avoid exponent notation; PHP parses it, but other importers may not.
-  return fixed.toFixed(Math.min(20, Math.max(0, -Math.floor(Math.log10(Math.abs(fixed))) + 11))).replace(/\.?0+$/, '')
 }

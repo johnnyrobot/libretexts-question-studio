@@ -1,8 +1,18 @@
 import { unzipSync, strFromU8 } from 'fflate'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { parseDraft } from '../generation/schema'
-import { buildItemXml, buildQuizPackage, escapeHtml, formatNumber, ident, paragraphsHtml } from './canvas'
+import { parseDraft, type DraftOf } from '../generation/schema'
+import { compileMath } from '../math/spec'
+import {
+  buildItemXml,
+  buildQuizPackage,
+  escapeHtml,
+  formatNumber,
+  ident,
+  mathVersion,
+  numericRange,
+  paragraphsHtml,
+} from './canvas'
 import { SAMPLE_DRAFTS } from './fixtures'
 
 const items = SAMPLE_DRAFTS.map((draft, index) => ({
@@ -96,6 +106,45 @@ describe('canvas QTI package', () => {
     expect(xml).toContain('<vargte respident="response1">5.9</vargte>')
     expect(xml).toContain('<varlte respident="response1">6.1</varlte>')
   })
+
+  it('exports a math question as its first version, a numerical question with computed values', () => {
+    const item = items.find((i) => i.draft.item_type === 'math')!
+    const draft = item.draft as DraftOf<'math'>
+    const [first] = compileMath(draft).variants
+    const xml = buildItemXml(item)
+    expect(xml).toContain('<fieldentry>numerical_question</fieldentry>')
+    const [low, high] = numericRange(first.answer, first.margin)
+    expect(xml).toContain(`<vargte respident="response1">${low}</vargte>`)
+    expect(xml).toContain(`<varlte respident="response1">${high}</varlte>`)
+    expect(xml).toContain(`releases ${first.values.v} mL of oxygen in ${first.values.t} minutes`)
+    expect(xml).toContain('(Answer in mL/min.)')
+    expect(xml).not.toContain('{{')
+    expect(buildItemXml({ id: item.id, draft: mathVersion(draft, first) })).toBe(xml)
+  })
+})
+
+describe('numericRange', () => {
+  // What ADAPT stores, computed the way PHP does it (doubles, like JS).
+  const stored = ([low, high]: [string, string]) => {
+    const value = (Number(low) + Number(high)) / 2
+    return { value, margin: Math.round((Number(high) - value) * 1e5) / 1e5 }
+  }
+
+  it('makes ADAPT store exactly the answer and the margin', () => {
+    let state = 12345
+    const random = () => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32)
+    for (let i = 0; i < 2000; i++) {
+      const answer = Number((random() * 10 ** Math.floor(random() * 8 - 3)).toPrecision(6))
+      const margin = Math.max(0.00001, Math.round(answer * 0.01 * 1e5) / 1e5)
+      expect(stored(numericRange(answer, margin))).toEqual({ value: answer, margin })
+    }
+  })
+
+  it('covers the cases a naive range gets wrong', () => {
+    expect((0.342694 + 0.349614) / 2).not.toBe(0.346154)
+    expect(stored(numericRange(0.346154, 0.00346))).toEqual({ value: 0.346154, margin: 0.00346 })
+    expect(numericRange(6, 0)).toEqual(['6', '6'])
+  })
 })
 
 describe('helpers', () => {
@@ -114,6 +163,10 @@ describe('helpers', () => {
     expect(ident('0f8e2c1a-1111-4222-8333-444455556666')).toBe('g0f8e2c1a111142228333444455556666')
     expect(ident('set-1')).toMatch(/^g[0-9a-f]{32}$/)
     expect(ident('set-1')).toBe(ident('set-1'))
+    // Version ids must not collapse onto the question's own UUID.
+    const uuid = '0f8e2c1a-1111-4222-8333-444455556666'
+    expect(ident(`${uuid}:v2`)).toMatch(/^g[0-9a-f]{32}$/)
+    expect(new Set([ident(uuid), ident(`${uuid}:v2`), ident(`${uuid}:v3`)]).size).toBe(3)
   })
 })
 
@@ -135,7 +188,9 @@ function adaptExpectation(draft: (typeof SAMPLE_DRAFTS)[number]) {
     case 'multiple_answers':
       return { ...base, correctHtml: draft.choices.filter((c) => c.correct).map((c) => escapeHtml(c.text)) }
     case 'numerical':
-      return { ...base, answer: draft.answer, tolerance: draft.tolerance }
+      return numericalExpectation(draft)
+    case 'math':
+      return numericalExpectation(mathVersion(draft, compileMath(draft).variants[0]))
     case 'matching':
       return {
         ...base,
@@ -151,6 +206,20 @@ function adaptExpectation(draft: (typeof SAMPLE_DRAFTS)[number]) {
       }
     case 'essay':
       return { ...base, stemHtml: paragraphsHtml(draft.stem) }
+  }
+}
+
+// ADAPT stores value = midpoint and margin = half-width (rounded to 5
+// decimals) of the exported range, in doubles just like JavaScript.
+function numericalExpectation(draft: DraftOf<'numerical'>) {
+  const low = Number(formatNumber(draft.answer - draft.tolerance))
+  const high = Number(formatNumber(draft.answer + draft.tolerance))
+  const value = (low + high) / 2
+  return {
+    item_type: 'numerical' as const,
+    explanationHtml: paragraphsHtml(draft.explanation),
+    answer: value,
+    tolerance: Math.round((high - value) * 1e5) / 1e5,
   }
 }
 

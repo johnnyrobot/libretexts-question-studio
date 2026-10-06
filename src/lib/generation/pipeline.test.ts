@@ -107,6 +107,47 @@ describe('runGeneration', () => {
     expect(result.failures[0]).toMatch(/true false/)
   })
 
+  it('sends math spec errors back to the model with the reason', async () => {
+    const provider = new FakeProvider()
+    const original = provider.complete.bind(provider)
+    const prompts: string[] = []
+    let first = true
+    provider.complete = (request) =>
+      request.schemaName === 'math_item'
+        ? completeWithRetries(request, async (prompt) => {
+            prompts.push(prompt)
+            const { item_type: _, ...payload } = SAMPLE_DRAFTS.find((d) => d.item_type === 'math')!
+            void _
+            const broken = first ? { ...payload, answer_formula: '2v / t' } : payload
+            first = false
+            return { text: JSON.stringify(broken), usage: null }
+          })
+        : original(request)
+    const result = await runGeneration('set-1', source, { itemTypes: ['math'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(result).toEqual({ created: 1, failures: [] })
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain('write multiplication explicitly')
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.draft.item_type).toBe('math')
+  })
+
+  it('writes another type when math is requested for a section without numbers', async () => {
+    const provider = new FakeProvider()
+    const original = provider.complete.bind(provider)
+    provider.complete = (request) =>
+      request.schemaName === 'concept_batch'
+        ? completeWithRetries(request, async () => ({
+            text: JSON.stringify({ concepts: [{ label: 'Inputs', description: 'What plants take in', source_paragraphs: [0], quantitative: false }] }),
+            usage: null,
+          }))
+        : original(request)
+    const result = await runGeneration('set-1', source, { itemTypes: ['math', 'essay'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(result.created).toBe(1)
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.draft.item_type).toBe('essay')
+    expect(item.critique[0]).toMatch(/math \(randomized numbers\) question was requested/)
+  })
+
   it('rejects citations outside the section shown to the model', async () => {
     const provider = new FakeProvider()
     const original = provider.complete.bind(provider)

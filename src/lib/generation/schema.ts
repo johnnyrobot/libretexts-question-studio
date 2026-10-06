@@ -1,9 +1,11 @@
 import { z } from 'zod'
 import type { JsonSchema } from '../llm/types'
+import { compileMath, MathSpecError, MAX_TOLERANCE_PERCENT, VARIABLE_NAME } from '../math/spec'
 
 // The item types here are exactly the ones ADAPT's QTI importer can turn into
 // ADAPT questions (Canvas QTI 1.2 `question_type` values, see qti/canvas.ts).
-// Each type has its own narrow schema: narrow schemas give small in-browser
+// `math` is the exception that proves the rule: it is a template whose versions
+// export as numerical questions. Each type has its own narrow schema: narrow schemas give small in-browser
 // models far less room to go wrong than one schema with every field nullable.
 
 export const ITEM_TYPES = [
@@ -11,6 +13,7 @@ export const ITEM_TYPES = [
   'true_false',
   'multiple_answers',
   'numerical',
+  'math',
   'matching',
   'fill_in_blank',
   'dropdowns',
@@ -24,6 +27,7 @@ export const ITEM_TYPE_LABELS: Record<ItemType, string> = {
   true_false: 'True / false',
   multiple_answers: 'Select all that apply',
   numerical: 'Numerical',
+  math: 'Math (randomized numbers)',
   matching: 'Matching',
   fill_in_blank: 'Fill in the blank',
   dropdowns: 'Multiple dropdowns',
@@ -86,18 +90,20 @@ const multipleAnswers = z
     uniqueTexts(item.choices.map((c) => c.text), 'choices', ctx)
   })
 
+// Small models sometimes write the string "null" or "none" for no unit. A
+// preprocess, unlike a transform, still has an output type the model's JSON
+// Schema can show.
+const units = z.preprocess(
+  (u) => (typeof u === 'string' && /^\s*(null|none|n\/a|unitless|-)?\s*$/i.test(u) ? null : u),
+  z.string().trim().max(40).nullable(),
+)
+
 const numerical = z
   .object({
     ...common,
     answer: z.number(),
     tolerance: z.number().min(0),
-    // Small models sometimes write the string "null" or "none" for no unit.
-    units: z
-      .string()
-      .trim()
-      .max(40)
-      .nullable()
-      .transform((u) => (u && !/^(null|none|n\/a|unitless|-)?$/i.test(u) ? u : null)),
+    units,
   })
   .superRefine((item, ctx) => {
     if ((item.stem.match(BLANK_RUN) ?? []).length > 0) {
@@ -111,6 +117,30 @@ const numerical = z
     }
     if (item.tolerance > 0 && item.tolerance < 0.00001) {
       ctx.addIssue({ code: 'custom', message: 'tolerance must be 0 or at least 0.00001 (ADAPT rounds margins to 5 decimals)' })
+    }
+  })
+
+// stem and explanation are templates with {{name}} placeholders; compileMath
+// checks the whole spec over many seeded samples (see math/spec.ts).
+const math = z
+  .object({
+    ...common,
+    variables: z
+      .array(z.object({ name: z.string().regex(VARIABLE_NAME), min: z.number(), max: z.number(), step: z.number().positive() }))
+      .min(1)
+      .max(6),
+    constraints: z.array(text(200)).max(6),
+    answer_formula: text(500),
+    // compileMath also rejects anything between 0 and MIN_TOLERANCE_PERCENT.
+    tolerance_percent: z.number().min(0).max(MAX_TOLERANCE_PERCENT),
+    units,
+  })
+  .superRefine((item, ctx) => {
+    try {
+      compileMath(item)
+    } catch (error) {
+      if (!(error instanceof MathSpecError)) throw error
+      ctx.addIssue({ code: 'custom', message: error.message })
     }
   })
 
@@ -205,6 +235,7 @@ export const ITEM_SCHEMAS = {
   true_false: trueFalse,
   multiple_answers: multipleAnswers,
   numerical,
+  math,
   matching,
   fill_in_blank: fillInBlank,
   dropdowns,

@@ -15,7 +15,8 @@ browser.
   - **OpenAI, bring your own key:** GPT-6 Luna (or GPT-5.6 Luna) at high reasoning effort, called directly from the browser.
 - **ADAPT-ready export.**
   - The export is Canvas-style QTI 1.2, the only QTI format ADAPT's Bulk Import accepts, checked against ADAPT's own PHP parser. It also imports into Canvas.
-  - Eight question types: multiple choice, true/false, select all that apply, numerical, matching, fill in the blank, multiple dropdowns, and essay.
+  - Nine question types: multiple choice, true/false, select all that apply, numerical, math (randomized numbers), matching, fill in the blank, multiple dropdowns, and essay.
+- **Math with computed answers.** For a math question the model writes a template (variables with ranges, constraints, an answer formula), never the final number. The app computes and checks every answer over 25 sets of numbers, then exports versions as numerical questions.
 
 ## Using it
 
@@ -26,6 +27,7 @@ browser.
    - Generate. Questions appear as they are written, and the run continues if you switch screens.
 3. **Review:** approve, edit, or reject each question. Each question can show the exact source paragraphs it cites.
 4. **Download QTI (.zip).** In ADAPT, go to Question Editor → Bulk Import → Canvas QTI, pick a folder and license, and upload the file. Earlier downloads stay listed and can be downloaded again.
+   - **Math questions:** by default each one goes into that file as one version. Choose **Randomized** to download a second file in which each math question is its own quiz with several versions. ADAPT makes each quiz an assignment; import it with an assignment template where Randomizations is Yes and Number of randomized assessments is 1, and each student gets one version.
 5. **Settings → Backup** downloads all sets as one JSON file. Restore it in another browser or on another computer.
 
 ## Development
@@ -33,7 +35,7 @@ browser.
 ```bash
 npm install
 npm run dev            # http://localhost:5173
-npm test               # unit tests (schemas, normaliser, QTI exporter)
+npm test               # unit tests (schemas, math specs, normaliser, QTI exporter)
 npm run build          # type-check + production build in dist/
 npm run catalog        # refresh public/catalog.json from LibreTexts Commons
 ```
@@ -53,6 +55,7 @@ src/lib/content/     LibreTexts access: URL parsing, cross-library page/tree/con
                      HTML → numbered paragraphs, bundled catalog search, page cache
 src/lib/generation/  per-type zod schemas (= ADAPT import rules), prompts, pipeline
 src/lib/llm/         provider interface + validation/retry loop; WebLLM worker; OpenAI
+src/lib/math/        math questions: formula parser (no eval), seeded versions, checks
 src/lib/qti/         Canvas QTI 1.2 package builder and export history
 src/lib/storage/     Dexie (IndexedDB) schema, encrypted API-key storage
 src/state/           engine settings, background generation runner
@@ -67,6 +70,10 @@ tests/adapt-parser/  harness that runs ADAPT's QtiImport.php on our packages
 4. Validation failures are sent back to the model to fix, up to 3 attempts.
 5. The reviewer pass (on by default) critiques and rewrites each question. Its notes are kept and shown with the question.
 6. Every question is saved as soon as it validates.
+
+**Math questions.** [docs/adapt-formats-and-math.md](docs/adapt-formats-and-math.md)
+covers the template format, the checks, and how versions map onto ADAPT's
+randomization.
 
 **Why QTI 1.2 and not QTI 3.** `assessment-ai` exports QTI 3.0.1, but ADAPT
 cannot import it. See [docs/adapt-qti-import.md](docs/adapt-qti-import.md) for

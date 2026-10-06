@@ -47,7 +47,7 @@ turns every PHP notice into an exception, and that fails the item.
 | Matching: `response_lid` idents are `response_<digits>`, `<render_choice>` has no attributes, and `<varequal>` appears only in scoring conditions | Correct pairs are read with a regex over the raw XML |
 | Multiple dropdowns: correct option listed first, ≥ 2 dropdowns, no other `[ ]` in the prompt (including `\[ \]` math) | ADAPT marks the first option correct and treats any `[x]` as a dropdown |
 | Fill in the blank: exactly one `__`-run, one `varequal` per condition | ADAPT makes one blank per underscore run and grades against the first answer |
-| Numerical answers use a `vargte`/`varlte` range | ADAPT stores value = midpoint, margin = half-width (rounded to 5 decimals) |
+| Numerical answers use a `vargte`/`varlte` range whose double-precision midpoint is exactly the answer | ADAPT stores value = (low + high) / 2 and margin = half-width rounded to 5 decimals; a naive range can store 0.346154 as 0.34615399999999996 |
 | Item XML is under ~64 KB | `qti_imports.xml` is a MySQL `TEXT` column |
 
 The exporter (`src/lib/qti/canvas.ts`) follows all of these. The schemas
@@ -61,6 +61,7 @@ The exporter (`src/lib/qti/canvas.ts`) follows all of these. The schemas
 | True / false | `true_false_question` | `true_false` |
 | Select all that apply | `multiple_answers_question` | `multiple_answers` |
 | Numerical | `numerical_question` | `numerical` (value ± margin) |
+| Math (randomized numbers) | `numerical_question`, one per version | `numerical`; see [adapt-formats-and-math.md](adapt-formats-and-math.md) |
 | Matching | `matching_question` | `matching` |
 | Fill in the blank | `short_answer_question` | `fill_in_the_blank` (one blank, exact, case-insensitive) |
 | Multiple dropdowns | `multiple_dropdowns_question` | `select_choice` |

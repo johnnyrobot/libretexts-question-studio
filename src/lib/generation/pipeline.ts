@@ -12,6 +12,7 @@ import {
 import {
   formatIssues,
   ITEM_SCHEMAS,
+  ITEM_TYPE_LABELS,
   llmSchemaFor,
   parseDraft,
   toLlmSchema,
@@ -40,6 +41,8 @@ export interface GenerationCallbacks {
 // How much source text one call may carry. The in-browser model has an 8K
 // token window shared by prompt, schema, and answer.
 const SOURCE_BUDGET: Record<LLMProvider['id'], number> = { local: 5_500, openai: 40_000 }
+
+const QUANTITATIVE_TYPES = new Set<ItemType>(['numerical', 'math'])
 
 const conceptBatch = (max: number) =>
   z.object({
@@ -135,13 +138,14 @@ export async function runGeneration(
       const notes: string[] = []
       // A calculation question needs numbers in the source; without them small
       // models invent nonsense, so fall back to another requested type.
-      if (itemType === 'numerical') {
+      if (QUANTITATIVE_TYPES.has(itemType)) {
         const numeric = concepts.filter((c) => c.quantitative)
         if (numeric.length) concept = numeric[j % numeric.length]
         else {
-          itemType = plan.itemTypes.find((t) => t !== 'numerical') ?? 'multiple_choice'
+          const requested = ITEM_TYPE_LABELS[itemType].toLowerCase()
+          itemType = plan.itemTypes.find((t) => !QUANTITATIVE_TYPES.has(t)) ?? 'multiple_choice'
           notes.push(
-            `A numerical question was requested, but this section has no quantitative content, so a ${itemType.replace(/_/g, ' ')} question was written instead.`,
+            `A ${requested} question was requested, but this section has no quantitative content, so a ${itemType.replace(/_/g, ' ')} question was written instead.`,
           )
         }
       }

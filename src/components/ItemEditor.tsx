@@ -1,4 +1,6 @@
-import { useState } from 'react'
+import { Fragment, useMemo, useState, type InputHTMLAttributes } from 'react'
+import { formatNumber } from '../lib/math/format'
+import { compileMath, MathSpecError, MAX_TOLERANCE_PERCENT } from '../lib/math/spec'
 import {
   BLOOM_LEVELS,
   DIFFICULTIES,
@@ -51,7 +53,11 @@ export function ItemEditor({
       </label>
       <TypeFields value={value} set={set} />
       <label>
-        {value.item_type === 'essay' ? 'Grading notes' : 'Explanation (shown as feedback)'}
+        {value.item_type === 'essay'
+          ? 'Grading notes'
+          : value.item_type === 'math'
+            ? 'Worked solution (shown as feedback; may use {{answer}} and {{expressions}})'
+            : 'Explanation (shown as feedback)'}
         <textarea rows={3} value={value.explanation} onChange={(e) => set({ explanation: e.target.value })} />
       </label>
       <div className="row">
@@ -97,6 +103,7 @@ function StemHint({ draft }: { draft: QuestionDraft }) {
   if (draft.item_type === 'dropdowns') {
     return <small>Place each dropdown as [id] (e.g. [b1]). No other square brackets or \[ \] math.</small>
   }
+  if (draft.item_type === 'math') return <small>Show every variable as {'{{name}}'}. Math: \( inline \) or \[ display \].</small>
   return <small>Math: \( inline \) or \[ display \].</small>
 }
 
@@ -152,6 +159,8 @@ function TypeFields({ value, set }: { value: QuestionDraft; set: Setter }) {
           </label>
         </div>
       )
+    case 'math':
+      return <MathFields value={value} set={set} />
     case 'matching':
       return <MatchingFields value={value} set={set} />
     case 'fill_in_blank':
@@ -243,6 +252,145 @@ function ChoiceFields({ value, set }: { value: DraftOf<'multiple_choice'> | Draf
         </button>
       )}
     </fieldset>
+  )
+}
+
+function MathFields({ value, set }: { value: DraftOf<'math'>; set: Setter }) {
+  const variables = value.variables
+  const update = (index: number, patch: Partial<(typeof variables)[number]>) =>
+    set({ variables: variables.map((v, i) => (i === index ? { ...v, ...patch } : v)) } as Partial<QuestionDraft>)
+  const [constraintsText, setConstraintsText] = useState(() => value.constraints.join('\n'))
+  const check = useMemo(() => {
+    try {
+      return compileMath(value)
+    } catch (error) {
+      if (error instanceof MathSpecError) return error
+      throw error
+    }
+  }, [value])
+  return (
+    <>
+      <fieldset>
+        <legend>Variables (one to six)</legend>
+        <div className="variable-grid">
+          <span aria-hidden>Name</span>
+          <span aria-hidden>Min</span>
+          <span aria-hidden>Max</span>
+          <span aria-hidden>Step</span>
+          <span />
+          {variables.map((variable, index) => (
+            <Fragment key={index}>
+              <input
+                aria-label={`Variable ${index + 1} name`}
+                value={variable.name}
+                onChange={(e) => update(index, { name: e.target.value.trim() })}
+              />
+              {(['min', 'max', 'step'] as const).map((field) => (
+                <NumberField
+                  key={field}
+                  aria-label={`Variable ${index + 1} ${field}`}
+                  value={variable[field]}
+                  onValue={(n) => update(index, { [field]: n })}
+                />
+              ))}
+              {variables.length > 1 ? (
+                <button
+                  type="button"
+                  aria-label={`Remove variable ${index + 1}`}
+                  onClick={() => set({ variables: variables.filter((_, i) => i !== index) } as Partial<QuestionDraft>)}
+                >
+                  ✕
+                </button>
+              ) : (
+                <span />
+              )}
+            </Fragment>
+          ))}
+        </div>
+        {variables.length < 6 && (
+          <button
+            type="button"
+            onClick={() =>
+              set({ variables: [...variables, { name: '', min: 1, max: 10, step: 1 }] } as Partial<QuestionDraft>)
+            }
+          >
+            Add variable
+          </button>
+        )}
+      </fieldset>
+      <label>
+        Answer formula
+        <input value={value.answer_formula} onChange={(e) => set({ answer_formula: e.target.value } as Partial<QuestionDraft>)} />
+        <small>+ - * / ^ ( ), sqrt abs exp ln log10 sin cos tan (radians), sind cosd tand (degrees), min max round, pi</small>
+      </label>
+      <label>
+        Constraints (one per line, e.g. a &lt; b)
+        <textarea
+          rows={2}
+          value={constraintsText}
+          onChange={(e) => {
+            setConstraintsText(e.target.value)
+            set({ constraints: e.target.value.split('\n').map((line) => line.trim()).filter(Boolean) } as Partial<QuestionDraft>)
+          }}
+        />
+      </label>
+      <div className="row">
+        <label>
+          ± tolerance (%)
+          <NumberField
+            value={value.tolerance_percent}
+            onValue={(n) => set({ tolerance_percent: Math.min(MAX_TOLERANCE_PERCENT, Math.max(0, n)) } as Partial<QuestionDraft>)}
+          />
+        </label>
+        <label>
+          Units
+          <input
+            value={value.units ?? ''}
+            onChange={(e) => set({ units: e.target.value.trim() ? e.target.value : null } as Partial<QuestionDraft>)}
+          />
+        </label>
+      </div>
+      {check instanceof MathSpecError ? (
+        <p className="error" role="status">
+          {check.message}
+        </p>
+      ) : (
+        <p className="fine" role="status">
+          ✓ Valid. Version 1 answer: {formatNumber(Number(check.variants[0].answer.toPrecision(6)))}
+          {value.units ? ` ${value.units}` : ''}
+        </p>
+      )}
+    </>
+  )
+}
+
+// Keeps the typed text, so "-" or "0." can be typed on the way to a number;
+// only complete numbers reach the draft.
+function NumberField({
+  value,
+  onValue,
+  ...props
+}: { value: number; onValue: (value: number) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) {
+  const [text, setText] = useState(String(value))
+  const [shown, setShown] = useState(value)
+  if (value !== shown) {
+    setShown(value)
+    setText(String(value))
+  }
+  return (
+    <input
+      {...props}
+      inputMode="decimal"
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value)
+        const parsed = Number(e.target.value)
+        if (e.target.value.trim() && Number.isFinite(parsed)) {
+          setShown(parsed)
+          onValue(parsed)
+        }
+      }}
+    />
   )
 }
 
