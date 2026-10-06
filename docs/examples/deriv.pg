@@ -1,0 +1,30 @@
+## DESCRIPTION
+## Derivative of a randomized quadratic; formula + numeric answer
+## ENDDESCRIPTION
+## DBsubject(Calculus - single variable)
+## KEYWORDS('derivative','power rule')
+DOCUMENT();
+loadMacros('PGstandard.pl', 'PGML.pl', 'PGcourse.pl');
+
+Context('Numeric');
+$a  = random(2, 9, 1);
+$b  = non_zero_random(-6, 6, 1);
+$x0 = random(1, 4, 1);
+
+$f  = Formula("$a x^2 + $b x")->reduce;
+$df = $f->D('x')->reduce;
+$m  = Real($df->eval(x => $x0));
+
+BEGIN_PGML
+Let [`f(x) = [$f]`].
+
+a) Find the derivative: [`f'(x) =`] [_]{$df}{20}
+
+b) Find the slope of the tangent line at [`x = [$x0]`]: [_]{$m}{10}
+END_PGML
+
+BEGIN_PGML_SOLUTION
+By the power rule, [`f'(x) = [$df]`], so [`f'([$x0]) = [$m]`].
+END_PGML_SOLUTION
+
+ENDDOCUMENT();

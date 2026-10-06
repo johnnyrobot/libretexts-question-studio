@@ -1,0 +1,16 @@
+DOCUMENT();
+loadMacros('PGstandard.pl', 'PGML.pl', 'parserNumberWithUnits.pl', 'PGcourse.pl');
+
+Context('Numeric');
+Context()->flags->set(tolerance => 0.01, tolType => 'relative');
+$d = random(120, 480, 10);
+$t = random(2, 6, 1);
+$v = NumberWithUnits($d / $t, 'm/s');
+
+BEGIN_PGML
+A cart travels [$d] m in [$t] s. What is its average speed? Include units.
+
+[_]{$v}{12}
+END_PGML
+
+ENDDOCUMENT();

@@ -1,0 +1,442 @@
+import { zipSync, strToU8 } from 'fflate'
+import { BLANK_RUN, type DraftOf, type QuestionDraft } from '../generation/schema'
+
+// Canvas-flavoured QTI 1.2 quiz packages: the only QTI that ADAPT's importer
+// accepts (adapt/app/Jobs/ProcessValidateQtiFile.php, adapt/app/QtiImport.php).
+// ADAPT reads the XML through PHP SimpleXML -> json_encode -> arrays, so the
+// shape below follows rules that importer imposes, not only the QTI spec:
+//
+//   * imsmanifest.xml lists >= 2 resources; the quiz is found through its
+//     `associatedcontent/imscc_xmlv1p1/learning-application-resource`.
+//   * {quiz}/assessment_meta.xml mentions canvas.instructure.com.
+//   * Items live at {quiz}/{quiz}.xml directly in the root <section>.
+//   * Every item has >= 2 qtimetadatafields, and every list ADAPT iterates
+//     (choices, matching terms, dropdowns, respconditions, itemfeedback) has
+//     either 0 or >= 2 siblings; a lone sibling becomes a map and PHP throws.
+//   * ADAPT deletes every "\n" in an item before parsing, so no text node may
+//     contain a newline; lines between tags are fine.
+//   * Displayed text is HTML (ADAPT renders it with v-html), so it is
+//     HTML-escaped, then XML-escaped once more as mattext content.
+//   * Matching correct pairs are read with a regex over the raw XML, so
+//     <varequal> appears only in the scoring conditions and matching
+//     response_lid idents are `response_<digits>`.
+//   * Multiple dropdowns: ADAPT treats the FIRST option as correct, and any
+//     other [ ] in the prompt is mistaken for a dropdown.
+
+export interface QuizItem {
+  id: string
+  draft: QuestionDraft
+}
+
+export interface QuizPackageInput {
+  id: string
+  title: string
+  description?: string
+  items: QuizItem[]
+  pointsPerItem?: number
+}
+
+export function buildQuizPackage(quizzes: QuizPackageInput[]): Uint8Array {
+  if (quizzes.length === 0) throw new Error('Nothing to export.')
+  const files: Record<string, Uint8Array> = {}
+  const resources: string[] = []
+  for (const quiz of quizzes) {
+    if (quiz.items.length === 0) throw new Error(`"${quiz.title}" has no approved questions to export.`)
+    const dir = ident(quiz.id)
+    files[`${dir}/${dir}.xml`] = strToU8(buildAssessmentXml(quiz))
+    files[`${dir}/assessment_meta.xml`] = strToU8(buildAssessmentMetaXml(quiz))
+    resources.push(
+      `<resource identifier="${dir}" type="imsqti_xmlv1p2">\n<file href="${dir}/${dir}.xml"/>\n<dependency identifierref="${dir}_meta"/>\n</resource>`,
+      `<resource identifier="${dir}_meta" type="associatedcontent/imscc_xmlv1p1/learning-application-resource" href="${dir}/assessment_meta.xml">\n<file href="${dir}/assessment_meta.xml"/>\n</resource>`,
+    )
+  }
+  files['imsmanifest.xml'] = strToU8(buildManifestXml(ident(quizzes[0].id) + '_manifest', resources))
+  // A fixed local-time stamp keeps the archive byte-stable for the same content
+  // (zip stores local DOS time, so a UTC date would shift with the time zone).
+  return zipSync(files, { level: 9, mtime: new Date(2000, 0, 1) })
+}
+
+function buildManifestXml(identifier: string, resources: string[]): string {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<manifest identifier="${identifier}" xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1 http://www.imsglobal.org/xsd/imscp_v1p1.xsd">`,
+    '<metadata>\n<schema>IMS Content</schema>\n<schemaversion>1.1.3</schemaversion>\n</metadata>',
+    '<organizations/>',
+    '<resources>',
+    ...resources,
+    '</resources>',
+    '</manifest>',
+    '',
+  ].join('\n')
+}
+
+export function buildAssessmentMetaXml(quiz: QuizPackageInput): string {
+  const points = quiz.items.length * (quiz.pointsPerItem ?? 1)
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<quiz identifier="${ident(quiz.id)}" xmlns="http://canvas.instructure.com/xsd/cccv1p0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://canvas.instructure.com/xsd/cccv1p0 https://canvas.instructure.com/xsd/cccv1p0.xsd">`,
+    `<title>${xml(oneLine(quiz.title))}</title>`,
+    `<description>${xml(paragraphsHtml(quiz.description ?? ''))}</description>`,
+    '<shuffle_answers>true</shuffle_answers>',
+    '<scoring_policy>keep_highest</scoring_policy>',
+    '<quiz_type>assignment</quiz_type>',
+    `<points_possible>${points}</points_possible>`,
+    '<show_correct_answers>true</show_correct_answers>',
+    '<allowed_attempts>1</allowed_attempts>',
+    '<one_question_at_a_time>false</one_question_at_a_time>',
+    '<cant_go_back>false</cant_go_back>',
+    '<available>false</available>',
+    '</quiz>',
+    '',
+  ].join('\n')
+}
+
+export function buildAssessmentXml(quiz: QuizPackageInput): string {
+  const points = quiz.pointsPerItem ?? 1
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<questestinterop xmlns="http://www.imsglobal.org/xsd/ims_qtiasiv1p2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/ims_qtiasiv1p2 http://www.imsglobal.org/xsd/ims_qtiasiv1p2p1.xsd">',
+    `<assessment ident="${ident(quiz.id)}" title="${xml(oneLine(quiz.title))}">`,
+    '<qtimetadata>\n<qtimetadatafield>\n<fieldlabel>cc_maxattempts</fieldlabel>\n<fieldentry>1</fieldentry>\n</qtimetadatafield>\n</qtimetadata>',
+    '<section ident="root_section">',
+    ...quiz.items.map((item) => buildItemXml(item, points)),
+    '</section>',
+    '</assessment>',
+    '</questestinterop>',
+    '',
+  ].join('\n')
+}
+
+export function buildItemXml(item: QuizItem, points = 1): string {
+  const draft = item.draft
+  switch (draft.item_type) {
+    case 'multiple_choice':
+      return choiceItem(item.id, draft, 'multiple_choice_question', points)
+    case 'true_false':
+      return choiceItem(item.id, trueFalseAsChoices(draft), 'true_false_question', points)
+    case 'multiple_answers':
+      return multipleAnswersItem(item.id, draft, points)
+    case 'numerical':
+      return numericalItem(item.id, draft, points)
+    case 'matching':
+      return matchingItem(item.id, draft, points)
+    case 'fill_in_blank':
+      return fillInBlankItem(item.id, draft, points)
+    case 'dropdowns':
+      return dropdownsItem(item.id, draft, points)
+    case 'essay':
+      return essayItem(item.id, draft, points)
+  }
+}
+
+// ---------------------------------------------------------------- item types
+
+interface ChoiceLike {
+  stem: string
+  title: string
+  explanation: string
+  choices: { text: string; correct: boolean; feedback: string | null }[]
+}
+
+function trueFalseAsChoices(draft: DraftOf<'true_false'>): ChoiceLike {
+  // ADAPT and Canvas both expect the labels in True, False order.
+  return {
+    ...draft,
+    choices: [
+      { text: 'True', correct: draft.answer, feedback: null },
+      { text: 'False', correct: !draft.answer, feedback: null },
+    ],
+  }
+}
+
+function choiceItem(id: string, draft: ChoiceLike, questionType: string, points: number): string {
+  const labels = draft.choices.map((choice, index) => ({ ...choice, ident: String(1000 + index) }))
+  const correct = labels.find((label) => label.correct)
+  if (!correct) throw new Error(`"${draft.title}" has no correct choice.`)
+  const choiceFeedback = labels.filter((label) => label.feedback)
+  return item(id, draft.title, questionType, points, [
+    presentation(
+      draft.stem,
+      `<response_lid ident="response1" rcardinality="Single">\n<render_choice>\n${labels
+        .map((label) => responseLabel(label.ident, label.text))
+        .join('\n')}\n</render_choice>\n</response_lid>`,
+    ),
+    resprocessing([
+      generalFeedbackCondition(),
+      ...choiceFeedback.map(
+        (label) =>
+          `<respcondition continue="Yes">\n<conditionvar>\n<varequal respident="response1">${label.ident}</varequal>\n</conditionvar>\n<displayfeedback feedbacktype="Response" linkrefid="${label.ident}_fb"/>\n</respcondition>`,
+      ),
+      `<respcondition continue="No">\n<conditionvar>\n<varequal respident="response1">${correct.ident}</varequal>\n</conditionvar>\n<setvar action="Set" varname="SCORE">100</setvar>\n<displayfeedback feedbacktype="Response" linkrefid="correct_fb"/>\n</respcondition>`,
+      incorrectFeedbackCondition(),
+    ]),
+    ...standardFeedback(draft.explanation),
+    ...choiceFeedback.map((label) => itemFeedback(`${label.ident}_fb`, label.feedback!)),
+  ])
+}
+
+function multipleAnswersItem(id: string, draft: DraftOf<'multiple_answers'>, points: number): string {
+  const labels = draft.choices.map((choice, index) => ({ ...choice, ident: String(1000 + index) }))
+  const conditions = labels
+    .map((label) =>
+      label.correct
+        ? `<varequal respident="response1">${label.ident}</varequal>`
+        : `<not>\n<varequal respident="response1">${label.ident}</varequal>\n</not>`,
+    )
+    .join('\n')
+  return item(id, draft.title, 'multiple_answers_question', points, [
+    presentation(
+      draft.stem,
+      `<response_lid ident="response1" rcardinality="Multiple">\n<render_choice>\n${labels
+        .map((label) => responseLabel(label.ident, label.text))
+        .join('\n')}\n</render_choice>\n</response_lid>`,
+    ),
+    resprocessing([
+      generalFeedbackCondition(),
+      `<respcondition continue="No">\n<conditionvar>\n<and>\n${conditions}\n</and>\n</conditionvar>\n<setvar action="Set" varname="SCORE">100</setvar>\n<displayfeedback feedbacktype="Response" linkrefid="correct_fb"/>\n</respcondition>`,
+      incorrectFeedbackCondition(),
+    ]),
+    ...standardFeedback(draft.explanation),
+  ])
+}
+
+function numericalItem(id: string, draft: DraftOf<'numerical'>, points: number): string {
+  // ADAPT reads a vargte/varlte range as value = midpoint, margin = half-width.
+  const low = formatNumber(draft.answer - draft.tolerance)
+  const high = formatNumber(draft.answer + draft.tolerance)
+  const stem = draft.units ? `${draft.stem} (Answer in ${draft.units}.)` : draft.stem
+  return item(id, draft.title, 'numerical_question', points, [
+    presentation(
+      stem,
+      '<response_str ident="response1" rcardinality="Single">\n<render_fib fibtype="Decimal">\n<response_label ident="answer1"/>\n</render_fib>\n</response_str>',
+    ),
+    resprocessing([
+      generalFeedbackCondition(),
+      `<respcondition continue="No">\n<conditionvar>\n<vargte respident="response1">${low}</vargte>\n<varlte respident="response1">${high}</varlte>\n</conditionvar>\n<setvar action="Set" varname="SCORE">100</setvar>\n<displayfeedback feedbacktype="Response" linkrefid="correct_fb"/>\n</respcondition>`,
+      incorrectFeedbackCondition(),
+    ]),
+    ...standardFeedback(draft.explanation),
+  ])
+}
+
+function matchingItem(id: string, draft: DraftOf<'matching'>, points: number): string {
+  const options = [...draft.pairs.map((pair) => pair.match), ...draft.distractors].map((text, index) => ({
+    ident: String(2000 + index),
+    text,
+  }))
+  const terms = draft.pairs.map((pair, index) => ({
+    lid: `response_${1000 + index}`,
+    prompt: pair.prompt,
+    correct: options[index].ident,
+  }))
+  // Listed in pair order, option N would answer term N. ADAPT and Canvas
+  // shuffle per student, but other importers may not; a seeded shuffle keeps
+  // the file byte-stable.
+  seededShuffle(options, id)
+  // <render_choice> must carry no attributes: ADAPT iterates its children.
+  const renderChoice = `<render_choice>\n${options.map((o) => responseLabel(o.ident, o.text)).join('\n')}\n</render_choice>`
+  const share = formatNumber(Math.round((100 / terms.length) * 100) / 100)
+  return item(id, draft.title, 'matching_question', points, [
+    presentation(
+      draft.stem,
+      terms
+        .map(
+          (term) =>
+            `<response_lid ident="${term.lid}">\n<material>\n<mattext texttype="text/html">${xml(displayHtml(oneLine(term.prompt)))}</mattext>\n</material>\n${renderChoice}\n</response_lid>`,
+        )
+        .join('\n'),
+    ),
+    resprocessing(
+      terms.map(
+        (term) =>
+          `<respcondition>\n<conditionvar>\n<varequal respident="${term.lid}">${term.correct}</varequal>\n</conditionvar>\n<setvar varname="SCORE" action="Add">${share}</setvar>\n</respcondition>`,
+      ),
+    ),
+    ...standardFeedback(draft.explanation),
+  ])
+}
+
+function fillInBlankItem(id: string, draft: DraftOf<'fill_in_blank'>, points: number): string {
+  // Normalise the single blank to exactly four underscores.
+  const stem = draft.stem.replace(BLANK_RUN, '____')
+  const answers = [draft.answer, ...draft.alternates]
+  return item(id, draft.title, 'short_answer_question', points, [
+    presentation(
+      stem,
+      '<response_str ident="response1" rcardinality="Single">\n<render_fib>\n<response_label ident="answer1" rshuffle="No"/>\n</render_fib>\n</response_str>',
+    ),
+    // ADAPT grades against the first accepted answer; Canvas accepts each one.
+    resprocessing(
+      answers.map(
+        (answer) =>
+          `<respcondition continue="No">\n<conditionvar>\n<varequal respident="response1">${xml(oneLine(answer))}</varequal>\n</conditionvar>\n<setvar action="Set" varname="SCORE">100</setvar>\n</respcondition>`,
+      ),
+    ),
+    ...standardFeedback(draft.explanation),
+  ])
+}
+
+function dropdownsItem(id: string, draft: DraftOf<'dropdowns'>, points: number): string {
+  let next = 3000
+  const blanks = draft.blanks.map((blank) => ({
+    ...blank,
+    // Correct option first: that is how ADAPT knows which one is right. ADAPT
+    // shuffles options per student, so the order is not visible to learners.
+    options: [blank.correct, ...blank.distractors].map((text) => ({ ident: String(next++), text })),
+  }))
+  const share = formatNumber(Math.round((100 / blanks.length) * 100) / 100)
+  return item(id, draft.title, 'multiple_dropdowns_question', points, [
+    presentation(
+      draft.stem,
+      blanks
+        .map(
+          (blank) =>
+            `<response_lid ident="response_${blank.id}">\n<material>\n<mattext>${blank.id}</mattext>\n</material>\n<render_choice>\n${blank.options
+              .map((option) => responseLabel(option.ident, option.text))
+              .join('\n')}\n</render_choice>\n</response_lid>`,
+        )
+        .join('\n'),
+    ),
+    resprocessing(
+      blanks.map(
+        (blank) =>
+          `<respcondition>\n<conditionvar>\n<varequal respident="response_${blank.id}">${blank.options[0].ident}</varequal>\n</conditionvar>\n<setvar varname="SCORE" action="Add">${share}</setvar>\n</respcondition>`,
+      ),
+    ),
+    ...standardFeedback(draft.explanation),
+  ])
+}
+
+function essayItem(id: string, draft: DraftOf<'essay'>, points: number): string {
+  return item(id, draft.title, 'essay_question', points, [
+    presentation(
+      draft.stem,
+      '<response_str ident="response1" rcardinality="Single">\n<render_fib>\n<response_label ident="answer1" rshuffle="No"/>\n</render_fib>\n</response_str>',
+    ),
+    resprocessing(['<respcondition continue="No">\n<conditionvar>\n<other/>\n</conditionvar>\n</respcondition>']),
+    itemFeedback('general_fb', `Sample answer: ${draft.model_answer}\n\n${draft.explanation}`),
+  ])
+}
+
+// ------------------------------------------------------------------ builders
+
+function item(id: string, title: string, questionType: string, points: number, body: string[]): string {
+  return [
+    `<item ident="${ident(id)}" title="${xml(oneLine(title))}">`,
+    '<itemmetadata>\n<qtimetadata>',
+    metadataField('question_type', questionType),
+    metadataField('points_possible', formatNumber(points)),
+    metadataField('assessment_question_identifierref', `${ident(id)}_aq`),
+    '</qtimetadata>\n</itemmetadata>',
+    ...body,
+    '</item>',
+  ].join('\n')
+}
+
+function metadataField(label: string, entry: string): string {
+  return `<qtimetadatafield>\n<fieldlabel>${label}</fieldlabel>\n<fieldentry>${xml(entry)}</fieldentry>\n</qtimetadatafield>`
+}
+
+function presentation(stem: string, interaction: string): string {
+  return `<presentation>\n<material>\n<mattext texttype="text/html">${xml(paragraphsHtml(stem))}</mattext>\n</material>\n${interaction}\n</presentation>`
+}
+
+function responseLabel(identifier: string, text: string): string {
+  return `<response_label ident="${identifier}">\n<material>\n<mattext texttype="text/html">${xml(displayHtml(oneLine(text)))}</mattext>\n</material>\n</response_label>`
+}
+
+function resprocessing(conditions: string[]): string {
+  return [
+    '<resprocessing>',
+    '<outcomes>\n<decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/>\n</outcomes>',
+    ...conditions,
+    '</resprocessing>',
+  ].join('\n')
+}
+
+function generalFeedbackCondition(): string {
+  return '<respcondition continue="Yes">\n<conditionvar>\n<other/>\n</conditionvar>\n<displayfeedback feedbacktype="Response" linkrefid="general_fb"/>\n</respcondition>'
+}
+
+function incorrectFeedbackCondition(): string {
+  return '<respcondition continue="Yes">\n<conditionvar>\n<other/>\n</conditionvar>\n<displayfeedback feedbacktype="Response" linkrefid="general_incorrect_fb"/>\n</respcondition>'
+}
+
+// Always three entries: ADAPT drops (MC) or crashes on (matching) a lone one.
+function standardFeedback(explanation: string): string[] {
+  return [
+    itemFeedback('general_fb', explanation),
+    itemFeedback('correct_fb', 'Correct.'),
+    itemFeedback('general_incorrect_fb', 'Not quite. Review the explanation and the source section.'),
+  ]
+}
+
+function itemFeedback(identifier: string, text: string): string {
+  return `<itemfeedback ident="${identifier}">\n<flow_mat>\n<material>\n<mattext texttype="text/html">${xml(paragraphsHtml(text))}</mattext>\n</material>\n</flow_mat>\n</itemfeedback>`
+}
+
+// ------------------------------------------------------------------- helpers
+
+// Canvas-style identifiers: "g" + 32 hex characters, stable per item.
+export function ident(id: string): string {
+  const hex = id.toLowerCase().replace(/[^0-9a-f]/g, '')
+  if (hex.length >= 32) return 'g' + hex.slice(0, 32)
+  return 'g' + simpleHash(id)
+}
+
+function seededShuffle<T>(values: T[], seed: string): void {
+  let state = parseInt(simpleHash(seed).slice(0, 8), 16) || 1
+  for (let i = values.length - 1; i > 0; i--) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+    const j = state % (i + 1)
+    ;[values[i], values[j]] = [values[j], values[i]]
+  }
+}
+
+function simpleHash(value: string): string {
+  let out = ''
+  for (let seed = 0; out.length < 32; seed++) {
+    let h = 2166136261 ^ seed
+    for (let i = 0; i < value.length; i++) h = Math.imul(h ^ value.charCodeAt(i), 16777619)
+    out += (h >>> 0).toString(16).padStart(8, '0')
+  }
+  return out.slice(0, 32)
+}
+
+// Production ADAPT runs MathJax 3 with $…$ as an inline-math delimiter, so a
+// literal dollar sign ("costs $5") would start a formula. MathJax skips
+// elements with class tex2jax_ignore; other LMSs just render the span.
+function displayHtml(value: string): string {
+  return escapeHtml(value).replace(/\$/g, '<span class="tex2jax_ignore">$</span>')
+}
+
+export function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function xml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function oneLine(value: string): string {
+  return value.replace(/\s*\r?\n\s*/g, ' ').trim()
+}
+
+// Plain text with blank-line paragraphs -> one <div> of <p>s, no raw newlines.
+export function paragraphsHtml(value: string): string {
+  const paragraphs = value
+    .split(/\r?\n\s*\r?\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p>${displayHtml(p).replace(/\s*\r?\n\s*/g, '<br>')}</p>`)
+  return `<div>${paragraphs.join('')}</div>`
+}
+
+export function formatNumber(value: number): string {
+  if (Number.isInteger(value)) return String(value)
+  const fixed = Number(value.toPrecision(12))
+  const text = String(fixed)
+  if (!/e/i.test(text)) return text
+  // Avoid exponent notation; PHP parses it, but other importers may not.
+  return fixed.toFixed(Math.min(20, Math.max(0, -Math.floor(Math.log10(Math.abs(fixed))) + 11))).replace(/\.?0+$/, '')
+}
