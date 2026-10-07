@@ -256,6 +256,17 @@ describe('answer-leak and wording checks', () => {
     )
   })
 
+  it('rejects references to figures, tables and examples students cannot see', () => {
+    for (const stem of ['As shown in Figure 4.3.1, the cart speeds up because ____.', 'Using the values in Table 2, the force is ____.', 'In Example 4.4 the cart moves because ____.']) {
+      expect(() => parseDraft('fill_in_blank', { ...payload, stem })).toThrow(/students never see/)
+    }
+    expect(() => parseDraft('fill_in_blank', { ...payload, stem: 'A figure skater spins faster when she pulls in her ____.' })).not.toThrow()
+  })
+
+  it('rejects control characters, which JSON.stringify would hide as escapes', () => {
+    expect(() => parseDraft('fill_in_blank', { ...payload, explanation: 'So \f(F = ma\f).' })).toThrow(/control characters/)
+  })
+
   it('rejects dropdown options already written in the stem', () => {
     const dd = SAMPLE_DRAFTS.find((d) => d.item_type === 'dropdowns')!
     const { item_type: _d, ...rest } = dd

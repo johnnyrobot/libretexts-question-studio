@@ -226,6 +226,17 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
 
 - **Luna's questions** were mostly applied ones: a scenario, numbers from the source, wrong choices that are real misconceptions with feedback. Gemma's mostly restate a source sentence.
 - **Missing data:** a fill-in-the-blank asked for "the professor's force on the cart" (53 N) without giving the masses, friction or acceleration from the textbook example; the reviewer did not notice. Its exact-text answer "53 N" also had no alternates.
+- **Answerable from the question alone (2026-10-07).** The system prompt said every question "must be answerable from the supplied textbook excerpt alone", which let a question lean on the excerpt's worked example. It now says students see only the question, so it must state every number, name and situation it needs, and never mention an example, figure, table or person it does not describe. The reviewer checks for the same thing and adds what is missing. `parseDraft` rejects "Figure 4.3.1", "Table 2" and "Example 4.4". Thirty questions per run (two for each of 15 concepts from College Physics 4.3 and 4.4: multiple choice, true/false, select-all, fill-in-the-blank, review on), 120 in all, judged blind in random order:
+
+  | | Gemma before | Gemma after | Luna before | Luna after |
+  |---|---|---|---|---|
+  | Written | 30 | 30 | 30 | 30 |
+  | Not answerable from the question | 6 | 1 | 3 | 0 |
+  | Borderline (leans on an example but answerable) | 0 | 1 | 3 | 1 |
+  | Wrong answer key (not targeted) | 2 | 1 | 0 | 0 |
+  | Time | 1198 s | 1040 s | 430 s | 417 s |
+
+  The failures were the professor-and-cart example without its masses or friction, the example's force labels ("System 1", F_prof, F_foot), "based on the context provided", and a force called internal or external without saying which system. The remaining Gemma failure uses those force labels, which the code check does not cover. None of the 120 named a numbered figure, so the check did not fire here.
 - **Control characters:** under strict JSON output a backslash must start a valid JSON escape, so where Luna meant `\(` it wrote `\f(`, `\u0005(` or a stray `\u0002`: 3 of its 18 questions, whose math then did not render. `controlsToBackslashes` (pipeline.ts) restores the backslash in every prose field, and the QTI export drops characters XML forbids, because one of them made the whole quiz file invalid XML.
 
 ## 3. Getting LibreTexts content from a browser

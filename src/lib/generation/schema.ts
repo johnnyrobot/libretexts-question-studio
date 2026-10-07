@@ -332,11 +332,18 @@ export function parseDraft(itemType: ItemType, value: unknown, allowedParagraphs
   if (!result.success) throw new Error(formatIssues(result.error))
   const draft = { item_type: itemType, ...result.data } as QuestionDraft
   const serialized = JSON.stringify({ ...draft, citation_paragraphs: undefined, concept_label: undefined })
-  if (XML_FORBIDDEN.test(serialized)) {
+  // Tested on the strings themselves: JSON.stringify writes a form feed as "\\f".
+  if (stringsIn(draft).some((text) => XML_FORBIDDEN.test(text))) {
     throw new Error('text contains control characters that are not allowed in XML')
   }
   if (/\bparagraphs?\s+\d+/i.test(serialized)) {
     throw new Error('student-facing text must not mention paragraph numbers; cite them only in citation_paragraphs')
+  }
+  const reference = serialized.match(SOURCE_LABEL)
+  if (reference) {
+    throw new Error(
+      `students never see "${reference[0]}"; describe in the question whatever it needs from it, and do not mention it`,
+    )
   }
   if (allowedParagraphs) {
     const invalid = draft.citation_paragraphs.filter((p) => !allowedParagraphs.has(p))
@@ -347,6 +354,17 @@ export function parseDraft(itemType: ItemType, value: unknown, allowedParagraphs
     }
   }
   return draft
+}
+
+// "Figure 4.3.1", "Table 2", "Example 4.4": students see the question, not
+// the page it was written from.
+const SOURCE_LABEL = /\b(?:Figures?|Fig\.|Tables?|Examples?)\s+\d+(?:\.\d+)*/i
+
+function stringsIn(value: unknown): string[] {
+  if (typeof value === 'string') return [value]
+  if (Array.isArray(value)) return value.flatMap(stringsIn)
+  if (value && typeof value === 'object') return Object.values(value).flatMap(stringsIn)
+  return []
 }
 
 export function formatIssues(error: z.ZodError): string {
