@@ -112,13 +112,14 @@ describe('compileMath', () => {
 
     it('malformed templates and formulas', () => {
       rejects({ stem: 'A car travels {{d km in {{t}} hours.' }, 'malformed placeholder')
-      rejects({ stem: 'A car travels {{dist}} km in {{t}} hours.' }, 'unknown name "dist"')
+      rejects({ stem: 'A car travels {{dist}} km in {{t}} hours.' }, 'The stem shows {{dist}}, which is not a variable')
       rejects({ answer_formula: '2d / t' }, 'write multiplication explicitly')
       rejects({ answer_formula: '42' }, 'must use at least one variable')
       rejects({ answer_formula: 'd / 2' }, 'variable t is not used in answer_formula')
       rejects(
         {
           stem: 'From {{x0}} m it moves for {{t}} s at {{v}} m/s, ending at {{xf}} m. Where does it end?',
+          explanation: 'It ends at {{x0}} + {{v}} × {{t}} = {{answer}} m.',
           variables: [...speed.variables, { name: 'x0', min: 0, max: 10, step: 1 }, { name: 'xf', min: 0, max: 99, step: 1 }].map((v) =>
             v.name === 'd' ? { ...v, name: 'v' } : v,
           ),
@@ -127,6 +128,32 @@ describe('compileMath', () => {
         'variable xf is not used in answer_formula',
       )
       rejects({ constraints: ['d + t'] }, 'must be a comparison')
+    })
+
+    it('names that were never declared, saying what to do with each', () => {
+      // As Gemma 4 E4B wrote it: a in the formula and stem, the asked-for force in the stem.
+      const force = {
+        stem: 'A system with a mass of {{m}} kg accelerates at {{a}} m/s^2. What is the net external force, {{F_net}}?',
+        explanation: 'F = ma, so the net force is {{m}} kg × {{a}} m/s^2 = {{w}} N.',
+        variables: [{ name: 'm', min: 1, max: 100, step: 1 }],
+        answer_formula: 'm*a',
+      }
+      rejects(force, 'answer_formula uses a, which is not in variables (variables has only m)')
+      rejects(force, 'add a to variables with a realistic min, max and step, and show it in the stem as {{a}}')
+      rejects(force, 'The stem shows {{F_net}}, which is not a variable. Describe the quantity being asked for in words')
+      rejects(force, 'The explanation shows {{w}}, which is not a variable. Write the computed answer as {{answer}}')
+      // Functions, constants, exponents and the computed answer are not names to declare.
+      expect(() => compileMath(spec({ answer_formula: 'sqrt(d) * t * pi * 1e0 + 0 * t', explanation: 'So {{answer}} km/h ({{d/t}}).' }))).not.toThrow()
+      rejects({ answer_formula: 'd / t * k' }, /^answer_formula uses k, /)
+      rejects({ answer_formula: 'd / foo(t)' }, 'unknown function "foo"')
+      rejects({ answer_formula: '({{d}} - {{f}}) / {{t}}' }, 'must use plain variable names without {{ }}')
+    })
+
+    it('a constant declared as a variable', () => {
+      rejects(
+        { variables: [...speed.variables, { name: 'g', min: 9.8, max: 9.8, step: 0.1 }], answer_formula: 'd / t * g' },
+        'variable g has min = max = 9.8, so it never changes. A fixed constant is not a variable: remove g from variables and write 9.8 in its place',
+      )
     })
 
     it('bad variables', () => {

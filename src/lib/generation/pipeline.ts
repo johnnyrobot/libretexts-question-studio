@@ -523,7 +523,7 @@ function keepComputation(draft: QuestionDraft, revised: unknown): unknown {
 // largest round number both ends are multiples of that still gives ten or more
 // values.
 export function repairDraft(itemType: ItemType, value: unknown): unknown {
-  value = dollarMath(value)
+  value = proseMath(value)
   if (itemType !== 'math' || !value || typeof value !== 'object') return value
   let record = lowercaseNames(value as Record<string, unknown>)
   if (Array.isArray(record.variables) && record.variables.some(hasZeroStep)) {
@@ -597,20 +597,32 @@ export function dollarsToDelimiters(text: string): string {
   return text.replace(DISPLAY_DOLLARS, '\\[$1\\]').replace(INLINE_DOLLARS, '\\($1\\)')
 }
 
+// OpenAI's strict JSON output lets a backslash start only a valid JSON escape,
+// so where gpt-6-luna meant \( it sometimes wrote a control character: \f( and
+// \f), \u0005( and \u0005), or \u0002 before a correct \(. 3 of 18 Luna
+// questions had one (2026-10-07), and their math did not render. Tab, newline
+// and carriage return can be real text and are left alone.
+const CONTROL_BEFORE_BRACKET = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]([()[\]])/g
+const CONTROL_BEFORE_BACKSLASH = /[\u0000-\u0008\u000b\u000c\u000e-\u001f](?=\\)/g
+
+export function controlsToBackslashes(text: string): string {
+  return text.replace(CONTROL_BEFORE_BRACKET, '\\$1').replace(CONTROL_BEFORE_BACKSLASH, '')
+}
+
 // Formulas, variable names, ids and units are not prose.
 const NOT_PROSE = new Set(['answer_formula', 'constraints', 'variables', 'units', 'id'])
 
-function dollarMath(value: unknown): unknown {
-  if (typeof value === 'string') return dollarsToDelimiters(value)
+function proseMath(value: unknown): unknown {
+  if (typeof value === 'string') return dollarsToDelimiters(controlsToBackslashes(value))
   if (Array.isArray(value)) {
-    const next = value.map(dollarMath)
+    const next = value.map(proseMath)
     return next.every((item, i) => item === value[i]) ? value : next
   }
   if (!value || typeof value !== 'object') return value
   let changed = false
   const next: Record<string, unknown> = {}
   for (const [key, item] of Object.entries(value)) {
-    next[key] = NOT_PROSE.has(key) ? item : dollarMath(item)
+    next[key] = NOT_PROSE.has(key) ? item : proseMath(item)
     changed ||= next[key] !== item
   }
   return changed ? next : value

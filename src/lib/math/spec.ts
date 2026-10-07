@@ -66,6 +66,7 @@ export class MathSpecError extends Error {
 
 export function compileMath(spec: MathSpec, versions = DEFAULT_VERSIONS): CompiledMath {
   const names = checkVariables(spec.variables)
+  checkDeclared(spec, names)
   const tolerance = spec.tolerance_percent
   if (!(tolerance === 0 || (tolerance >= MIN_TOLERANCE_PERCENT && tolerance <= MAX_TOLERANCE_PERCENT))) {
     throw new MathSpecError(`tolerance_percent must be 0 or between ${MIN_TOLERANCE_PERCENT} and ${MAX_TOLERANCE_PERCENT}`)
@@ -214,12 +215,63 @@ function checkVariables(variables: MathVariable[]): Set<string> {
     if (![v.min, v.max, v.step].every(Number.isFinite) || v.step <= 0) {
       throw new MathSpecError(`variable ${v.name} needs finite min and max and a positive step`)
     }
-    if (v.max <= v.min) throw new MathSpecError(`variable ${v.name}: max must be greater than min`)
+    if (v.max === v.min) {
+      throw new MathSpecError(
+        `variable ${v.name} has min = max = ${formatNumber(v.min)}, so it never changes. A fixed constant is not a variable: remove ${v.name} from variables and write ${formatNumber(v.min)} in its place in answer_formula, the stem and the explanation.`,
+      )
+    }
+    if (v.max < v.min) throw new MathSpecError(`variable ${v.name}: max must be greater than min`)
     const choices = choiceCount(v)
     if (choices < 2) throw new MathSpecError(`variable ${v.name} has only one possible value; widen its range or shrink its step`)
     if (choices > 1_000_000) throw new MathSpecError(`variable ${v.name} has too many possible values; use a larger step`)
   }
   return names
+}
+
+// Names used but never declared, reported before parsing so the message can
+// say what to do with each. Told only `unknown name "a"; available: m`, Gemma 4
+// E4B read the list as "use only m": it rewrote m*a as F_net / m, then as
+// f_net / m with m dropped, and never declared a. With these messages, 10 of 12
+// drafts passed instead of 8 (docs/adapt-formats-and-math.md).
+function checkDeclared(spec: MathSpec, names: Set<string>): void {
+  if (/[{}]/.test(spec.answer_formula)) {
+    throw new MathSpecError(`answer_formula "${spec.answer_formula}" must use plain variable names without {{ }}, for example "d / t"`)
+  }
+  const known = new Set<string>([...names, ...CONSTANT_NAMES, 'answer'])
+  const missing = (sources: string[], skip: string[] = []) =>
+    [...new Set(sources.flatMap(identifiersIn))].filter((name) => !known.has(name) && !skip.includes(name))
+  const placeholders = (template: string) => [...template.matchAll(PLACEHOLDER)].map((match) => match[1])
+  const inputs = missing([spec.answer_formula])
+  const inStem = missing(placeholders(spec.stem), inputs)
+  const inExplanation = missing(placeholders(spec.explanation), [...inputs, ...inStem])
+  const shown = (list: string[]) => list.map((name) => `{{${name}}}`).join(', ')
+  const isAre = (list: string[]) => (list.length > 1 ? 'are' : 'is')
+  const problems: string[] = []
+  if (inputs.length) {
+    problems.push(
+      `answer_formula uses ${inputs.join(', ')}, which ${isAre(inputs)} not in variables (variables has only ${[...names].join(', ')}). ` +
+        `Every quantity the answer is computed from must be a variable: add ${inputs.join(', ')} to variables with a realistic min, max and step, and show ${inputs.length > 1 ? 'each' : 'it'} in the stem as ${shown(inputs)}. ` +
+        `A fixed constant such as g = 9.8 is written as a number in answer_formula instead.`,
+    )
+  }
+  if (inStem.length) {
+    problems.push(
+      `The stem shows ${shown(inStem)}, which ${isAre(inStem)} not a variable. Describe the quantity being asked for in words; the stem must not show the answer.`,
+    )
+  }
+  if (inExplanation.length) {
+    problems.push(
+      `The explanation shows ${shown(inExplanation)}, which ${isAre(inExplanation)} not a variable. Write the computed answer as {{answer}}, and any other value as a variable or an expression of them.`,
+    )
+  }
+  if (problems.length) throw new MathSpecError(problems.join(' '))
+}
+
+// Names in a formula, leaving out function calls and the exponent of 1e5.
+const IDENTIFIER = /(?<![\w.])[A-Za-z_]\w*(?![\w(]|\s+\()/g
+
+function identifiersIn(source: string): string[] {
+  return [...source.matchAll(IDENTIFIER)].map((match) => match[0]).filter((name) => !(FUNCTION_NAMES as string[]).includes(name))
 }
 
 function parseOrThrow(source: string, names: Set<string>, label: string, allowComparison = false): Node {

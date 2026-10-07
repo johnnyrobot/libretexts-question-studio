@@ -4,7 +4,7 @@ import { SAMPLE_DRAFTS } from '../qti/fixtures'
 import { completeWithRetries, LLMError, type CompletionRequest, type Embedder, type LLMProvider } from '../llm/types'
 import { db, type StoredSource } from '../storage/db'
 import { checkWorkedExample } from '../math/spec'
-import { cleanReviewNotes, dollarsToDelimiters, planUnits, repairDraft, runGeneration, stripSourceReferences } from './pipeline'
+import { cleanReviewNotes, controlsToBackslashes, dollarsToDelimiters, planUnits, repairDraft, runGeneration, stripSourceReferences } from './pipeline'
 import { parseDraft, type DraftOf, type ItemType } from './schema'
 
 const source: StoredSource = {
@@ -510,6 +510,24 @@ describe('dollarsToDelimiters', () => {
 
   it('applies to prose fields but not formulas, names or units', () => {
     const draft = { stem: 'Find $v$.', answer_formula: 'd / t', units: '$', choices: [{ text: '$2t$', feedback: null }] }
+    expect(repairDraft('multiple_choice', draft)).toEqual({ ...draft, stem: 'Find \\(v\\).', choices: [{ text: '\\(2t\\)', feedback: null }] })
+  })
+})
+
+describe('controlsToBackslashes', () => {
+  it('restores the backslash of math delimiters that came out as control characters', () => {
+    // As gpt-6-luna wrote them under OpenAI's strict JSON output.
+    expect(controlsToBackslashes('gives \f(\\frac{ {{f}} }{ {{m}} } = {{answer}}\f).')).toBe('gives \\(\\frac{ {{f}} }{ {{m}} } = {{answer}}\\).')
+    expect(controlsToBackslashes('acceleration: \u0005(w = mg\u0005), with \u0005(g\u0005)')).toBe('acceleration: \\(w = mg\\), with \\(g\\)')
+    expect(controlsToBackslashes('by acceleration: \u0002\\( {{m}} \\times {{a}} \\)')).toBe('by acceleration: \\( {{m}} \\times {{a}} \\)')
+  })
+
+  it('leaves tabs, newlines and other text alone', () => {
+    for (const text of ['line one\n(two)', 'a\t[b]', 'plain (text) and \\(x\\)']) expect(controlsToBackslashes(text)).toBe(text)
+  })
+
+  it('applies to prose fields through repairDraft', () => {
+    const draft = { stem: 'Find \f(v\f).', answer_formula: 'd / t', choices: [{ text: '\u0005(2t\u0005)', feedback: null }] }
     expect(repairDraft('multiple_choice', draft)).toEqual({ ...draft, stem: 'Find \\(v\\).', choices: [{ text: '\\(2t\\)', feedback: null }] })
   })
 })

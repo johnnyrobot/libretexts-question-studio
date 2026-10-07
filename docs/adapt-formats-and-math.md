@@ -150,7 +150,8 @@ Ten math drafts of the four quantitative concepts in College Physics 4.3 and 4.4
 The other rejections across both runs (40 attempts) were a name used but not
 declared, such as `m*a` with only `m` or an explanation's `{{w}}` (14), a
 constant such as g = 9.8 declared with min equal to max (4), and a stem missing
-a placeholder (2). None of these is repaired.
+a placeholder (2). None of these is repaired; the first two now get clearer
+messages (see below).
 
 **Starting over automatically (2026-10-07).** A question whose three attempts
 all fail now starts over in a new conversation, up to twice more, and is then
@@ -161,6 +162,37 @@ with only `m` declared in all 9 attempts across the three rounds, about 150 s,
 so a fresh start does not get past a mistake the model makes every time on a
 concept. Earlier, the same fresh start by hand (the Try again button this
 replaced) wrote 2 of 2.
+
+**Error messages that say what to do (2026-10-07).** The most common math
+rejection was a name used but never declared. Told `answer_formula "m*a":
+unknown name "a"; available: m`, Gemma read "available: m" as "use only m": it
+rewrote the formula as `F_net / m`, then as `f_net / m` with `m` dropped, and
+never declared `a`. Before parsing, `checkDeclared` (spec.ts) now names every
+undeclared name and what to do with it:
+- in answer_formula: add it to variables with a min, max and step and show it in
+  the stem as `{{a}}`; a fixed constant such as g = 9.8 is a number in the formula;
+- only in the stem: describe the asked-for quantity in words;
+- only in the explanation: write the answer as `{{answer}}`.
+
+A variable with min = max (g = 9.8) gets the same advice: remove it and write
+the number. Braces in answer_formula are reported as such. Twelve math drafts
+(Gemma 4 E4B, one round of three attempts each) of four quantitative concepts in
+College Physics 4.3 and 4.4, same sections and concepts in both runs:
+
+| | Before | After |
+|---|---|---|
+| Drafts that passed | 8 of 12 | 10 of 12 |
+| Model calls | 27 | 23 |
+| Rejected for an undeclared name | 14 | 9 |
+| Undeclared name fixed by the next attempt | 6 of 11 | 6 of 7 |
+| Rejected for a constant with min = max | 2 | 0 |
+| Time | 666 s | 674 s |
+
+Twelve drafts is a small sample. Re-scoring the 27 earlier attempts with the new
+code rejected none that had passed. The remaining Newton's-second-law failure is
+different: told to declare `a`, the model did, but it also turned the question
+around to ask for the acceleration (`F_net / m`), which left `a` unused. The
+other failures were stems that left out a variable.
 
 **Review pass for math (2026-10-06).** Decision: on the in-browser model, math questions skip the review pass, saving about 20 s each. OpenAI still reviews them, wording only. Other question types are reviewed as before. The measurements behind the decision:
 - The reviewer only rewords math questions. Its schema has the wording fields only (title, stem, explanation, Bloom, difficulty, citations), and the validated computation is merged back in. Given the chance, Qwen3.5 4B rewrote a correct `(v0 + v) / 2` as `v0 + v / 2`. That passes every check but gives a wrong answer key in every version, and it is the likely source of an `xf - x0 / t` item seen in testing.

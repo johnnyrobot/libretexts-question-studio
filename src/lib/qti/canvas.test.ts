@@ -75,6 +75,13 @@ describe('canvas QTI package', () => {
     }
   })
 
+  it('leaves out characters XML forbids, which would spoil the whole file', () => {
+    // A form feed where gpt-6-luna meant the backslash of \(.
+    const draft = { ...items[0].draft, stem: 'Which force acts \f(F\f) on the cart?' }
+    const files = unzipSync(buildQuizPackage([{ id: 'set-1', title: 'Quiz \u0005', items: [{ ...items[0], draft }] }]))
+    for (const file of Object.values(files)) expect(strFromU8(file)).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/)
+  })
+
   it('declares at least two metadata fields per item', () => {
     for (const item of items) {
       expect(buildItemXml(item).match(/<qtimetadatafield>/g)!.length).toBeGreaterThanOrEqual(2)

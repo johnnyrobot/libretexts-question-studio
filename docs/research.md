@@ -176,6 +176,8 @@ Gemma-written questions worked in the 2026-10-06 end-to-end test (5 of 5).
 
 **Future use:** the approve/reject decisions instructors make in this app are the data a fine-tuned "likely to be rejected" predictor would need. Collecting them would require opt-in, because nothing leaves the browser today.
 
+**Jev (TypeSafe AI, 2026-09-15)** is the hosted model Laya is an open version of: typed, probabilistic decisions instead of text, by API, early access only. It would send source text and drafts to another company, which the no-login, in-browser design avoids. Considered on 2026-10-07 for math drafts that kept failing: neither model helps there, because the app's own checks already know exactly what is wrong, and only the generator can write the fix. Clearer error messages did help (see [adapt-formats-and-math.md](adapt-formats-and-math.md)). Where a decision model could help later is in judgment calls the checks cannot make, such as a wrong answer key that the reviewer defended.
+
 **Other models considered:**
 - **Phi-4-mini 3.8B** (MIT, 2.2 GB) and **Ministral 3 3B** (Apache-2.0, 2.0 GB): both are in WebLLM and worth A/B testing against Qwen3.5-4B.
 - **Llama 3.2 1B/3B:** community license.
@@ -212,6 +214,19 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
   - By default the key lives in memory only.
   - With "Remember on this device", it is AES-GCM encrypted under a non-extractable WebCrypto key kept in IndexedDB.
   - That stops casual copying from disk or exports. It does not stop script running on this origin, which is why the app loads no third-party scripts.
+
+**First live test (2026-10-07, gpt-6-luna, high effort).** Until then the OpenAI path had only run against a fake provider. College Physics 4.3 and 4.4:
+
+| | Gemma 4 E4B (2026-10-06) | gpt-6-luna |
+|---|---|---|
+| Set: 3 per page, five types, review on | 6 of 6 in 297 s | 6 of 6 in 162 s, every call valid first time |
+| Questions with a problem a reviewer would catch | 5 of 8: an MC distractor that is also correct, a debatable select-all key, a circular distractor, two near-duplicates | 2 of 6: a fill-in-the-blank missing the data it needs, broken math delimiters (now repaired) |
+| 12 math drafts, same concepts as the error-message test | 10 of 12, 23 calls, 674 s | 12 of 12, 13 calls, 171 s |
+| Cost | none | about $0.01 per test (31K in / 14K out tokens for the set) |
+
+- **Luna's questions** were mostly applied ones: a scenario, numbers from the source, wrong choices that are real misconceptions with feedback. Gemma's mostly restate a source sentence.
+- **Missing data:** a fill-in-the-blank asked for "the professor's force on the cart" (53 N) without giving the masses, friction or acceleration from the textbook example; the reviewer did not notice. Its exact-text answer "53 N" also had no alternates.
+- **Control characters:** under strict JSON output a backslash must start a valid JSON escape, so where Luna meant `\(` it wrote `\f(`, `\u0005(` or a stray `\u0002`: 3 of its 18 questions, whose math then did not render. `controlsToBackslashes` (pipeline.ts) restores the backslash in every prose field, and the QTI export drops characters XML forbids, because one of them made the whole quiz file invalid XML.
 
 ## 3. Getting LibreTexts content from a browser
 
