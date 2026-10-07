@@ -9,6 +9,7 @@ import {
   escapeHtml,
   formatNumber,
   ident,
+  itemIdent,
   mathVersion,
   numericRange,
   paragraphsHtml,
@@ -167,6 +168,14 @@ describe('helpers', () => {
     const uuid = '0f8e2c1a-1111-4222-8333-444455556666'
     expect(ident(`${uuid}:v2`)).toMatch(/^g[0-9a-f]{32}$/)
     expect(new Set([ident(uuid), ident(`${uuid}:v2`), ident(`${uuid}:v3`)]).size).toBe(3)
+  })
+
+  it('prefixes item identifiers with a position wide enough to sort as text', () => {
+    const uuid = '0f8e2c1a-1111-4222-8333-444455556666'
+    expect(itemIdent(uuid, 0, 5)).toBe('q001_g0f8e2c1a111142228333444455556666')
+    expect(itemIdent(uuid, 9, 12)).toMatch(/^q010_/)
+    expect(itemIdent(uuid, 999, 1200)).toMatch(/^q1000_/)
+    expect(itemIdent(uuid, 8, 1200)).toMatch(/^q0009_/)
   })
 })
 

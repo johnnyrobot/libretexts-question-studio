@@ -74,3 +74,29 @@ export function normalizePlainText(text: string): NormalizedText {
   })
   return { plaintext: lines.join('\n\n'), paragraphs }
 }
+
+// LibreTexts numbers figures, tables and examples with a MathJax macro of its
+// own: "Figure \(\PageIndex{2}\)" shows on the page as the page's number plus
+// the argument, "Figure 4.4.2". KaTeX and the model know nothing of it.
+const PAGE_INDEX_MATH = /\\\(\s*\\PageIndex\s*\{\s*([^{}]*?)\s*\}\s*\\\)/g
+const PAGE_INDEX = /\\PageIndex\s*\{\s*([^{}]*?)\s*\}/g
+const PAGE_NUMBER = /^\s*((?:\d+|[A-Z])(?:\.(?:\d+|[A-Z]))*)\s*:/
+
+export function expandPageIndex(text: string, pageTitle: string): string {
+  if (!text.includes('\\PageIndex')) return text
+  const prefix = PAGE_NUMBER.exec(pageTitle)?.[1]
+  const number = (_: string, n: string) => (prefix ? `${prefix}.${n}` : n)
+  return text.replace(PAGE_INDEX_MATH, number).replace(PAGE_INDEX, number)
+}
+
+// The page's paragraphs with \PageIndex expanded and offsets kept in step.
+export function withPageNumbers(paragraphs: Paragraph[], pageTitle: string): Paragraph[] {
+  if (!paragraphs.some((p) => p.text.includes('\\PageIndex'))) return paragraphs
+  let cursor = 0
+  return paragraphs.map((paragraph) => {
+    const text = expandPageIndex(paragraph.text, pageTitle)
+    const next = { ...paragraph, text, start: cursor, end: cursor + text.length }
+    cursor += text.length + 2
+    return next
+  })
+}

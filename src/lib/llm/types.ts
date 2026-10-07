@@ -62,6 +62,10 @@ export class LLMError extends Error {
 
 export class ValidationFailure extends Error {}
 
+// Every attempt was answered, but none passed the checks. Unlike other
+// LLMErrors this says nothing about the engine, so starting afresh can help.
+export class NoValidResponse extends LLMError {}
+
 const MAX_ATTEMPTS = 3
 
 // Small local models tend to repeat the same mistake verbatim; sampling a bit
@@ -101,7 +105,7 @@ export async function completeWithRetries<T>(
         `${lastError}\nReturn a corrected, complete JSON object that fixes it.`
     }
   }
-  throw new LLMError(`The model did not return a valid ${request.schemaName}: ${lastError}`)
+  throw new NoValidResponse(`The model did not return a valid ${request.schemaName}: ${lastError}`)
 }
 
 export function parseJsonResponse(text: string): unknown {

@@ -1,6 +1,8 @@
 import { z } from 'zod'
-import type { Embedder, LLMProvider, ProgressEvent } from '../llm/types'
-import { checkWorkedExample } from '../math/spec'
+import { withPageNumbers } from '../content/normalize'
+import { NoValidResponse, type Embedder, type LLMProvider, type ProgressEvent } from '../llm/types'
+import { CONSTANT_NAMES, FUNCTION_NAMES } from '../math/expr'
+import { checkWorkedExample, VARIABLE_NAME } from '../math/spec'
 import { db, newId, type StoredItem, type StoredSource } from '../storage/db'
 import {
   conceptPrompt,
@@ -32,6 +34,16 @@ export interface GenerationPlan {
   itemTypes: ItemType[]
   perPage: number
   reviewPass: boolean
+}
+
+export interface GenerationResult {
+  created: number
+  // Questions left out because the model's answers failed the checks in every
+  // round. The instructor is not told: there is nothing they could do.
+  skipped: number
+  // Engine errors, such as a model that is not loaded, one for each question
+  // they left out. These the instructor can act on.
+  errors: string[]
 }
 
 export interface GenerationCallbacks {
@@ -77,7 +89,7 @@ export function planUnits(source: StoredSource, perPage: number, budget: number)
     const units: SourceUnit[] = []
     let current: [number, string][] = []
     let size = 0
-    for (const paragraph of page.paragraphs) {
+    for (const paragraph of withPageNumbers(page.paragraphs, page.title)) {
       const text = paragraph.text.length > budget ? paragraph.text.slice(0, budget) : paragraph.text
       if (size + text.length > budget && current.length) {
         units.push({ pageTitle: page.title, paragraphs: current })
@@ -99,6 +111,24 @@ export function planUnits(source: StoredSource, perPage: number, budget: number)
     units.forEach((unit, i) => plans.push({ pageIndex, unit, count: counts[i] }))
   })
   return plans
+}
+
+// A question whose answers fail the checks on every attempt is started afresh,
+// up to twice. Each attempt is shown the last one's error, and small models
+// tend to repeat the same mistake; a new conversation drops it. Writing failed
+// questions again this way by hand wrote 2 of 2 (Gemma 4 E4B, 2026-10-06). It
+// does not help a mistake the model makes every time on a concept: one question
+// in a 2026-10-07 run failed all 9 attempts the same way.
+const ROUNDS = 3
+
+async function withFreshStarts<T>(run: (round: number) => Promise<T>): Promise<T> {
+  for (let round = 1; ; round++) {
+    try {
+      return await run(round)
+    } catch (error) {
+      if (round === ROUNDS || !(error instanceof NoValidResponse)) throw error
+    }
+  }
 }
 
 // EmbeddingGemma 2 told reworded duplicates from distinct questions apart with
@@ -145,7 +175,7 @@ export async function runGeneration(
   signal: AbortSignal,
   callbacks: GenerationCallbacks,
   embedder: Embedder | null = null,
-): Promise<{ created: number; failures: string[] }> {
+): Promise<GenerationResult> {
   const units = planUnits(source, plan.perPage, SOURCE_BUDGET[provider.id])
   const total = units.reduce((sum, u) => sum + u.count, 0)
   const existing = await db.items.where('setId').equals(setId).sortBy('position')
@@ -153,7 +183,16 @@ export async function runGeneration(
   let position = existing.length
   let done = 0
   let created = 0
-  const failures: string[] = []
+  let skipped = 0
+  const errors: string[] = []
+  const leaveOut = (error: unknown, count: number) => {
+    if (error instanceof NoValidResponse) {
+      skipped += count
+      console.warn(`Left out ${count} question(s):`, error.message)
+    } else {
+      for (let k = 0; k < count; k++) errors.push(message(error))
+    }
+  }
   callbacks.onProgress(0, total)
 
   // The duplicate check is a convenience: if it cannot load, questions are
@@ -186,9 +225,11 @@ export async function runGeneration(
       callbacks.onStatus(status)
       const calculations = slotTypes[index].filter((t) => QUANTITATIVE_TYPES.has(t)).length
       // A section without questions of its own is only searched for numbers.
-      concepts = target.count
-        ? extractConcepts(provider, target.unit, target.count, calculations, signal, callbacks)
-        : extractConcepts(provider, target.unit, 2, 2, signal, callbacks)
+      concepts = withFreshStarts(() =>
+        target.count
+          ? extractConcepts(provider, target.unit, target.count, calculations, signal, callbacks)
+          : extractConcepts(provider, target.unit, 2, 2, signal, callbacks),
+      )
       extracted.set(target, concepts)
     }
     return concepts
@@ -232,7 +273,7 @@ export async function runGeneration(
       concepts = await conceptsOf(index, `Finding concepts in “${current.unit.pageTitle}”…`)
     } catch (error) {
       if (signal.aborted) throw error
-      failures.push(`${current.unit.pageTitle}: ${message(error)}`)
+      leaveOut(error, current.count)
       done += current.count
       callbacks.onProgress(done, total)
       continue
@@ -259,9 +300,13 @@ export async function runGeneration(
         }
       }
       const allowed = new Set(unit.paragraphs.map(([i]) => i))
-      callbacks.onStatus(`Writing a ${itemType.replace(/_/g, ' ')} question on “${concept.label}”…`)
+      const kind = itemType.replace(/_/g, ' ')
+      callbacks.onStatus(`Writing a ${kind} question on “${concept.label}”…`)
       try {
-        let draft = await draftItem(provider, unit, concept, itemType, stems.slice(-12), allowed, signal, callbacks)
+        let draft = await withFreshStarts((round) => {
+          if (round > 1) callbacks.onStatus(`Starting the ${kind} question on “${concept.label}” over…`)
+          return draftItem(provider, unit, concept, itemType, stems.slice(-12), allowed, signal, callbacks)
+        })
         let critique: string[] = notes
         // On the in-browser model the reviewer may only reword a math question
         // (see keepComputation), and its notes on them were mostly false claims
@@ -302,15 +347,15 @@ export async function runGeneration(
         callbacks.onItem(item)
       } catch (error) {
         if (signal.aborted) throw error
-        failures.push(`${itemType.replace(/_/g, ' ')} on “${concept.label}”: ${message(error)}`)
+        leaveOut(error, 1)
       }
       callbacks.onProgress(++done, total)
     }
   }
-  return { created, failures }
+  return { created, skipped, errors }
 }
 
-async function extractConcepts(
+export async function extractConcepts(
   provider: LLMProvider,
   unit: SourceUnit,
   count: number,
@@ -344,7 +389,7 @@ async function extractConcepts(
   return result.value
 }
 
-async function draftItem(
+export async function draftItem(
   provider: LLMProvider,
   unit: SourceUnit,
   concept: Concept,
@@ -375,7 +420,7 @@ async function draftItem(
   return result.value
 }
 
-async function reviewItem(
+export async function reviewItem(
   provider: LLMProvider,
   unit: SourceUnit,
   concept: Concept,
@@ -399,12 +444,62 @@ async function reviewItem(
       const record = value as { issues?: unknown; revised?: unknown }
       const issues = z.array(z.string()).max(8).safeParse(record?.issues)
       return {
-        issues: issues.success ? issues.data : [],
+        issues: issues.success ? cleanReviewNotes(issues.data, draft) : [],
         draft: parseDraft(draft.item_type, repairDraft(draft.item_type, keepComputation(draft, record?.revised)), allowed),
       }
     },
   })
   return result.value
+}
+
+// The instructor reads the reviewer's notes on the question card. Gemma 4 E4B
+// also wrote notes about the app's side of things ("The concept_label is too
+// long", "…not explicitly stated in the final output structure"), which the
+// instructor can do nothing about; notes that a wrong choice is wrong or not
+// in the source, which is what a wrong choice is for; and notes that the
+// explanation is redundant or not needed to answer, when it is the feedback
+// students read afterwards. All are dropped. The phrases are narrow on purpose:
+// "field", "output" and "stem" are also subject words, and a note that a wrong
+// choice is too easy or also true is kept.
+const ABOUT_THE_APP =
+  /\b(?:concept[ _]labels?|citations?|citation_paragraphs|paragraph numbers?|json|schema|prompt(?: rules)?|output (?:structure|format)|field names?|feedback fields|(?:item|question) types?|(?:revised|final) (?:question|version|draft|output))\b/i
+const WRONG_BY_DESIGN =
+  /\b(?:(?:is|are) (?:incorrect|wrong|false|not correct|not true)|not (?:\w+ ){0,2}(?:mentioned|supported|stated|found|discussed|covered|given) (?:in|by) the (?:source|text|passage|excerpt))\b/i
+const EXPLANATION_NOT_NEEDED =
+  /\bexplanation\b.*\b(?:not (?:strictly )?necessary|unnecessary|redundant|(?:does|did) not add (?:any )?value|without adding (?:any )?value)/i
+const REAL_PROBLEM = /\b(?:plausib|obvious|easy|too |confus|mislead|ambigu|arguabl|defensib|also (?:true|correct)|could be (?:true|correct)|partly|partially)/i
+const FIELD_NAME = /\b[a-z]+(?:_[a-z]+)+\b/g
+
+export function cleanReviewNotes(notes: string[], draft?: QuestionDraft): string[] {
+  const wrong = draft ? wrongChoices(draft).map((text) => text.trim().replace(/[.\s]+$/, '').toLowerCase()).filter((t) => t.length >= 3) : []
+  const aboutWrongChoice = (note: string) => {
+    const lower = note.toLowerCase()
+    return wrong.some((text) => lower.includes(text)) && WRONG_BY_DESIGN.test(note) && !REAL_PROBLEM.test(note)
+  }
+  const seen = new Set<string>()
+  return notes
+    .filter((note) => !ABOUT_THE_APP.test(note) && !EXPLANATION_NOT_NEEDED.test(note) && !aboutWrongChoice(note))
+    .map((note) => note.trim().replace(FIELD_NAME, (name) => name.replace(/_/g, ' ')))
+    .filter((note) => {
+      const key = note.toLowerCase()
+      if (!note || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function wrongChoices(draft: QuestionDraft): string[] {
+  switch (draft.item_type) {
+    case 'multiple_choice':
+    case 'multiple_answers':
+      return draft.choices.filter((choice) => !choice.correct).map((choice) => choice.text)
+    case 'matching':
+      return draft.distractors
+    case 'dropdowns':
+      return draft.blanks.flatMap((blank) => blank.distractors)
+    default:
+      return []
+  }
 }
 
 // The reviewer may reword a math question but not change what it computes. In
@@ -430,7 +525,7 @@ function keepComputation(draft: QuestionDraft, revised: unknown): unknown {
 export function repairDraft(itemType: ItemType, value: unknown): unknown {
   value = dollarMath(value)
   if (itemType !== 'math' || !value || typeof value !== 'object') return value
-  let record = value as Record<string, unknown>
+  let record = lowercaseNames(value as Record<string, unknown>)
   if (Array.isArray(record.variables) && record.variables.some(hasZeroStep)) {
     record = { ...record, variables: record.variables.map((v) => (hasZeroStep(v) ? { ...v, step: roundStep(v.min, v.max) } : v)) }
   }
@@ -438,6 +533,56 @@ export function repairDraft(itemType: ItemType, value: unknown): unknown {
   const result = ITEM_SCHEMAS.math.safeParse(record)
   const inexact = !result.success && result.error.issues.some((issue) => issue.code === 'custom' && issue.params?.math === 'inexact_answer')
   return inexact ? { ...record, tolerance_percent: 1 } : record
+}
+
+// Gemma 4 names variables the way physics writes them, F_net or V0, and keeps
+// the capitals on every retry: under Transformers.js the grammar cannot carry
+// the name pattern. A name that is valid once lowercased is renamed, along with
+// every use of it in the formula, the constraints, the stem and explanation
+// placeholders and the worked example. A use that differs from a declared name
+// only in case is the same variable and is lowercased too. Names that would
+// collide (M and m) or become reserved (E) are left for the error message.
+const IDENTIFIER = /(?<![A-Za-z0-9_.])[A-Za-z_][A-Za-z0-9_]*/g
+const RESERVED_NAMES = new Set<string>([...CONSTANT_NAMES, ...FUNCTION_NAMES, 'answer'])
+
+function lowercaseNames(record: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(record.variables)) return record
+  const declared = record.variables.map((v) => (v && typeof v === 'object' ? (v as { name?: unknown }).name : undefined))
+  const names = new Set(declared.filter((name): name is string => typeof name === 'string' && VARIABLE_NAME.test(name)))
+  const renames = new Map<string, string>()
+  for (const name of declared) {
+    if (typeof name !== 'string' || VARIABLE_NAME.test(name)) continue
+    const lower = name.toLowerCase()
+    if (!VARIABLE_NAME.test(lower) || names.has(lower) || RESERVED_NAMES.has(lower)) continue
+    renames.set(name, lower)
+    names.add(lower)
+  }
+  const fix = (id: string) => renames.get(id) ?? (!declared.includes(id) && names.has(id.toLowerCase()) ? id.toLowerCase() : id)
+  const formula = (value: unknown) => (typeof value === 'string' ? value.replace(IDENTIFIER, fix) : value)
+  const template = (value: unknown) =>
+    typeof value === 'string' ? value.replace(/\{\{([^{}]*)\}\}/g, (_, inner: string) => `{{${inner.replace(IDENTIFIER, fix)}}}`) : value
+  const out: Record<string, unknown> = {
+    ...record,
+    variables: record.variables.map((v) => {
+      const name = (v as { name?: unknown } | null)?.name
+      return typeof name === 'string' && renames.has(name) ? { ...v, name: renames.get(name) } : v
+    }),
+    answer_formula: formula(record.answer_formula),
+    stem: template(record.stem),
+    explanation: template(record.explanation),
+  }
+  if (Array.isArray(record.constraints)) out.constraints = record.constraints.map(formula)
+  const example = record.worked_example as { values?: unknown } | undefined
+  if (example && Array.isArray(example.values)) {
+    out.worked_example = {
+      ...example,
+      values: example.values.map((v) => {
+        const name = (v as { name?: unknown } | null)?.name
+        return typeof name === 'string' ? { ...v, name: name.replace(IDENTIFIER, fix) } : v
+      }),
+    }
+  }
+  return JSON.stringify(out) === JSON.stringify(record) ? record : out
 }
 
 // Gemma 4 writes $…$ and $$…$$ math although the prompt asks for \( \) and

@@ -1,10 +1,11 @@
 import 'fake-indexeddb/auto'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SAMPLE_DRAFTS } from '../qti/fixtures'
 import { completeWithRetries, LLMError, type CompletionRequest, type Embedder, type LLMProvider } from '../llm/types'
 import { db, type StoredSource } from '../storage/db'
-import { dollarsToDelimiters, planUnits, repairDraft, runGeneration, stripSourceReferences } from './pipeline'
-import type { DraftOf, ItemType } from './schema'
+import { checkWorkedExample } from '../math/spec'
+import { cleanReviewNotes, dollarsToDelimiters, planUnits, repairDraft, runGeneration, stripSourceReferences } from './pipeline'
+import { parseDraft, type DraftOf, type ItemType } from './schema'
 
 const source: StoredSource = {
   id: 'src-1',
@@ -100,7 +101,7 @@ describe('runGeneration', () => {
     const provider = new FakeProvider()
     const types: ItemType[] = ['multiple_choice', 'true_false', 'matching']
     const result = await runGeneration('set-1', source, { itemTypes: types, perPage: 4, reviewPass: false }, provider, new AbortController().signal, callbacks)
-    expect(result).toEqual({ created: 4, failures: [] })
+    expect(result).toEqual({ created: 4, skipped: 0, errors: [] })
     const items = await db.items.where('setId').equals('set-1').sortBy('position')
     expect(items.map((i) => i.draft.item_type)).toEqual(['multiple_choice', 'true_false', 'matching', 'multiple_choice'])
     expect(items.every((i) => i.status === 'draft' && i.draft.concept_label === 'Inputs')).toBe(true)
@@ -114,17 +115,59 @@ describe('runGeneration', () => {
     expect(provider.calls).toEqual(['concept_batch', 'multiple_choice_item', 'multiple_choice_item'])
   })
 
-  it('records a failure for an item that never validates and keeps going', async () => {
+  it('starts a question afresh when every attempt fails the checks', async () => {
     const provider = new FakeProvider()
     const original = provider.complete.bind(provider)
+    const prompts: string[] = []
+    const { item_type: _, ...fixture } = SAMPLE_DRAFTS.find((d) => d.item_type === 'true_false')!
+    void _
     provider.complete = (request) =>
       request.schemaName === 'true_false_item'
-        ? completeWithRetries(request, async () => ({ text: '{"title":"x"}', usage: null }))
+        ? completeWithRetries(request, async (prompt) => {
+            prompts.push(prompt)
+            const payload = prompts.length <= 3 ? { title: 'x' } : { ...fixture, citation_paragraphs: [0] }
+            return { text: JSON.stringify(payload), usage: null }
+          })
+        : original(request)
+    const result = await runGeneration('set-1', source, { itemTypes: ['true_false'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
+    expect(prompts).toHaveLength(4)
+    // The fresh start does not carry the first round's errors.
+    expect(prompts[2]).toContain('previous response was rejected')
+    expect(prompts[3]).not.toContain('previous response was rejected')
+  })
+
+  it('leaves out a question that fails in every round, without an error, and keeps going', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const provider = new FakeProvider()
+    const original = provider.complete.bind(provider)
+    let attempts = 0
+    provider.complete = (request) =>
+      request.schemaName === 'true_false_item'
+        ? completeWithRetries(request, async () => {
+            attempts++
+            return { text: '{"title":"x"}', usage: null }
+          })
         : original(request)
     const result = await runGeneration('set-1', source, { itemTypes: ['true_false', 'essay'], perPage: 2, reviewPass: false }, provider, new AbortController().signal, callbacks)
-    expect(result.created).toBe(1)
-    expect(result.failures).toHaveLength(1)
-    expect(result.failures[0]).toMatch(/true false/)
+    expect(result).toEqual({ created: 1, skipped: 1, errors: [] })
+    // Three rounds of three attempts.
+    expect(attempts).toBe(9)
+    expect(warn.mock.calls[0][1]).toMatch(/did not return a valid true_false_item/)
+    warn.mockRestore()
+  })
+
+  it('starts the search for concepts afresh too', async () => {
+    const provider = new FakeProvider()
+    const original = provider.complete.bind(provider)
+    let rounds = 0
+    provider.complete = (request) =>
+      request.schemaName === 'concept_batch' && ++rounds === 1
+        ? completeWithRetries(request, async () => ({ text: '{"concepts":[]}', usage: null }))
+        : original(request)
+    const result = await runGeneration('set-1', source, { itemTypes: ['essay'], perPage: 2, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(result).toEqual({ created: 2, skipped: 0, errors: [] })
+    expect(rounds).toBe(2)
   })
 
   it('sends math spec errors back to the model with the reason', async () => {
@@ -142,7 +185,7 @@ describe('runGeneration', () => {
           })
         : original(request)
     const result = await runGeneration('set-1', source, { itemTypes: ['math'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
-    expect(result).toEqual({ created: 1, failures: [] })
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
     expect(prompts).toHaveLength(2)
     expect(prompts[1]).toContain('write multiplication explicitly')
     const [item] = await db.items.where('setId').equals('set-1').toArray()
@@ -186,7 +229,7 @@ describe('runGeneration', () => {
           })
         : original(request)
     const result = await runGeneration('set-1', long, { itemTypes: ['math'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
-    expect(result).toEqual({ created: 1, failures: [] })
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
     expect(conceptPrompts).toHaveLength(2)
     expect(conceptPrompts[0]).toContain('All of the questions will be calculations')
     const [item] = await db.items.where('setId').equals('set-1').toArray()
@@ -211,7 +254,7 @@ describe('runGeneration', () => {
           })
         : original(request)
     const result = await runGeneration('set-1', source, { itemTypes: ['math'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
-    expect(result).toEqual({ created: 1, failures: [] })
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
     expect(prompts).toHaveLength(2)
     expect(prompts[1]).toContain('"v + 2 / t" gives 6.5, but worked_example.answer is 2')
     const [item] = await db.items.where('setId').equals('set-1').toArray()
@@ -249,10 +292,10 @@ describe('runGeneration', () => {
     const cutOff = await run(new LLMError('The response was cut off at the output limit.', true))
     expect(cutOff.result.created).toBe(1)
     expect(cutOff.prompts[1]).toContain('cut off at the output limit')
+    // Not started afresh either: the instructor has to load the model.
     const notLoaded = await run(new LLMError('The in-browser model is not loaded.'))
-    expect(notLoaded.result.created).toBe(0)
+    expect(notLoaded.result).toEqual({ created: 0, skipped: 0, errors: ['The in-browser model is not loaded.'] })
     expect(notLoaded.prompts).toHaveLength(1)
-    expect(notLoaded.result.failures[0]).toMatch(/not loaded/)
   })
 
   it('lets the reviewer reword a math question but not change what it computes', async () => {
@@ -281,19 +324,23 @@ describe('runGeneration', () => {
   })
 
   it('rejects citations outside the section shown to the model', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const provider = new FakeProvider()
     const original = provider.complete.bind(provider)
+    const prompts: string[] = []
     provider.complete = (request) =>
       request.schemaName === 'essay_item'
-        ? completeWithRetries(request, async () => {
+        ? completeWithRetries(request, async (prompt) => {
+            prompts.push(prompt)
             const { item_type: _, ...payload } = SAMPLE_DRAFTS.find((d) => d.item_type === 'essay')!
             void _
             return { text: JSON.stringify({ ...payload, citation_paragraphs: [7] }), usage: null }
           })
         : original(request)
     const result = await runGeneration('set-1', source, { itemTypes: ['essay'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
-    expect(result.created).toBe(0)
-    expect(result.failures[0]).toMatch(/citation_paragraphs 7/)
+    expect(result).toEqual({ created: 0, skipped: 1, errors: [] })
+    expect(prompts[1]).toMatch(/citation_paragraphs 7/)
+    warn.mockRestore()
   })
 })
 
@@ -371,7 +418,7 @@ describe('duplicate check', () => {
   it('still writes the questions when the check cannot load', async () => {
     const plan = { itemTypes: ['multiple_choice'] as ItemType[], perPage: 2, reviewPass: false }
     const result = await runGeneration('set-1', source, plan, new FakeProvider(), new AbortController().signal, callbacks, fakeEmbedder(true))
-    expect(result).toEqual({ created: 2, failures: [] })
+    expect(result).toEqual({ created: 2, skipped: 0, errors: [] })
   })
 })
 
@@ -402,6 +449,47 @@ describe('repairDraft', () => {
     const numerical = { tolerance: 0 }
     expect(repairDraft('numerical', numerical)).toBe(numerical)
   })
+
+  it('lowercases capitalised variable names everywhere they are used', () => {
+    // As Gemma 4 E4B named it in the end-to-end test, failing all three tries.
+    const draft = {
+      ...math,
+      stem: 'A net force of {{F_net}} N acts on a {{m}} kg cart, so \\(F_{net} = ma\\). What is its acceleration?',
+      explanation: 'Acceleration is net force over mass: {{F_net}} N / {{m}} kg = {{F_net/m}} m/s², or {{answer}} m/s².',
+      variables: [
+        { name: 'F_net', min: 10, max: 100, step: 5 },
+        { name: 'm', min: 2, max: 20, step: 1 },
+      ],
+      constraints: ['F_net > m'],
+      answer_formula: 'F_net / m',
+      units: 'm/s²',
+      worked_example: { values: [{ name: 'F_net', value: 20 }, { name: '{{m}}', value: 4 }], working: '20 N / 4 kg = 5 m/s²', answer: 5 },
+    }
+    expect(() => parseDraft('math', draft)).toThrow(/F_net/)
+    const repaired = repairDraft('math', draft) as typeof draft
+    expect(repaired.variables.map((v) => v.name)).toEqual(['f_net', 'm'])
+    expect(repaired.answer_formula).toBe('f_net / m')
+    expect(repaired.constraints).toEqual(['f_net > m'])
+    // TeX outside the placeholders is the question's own text.
+    expect(repaired.stem).toBe('A net force of {{f_net}} N acts on a {{m}} kg cart, so \\(F_{net} = ma\\). What is its acceleration?')
+    expect(repaired.explanation).toBe('Acceleration is net force over mass: {{f_net}} N / {{m}} kg = {{f_net/m}} m/s², or {{answer}} m/s².')
+    expect(repaired.worked_example.values.map((v) => v.name)).toEqual(['f_net', '{{m}}'])
+    const parsed = parseDraft('math', repaired)
+    expect(() => checkWorkedExample(parsed as DraftOf<'math'>, repaired.worked_example)).not.toThrow()
+  })
+
+  it('lowercases a use that differs from a declared name only in case', () => {
+    const repaired = repairDraft('math', { ...math, answer_formula: 'V / T', stem: 'A leaf releases {{V}} mL in {{t}} minutes. What is the rate?' }) as typeof math
+    expect(repaired.answer_formula).toBe('v / t')
+    expect(repaired.stem).toBe('A leaf releases {{v}} mL in {{t}} minutes. What is the rate?')
+  })
+
+  it('leaves names that would collide or become reserved for the error message', () => {
+    const collide = { ...math, variables: [{ name: 'M', min: 1, max: 9, step: 1 }, { name: 'm', min: 1, max: 9, step: 1 }], answer_formula: 'M / m' }
+    expect(repairDraft('math', collide)).toBe(collide)
+    const reserved = { ...math, variables: [{ name: 'E', min: 1, max: 9, step: 1 }], answer_formula: 'E * 2' }
+    expect(repairDraft('math', reserved)).toBe(reserved)
+  })
 })
 
 describe('dollarsToDelimiters', () => {
@@ -423,5 +511,47 @@ describe('dollarsToDelimiters', () => {
   it('applies to prose fields but not formulas, names or units', () => {
     const draft = { stem: 'Find $v$.', answer_formula: 'd / t', units: '$', choices: [{ text: '$2t$', feedback: null }] }
     expect(repairDraft('multiple_choice', draft)).toEqual({ ...draft, stem: 'Find \\(v\\).', choices: [{ text: '\\(2t\\)', feedback: null }] })
+  })
+})
+
+describe('cleanReviewNotes', () => {
+  it('drops notes about the app’s side of things, as Gemma 4 E4B wrote them', () => {
+    const notes = [
+      'The concept_label is too long.',
+      'The question type is implied but not explicitly stated in the final output structure.',
+      'The revised question must integrate the feedback into the choice structure as required by the prompt rules, not as separate feedback fields.',
+      'The citation does not cover the explanation.',
+      'The explanation was redundant and did not add value to the question.',
+      'The explanation is not strictly necessary for the student to answer the question.',
+      "The choice 'Mass only' is a weak distractor because the source never links acceleration to mass alone.",
+    ]
+    expect(cleanReviewNotes(notes)).toEqual([notes[6]])
+  })
+
+  it('drops notes that a wrong choice is wrong or not in the source, unless they name a real problem', () => {
+    const mc = SAMPLE_DRAFTS.find((d) => d.item_type === 'multiple_choice')!
+    const [wrong, alsoWrong] = mc.choices.filter((c) => !c.correct).map((c) => c.text)
+    const right = mc.choices.find((c) => c.correct)!.text
+    const notes = [
+      `The choice '${wrong}' is not supported by the source text.`,
+      `The choice '${alsoWrong}' is incorrect because the source says otherwise.`,
+      `The choice '${wrong}' is incorrect, but it is too obvious to tempt anyone.`,
+      `The choice '${right}' is not supported by the source text.`,
+    ]
+    expect(cleanReviewNotes(notes, mc)).toEqual([notes[2], notes[3]])
+    // Without the draft the choices are unknown, so nothing is dropped for this.
+    expect(cleanReviewNotes(notes)).toEqual(notes)
+  })
+
+  it('keeps subject words that look like app words, and writes field names as words', () => {
+    const notes = [
+      "The choice 'Electric fields do work on charges' is also true.",
+      "The choice 'Power output doubles' is not supported by the source.",
+      'The stem gives the answer away.',
+      'The model_answer omits the second key point.',
+      'The model_answer omits the second key point.',
+      'The explanation contradicts the source about the direction of friction.',
+    ]
+    expect(cleanReviewNotes(notes)).toEqual([notes[0], notes[1], notes[2], 'The model answer omits the second key point.', notes[5]])
   })
 })

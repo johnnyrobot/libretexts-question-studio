@@ -98,6 +98,27 @@ bundled with the app rather than fetched from jsDelivr.
 - It lets a trailing comma through (`[2,]`); `parseJsonResponse` drops trailing commas when the JSON does not parse.
 - Gemma writes LaTeX with one backslash inside JSON, so `\frac` arrives as a form feed and `\text` as a tab. `parseJsonResponse` reads `\b \f \n \r \t` as LaTeX when they start a known command (it leaves `\nu`, `\ne` and `\to`, which read as text after a line break).
 - Gemma writes `$…$` math despite the prompt; `repairDraft` turns it into `\( \)` using Pandoc's rule, so "$5 and $10" stays a price.
+- Gemma names math variables the way physics writes them (`F_net`, `F_foot`). With the pattern stripped it keeps the capitals on every retry, so `repairDraft` lowercases them and every use (see [adapt-formats-and-math.md](adapt-formats-and-math.md#capitalised-variable-names-gemma-4-e4b-2026-10-06)).
+
+**Review pass on Gemma (2026-10-06).** First tested in the end-to-end run, where
+it wrote "The concept_label is too long." Twelve drafts from College Physics 4.3
+and 4.4 (multiple choice, true/false, select all, fill in the blank, three each)
+were reviewed with the old and the new review prompt:
+
+| | Old prompt, no filter | New prompt and filter |
+|---|---|---|
+| Notes written | 15 | 16 |
+| About the app's side (field names, "final output structure", "prompt rules") | 4 | 1, dropped |
+| A wrong choice called wrong or "not in the source", which is its job | 3 | 4, dropped |
+| The explanation called redundant or not needed | 1 | 1, dropped |
+| Notes shown to the instructor | 15 | 10 |
+| Reviews with no notes shown | 5 | 6 |
+| Time for 12 reviews | 168 s | 191 s |
+
+- **Prompt:** the reviewer is told the instructor reads the list, to use plain words ("the choice '…'", "the explanation"), not field names, and that the app checks format, the concept label and citations.
+- **Filter (`cleanReviewNotes`):** drops notes about the app's side, notes that only call a wrong choice wrong or unsupported (unless they also say it is too easy, also true, misleading and so on), and notes that the explanation is redundant or not needed (it is the feedback students read). It writes any snake_case name as words. The phrases are narrow, because "field", "output" and "stem" are also subject words. With the old prompt the filter alone would have shown 8 of the 15 notes.
+- **In the app:** a full run of 6 questions (the end-to-end settings) gave 4 notes on 3 questions, none naming a field; the filter caught one more "explanation was redundant" note, which led to that rule.
+- **Still weak:** two kept notes only say the question is wordy. The reviewer also missed a wrong answer key: a select-all draft marked "The acceleration is directly proportional to the net external force" incorrect, and both reviews defended it.
 
 **EmbeddingGemma 2** (q4, 174 MB, text part only) runs the duplicate check: a
 new question whose stem has cosine ≥ 0.94 with one already in its set gets a
@@ -109,8 +130,8 @@ use from the bench, showing the best-matching source paragraph in review, is not
 built: the cited paragraph ranked in the top three for only 61% of questions.
 
 **Not yet tested:** Safari, Firefox, Windows and Intel/AMD GPUs, GPU memory use
-(not measurable from a page), the review pass on Gemma, more source pages, and
-an ADAPT import of Gemma-written questions (the export code is unchanged).
+(not measurable from a page), and more source pages. An ADAPT import of
+Gemma-written questions worked in the 2026-10-06 end-to-end test (5 of 5).
 
 ### MiniCPM5-2B (openbmb, Apache-2.0, 2026-09-06)
 

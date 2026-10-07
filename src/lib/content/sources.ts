@@ -10,7 +10,7 @@ import {
   type PageInfo,
   type TocNode,
 } from './libretexts'
-import { normalizeHtml, normalizePlainText } from './normalize'
+import { normalizeHtml, normalizePlainText, withPageNumbers } from './normalize'
 
 // Builds the generation source (one or more normalised pages) from whatever the
 // instructor picked: a pasted URL, part of a book's table of contents, or text.
@@ -47,9 +47,12 @@ export async function fetchPageText(
 ): Promise<SourcePage> {
   const key = `${library}-${node.id}`
   const cached = await db.pages.get(key)
-  if (cached) return { title: cached.title, url: cached.url, pageId: node.id, paragraphs: cached.paragraphs }
+  if (cached) {
+    // Pages cached before \PageIndex was expanded are expanded on the way out.
+    return { title: cached.title, url: cached.url, pageId: node.id, paragraphs: withPageNumbers(cached.paragraphs, cached.title) }
+  }
   const html = await getContentsHtml(library, node.id, signal)
-  const { paragraphs } = normalizeHtml(html)
+  const paragraphs = withPageNumbers(normalizeHtml(html).paragraphs, node.title)
   await db.pages.put({ key, title: node.title, url: node.url, paragraphs, fetchedAt: Date.now() })
   return { title: node.title, url: node.url, pageId: node.id, paragraphs }
 }

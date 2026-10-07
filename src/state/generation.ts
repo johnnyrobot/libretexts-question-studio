@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { runGeneration, type GenerationPlan } from '../lib/generation/pipeline'
+import { runGeneration, type GenerationPlan, type GenerationResult } from '../lib/generation/pipeline'
 import type { Embedder, LLMProvider } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
 
@@ -11,13 +11,14 @@ export interface GenerationState {
   running: boolean
   setId: string | null
   status: string
+  // Questions finished, written or left out; written counts only the first.
   done: number
+  written: number
   total: number
-  failures: string[]
   detail: string
 }
 
-let state: GenerationState = { running: false, setId: null, status: '', done: 0, total: 0, failures: [], detail: '' }
+let state: GenerationState = { running: false, setId: null, status: '', done: 0, written: 0, total: 0, detail: '' }
 let controller: AbortController | null = null
 const listeners = new Set<() => void>()
 
@@ -45,12 +46,12 @@ export async function startGeneration(
 ): Promise<void> {
   if (state.running) throw new Error('A generation is already running.')
   controller = new AbortController()
-  update({ running: true, setId, status: 'Starting…', done: 0, total: 0, failures: [], detail: '' })
+  update({ running: true, setId, status: 'Starting…', done: 0, written: 0, total: 0, detail: '' })
   await db.sets.update(setId, { status: 'generating', error: null, updatedAt: Date.now() })
   try {
     const result = await runGeneration(setId, source, plan, provider, controller.signal, {
       onStatus: (status) => update({ status, detail: '' }),
-      onItem: () => undefined,
+      onItem: () => update({ written: state.written + 1 }),
       onProgress: (done, total) => update({ done, total }),
       onModelEvent: (event) => {
         if (event.kind === 'status') update({ detail: event.message })
@@ -58,15 +59,12 @@ export async function startGeneration(
         else update({ detail: `${event.generated} chunks generated…` })
       },
     }, embedder)
-    const error = result.failures.length
-      ? `${result.failures.length} question(s) could not be generated: ${result.failures.slice(0, 3).join(' · ')}`
-      : null
     await db.sets.update(setId, {
-      status: result.created === 0 && result.failures.length ? 'failed' : 'complete',
-      error,
+      status: result.created === 0 && (result.skipped || result.errors.length) ? 'failed' : 'complete',
+      error: resultError(result),
       updatedAt: Date.now(),
     })
-    update({ running: false, status: `Done — ${result.created} question(s) written.`, failures: result.failures })
+    update({ running: false, status: `Done — ${result.created} question(s) written.` })
   } catch (error) {
     const cancelled = controller?.signal.aborted
     const message = error instanceof Error ? error.message : String(error)
@@ -79,6 +77,18 @@ export async function startGeneration(
   } finally {
     controller = null
   }
+}
+
+// Questions whose answers never passed the checks were already started over
+// automatically, so a set missing a few of them gets no notice. The instructor
+// hears about engine errors, which they can fix, and about a set left empty.
+function resultError({ created, skipped, errors }: GenerationResult): string | null {
+  if (errors.length) {
+    const count = errors.length
+    return `${count} question${count === 1 ? '' : 's'} could not be written: ${[...new Set(errors)].join(' · ')}`
+  }
+  if (created === 0 && skipped) return 'No questions could be written: the model’s answers did not pass the app’s checks.'
+  return null
 }
 
 export function cancelGeneration(): void {

@@ -74,8 +74,8 @@ ${renderSource(unit, concept.source_paragraphs)}
 export function reviewPrompt(unit: SourceUnit, concept: Concept, draft: QuestionDraft): string {
   const { item_type, ...payload } = draft
   return `Act as a separate, critical assessment reviewer. Check the content of the draft ${item_type.replace(/_/g, ' ')} question against the source paragraphs: ${REVIEW_FOCUS[item_type] ?? REVIEW_FOCUS.default}
-Format rules (field names, placeholders, tolerances, variable names) are checked automatically, so do not report them.
-List only real problems you are sure of, each as one short sentence. Do not think out loud, do not list things that are correct, and never repeat a sentence. If nothing is wrong, return an empty list.
+The app checks the format, the concept label and the citations, so say nothing about them, about the JSON, or about your revision.
+The instructor reads your list. Write each real problem you are sure of as one short sentence about the question as students will see it, in plain words such as "the question", "the choice '…'", "the correct answer", "the feedback" or "the explanation", never field names such as concept_label. Report only what makes the question wrong, ambiguous, misleading or easy to guess, not suggestions or things that are correct or unnecessary; a wrong choice does not need to appear in the source. Do not think out loud and never repeat a sentence. If nothing is wrong, return an empty list.
 Then return the complete revised question with every listed problem fixed, polishing the wording even when nothing is wrong. Keep the same question type and concept_label, and cite only paragraphs from ${JSON.stringify(concept.source_paragraphs)}.
 The revised question must follow these rules:
 ${REVIEW_RULES[item_type] ?? ITEM_RULES[item_type]}

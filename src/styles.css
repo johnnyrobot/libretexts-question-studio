@@ -897,9 +897,23 @@ button.danger-link {
 .success-note a,
 .banner a,
 .notice button.link,
+.error button.link,
 .banner button.link {
   color: inherit;
   font-weight: 600;
+}
+
+/* A one-line notice with its Dismiss link at the end. */
+.dismissible {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+}
+
+.dismissible p {
+  margin: 0;
 }
 
 .error {

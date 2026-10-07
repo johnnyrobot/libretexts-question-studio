@@ -5,7 +5,8 @@ running ADAPT's own parser on this app's output (`npm run verify:adapt`).
 
 ## The format: Canvas QTI 1.2, nothing else
 
-ADAPT's **Question Editor → Bulk Import → Canvas QTI** is the only working QTI
+ADAPT's **Bulk Import → Canvas QTI** (Dashboard → My Questions, which opens the
+page titled Question Editor, then the Bulk Import tab) is the only working QTI
 import. The parser lives in `adapt/app/QtiImport.php` and the package handling
 in `adapt/app/Jobs/ProcessValidateQtiFile.php`.
 
@@ -81,10 +82,16 @@ The exporter (`src/lib/qti/canvas.ts`) follows all of these. The schemas
 ## Import quirks worth knowing
 
 - `points_possible` is ignored. Points come from the assignment template.
+- ADAPT imports a quiz's items in identifier order, not file order
+  (`QtiJobController.php` reads `qti_imports` with no ORDER BY, and the unique
+  index `(qti_job_id, identifier)` returns them sorted). Item identifiers are
+  therefore `q<position>_g<question id hex>`, with the position zero-padded to
+  at least 3 digits, so the assignment keeps the set's order.
 - Re-importing byte-identical item XML reuses the existing ADAPT question
-  ("Already exists in the database"). Item identifiers are derived from the stored
-  question id, so a re-export of an unchanged question will dedupe; an edited
-  question imports as a new one.
+  ("Already exists in the database"). The identifier is part of that XML, so a
+  re-export dedupes an unchanged question only while it keeps its position; an
+  edited, moved or renumbered question (after a deletion above it) imports as a
+  new one.
 - The author and source URL entered on the import form are not saved on imported
   questions (an ADAPT bug: the controller reads columns the job never writes).
 

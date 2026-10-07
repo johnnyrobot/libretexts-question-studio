@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { strFromU8, unzipSync } from 'fflate'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '../storage/db'
-import { ident } from './canvas'
+import { itemIdent } from './canvas'
 import { exportMathVersions, exportSet } from './export'
 import { SAMPLE_DRAFTS } from './fixtures'
 
@@ -50,6 +50,16 @@ describe('exportSet', () => {
     expect(record.filename).toBe('leaf-quiz-adapt-qti.zip')
   })
 
+  it('gives identifiers that sort in set order, since ADAPT imports in identifier order', async () => {
+    const record = await exportSet('set', { includeDrafts: false, randomizeMath: false })
+    const [quiz] = await quizzes(record.zip)
+    const idents = quiz.items.map((i) => i.ident)
+    expect(idents).toEqual(SAMPLE_DRAFTS.map((_, position) => itemIdent(uuid(position), position, SAMPLE_DRAFTS.length)))
+    expect(idents[0]).toMatch(/^q001_g[0-9a-f]{32}$/)
+    expect([...idents].sort()).toEqual(idents)
+    expect(quiz.xml).toContain(`<fieldentry>${idents[0]}_aq</fieldentry>`)
+  })
+
   it('writes a description students can read as assignment instructions', async () => {
     const record = await exportSet('set', { includeDrafts: false, randomizeMath: false })
     const files = unzipSync(new Uint8Array(await record.zip.arrayBuffer()))
@@ -88,8 +98,8 @@ describe('exportMathVersions', () => {
     }
     const idents = found.flatMap((q) => q.items.map((i) => i.ident))
     expect(new Set(idents).size).toBe(8)
-    // Version 1 keeps the question's own identifier.
-    expect(idents).toContain(ident(uuid(1)))
+    // Version 1 keeps the question's own identifier, after its position.
+    expect(idents).toContain(itemIdent(uuid(1), 0, 4))
     expect(record.filename).toBe('leaf-quiz-math-versions-adapt-qti.zip')
     expect(record.itemIds).toEqual([uuid(1), uuid(2)])
   })

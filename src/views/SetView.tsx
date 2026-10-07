@@ -5,6 +5,7 @@ import { ItemEditor } from '../components/ItemEditor'
 import { ItemPreview, SourceCitations } from '../components/ItemPreview'
 import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
+import { withPageNumbers } from '../lib/content/normalize'
 import { localModelLabel } from '../lib/llm/local-models'
 import { ITEM_TYPE_LABELS } from '../lib/generation/schema'
 import { DEFAULT_VERSIONS, MAX_VERSIONS } from '../lib/math/spec'
@@ -74,7 +75,7 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
             <div role="status">
               <strong>{generation.status}</strong>
               <p className="muted">
-                {generation.done} of {generation.total || '…'} questions written
+                {generation.written} of {generation.total || '…'} questions written
               </p>
             </div>
             <button type="button" onClick={cancelGeneration}>
@@ -91,9 +92,19 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
         </section>
       )}
       {!running && set.error && (
-        <p className={set.status === 'failed' ? 'error' : 'notice'} role="status">
-          {set.error}
-        </p>
+        <div className={`${set.status === 'failed' ? 'error' : 'notice'} dismissible`}>
+          <p role="status">{set.error}</p>
+          <button
+            type="button"
+            className="link"
+            onClick={async () => {
+              await db.sets.update(set.id, { error: null })
+              focusMain()
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
       )}
 
       {items.length > 0 && (
@@ -171,6 +182,11 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
       </footer>
     </>
   )
+}
+
+// For a control that disappears once used.
+function focusMain() {
+  document.getElementById('main')?.focus({ preventScroll: true })
 }
 
 function focusSelectedTab() {
@@ -288,7 +304,7 @@ function ItemCard({
         <div className="source-text">
           <h3 className="label">From “{page.title}”</h3>
           <p className="fine">Concept: {draft.concept_label}</p>
-          <SourceCitations paragraphs={page.paragraphs} cited={draft.citation_paragraphs} />
+          <SourceCitations paragraphs={withPageNumbers(page.paragraphs, page.title)} cited={draft.citation_paragraphs} />
         </div>
       )}
       {!editing && (
@@ -463,7 +479,7 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
             <h2>Import into ADAPT</h2>
             <ol className="steps">
               <li>
-                In ADAPT, open <strong>Question Editor → Bulk Import</strong> (instructor account).
+                In ADAPT (instructor account), open <strong>Dashboard → My Questions</strong>, then the <strong>Bulk Import</strong> tab.
               </li>
               <li>
                 Choose <strong>Canvas QTI</strong> as the import template. Pick a folder, author, and license

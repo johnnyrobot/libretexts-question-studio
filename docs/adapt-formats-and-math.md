@@ -87,7 +87,7 @@ The math question type (`math`, "Math (randomized numbers)") lives in
 4. **Versions are deterministic** (mulberry32, seeds 1, 2, 3, ...), so re-exports are byte-identical. Variables print exactly, and computed placeholders print to four significant figures. Answers with a tolerance are rounded to six significant figures for the answer key.
 5. **Export:**
    - **Fixed (default):** version 1 goes into the main quiz as a `numerical_question`.
-   - **Randomized:** a second zip has one quiz per math question, holding 2 to 10 versions titled "(version n)". ADAPT creates one assignment per quiz. Import it into a course with an assignment template whose Dynamic Questioning settings are **Random sampling**: Yes and **Number of randomized assessments**: 1. Points Per Question has to be "Specify the points for each question individually", which is the default. (The local `../adapt` checkout calls these "Randomizations" and "Specify number of points".) Version 1 keeps the question's own identifier; later versions hash `<uuid>:v<n>`.
+   - **Randomized:** a second zip has one quiz per math question, holding 2 to 10 versions titled "(version n)". ADAPT creates one assignment per quiz. Import it into a course with an assignment template whose Dynamic Questioning settings are **Random sampling**: Yes and **Number of randomized assessments**: 1. Points Per Question has to be "Specify the points for each question individually", which is the default. (The local `../adapt` checkout calls these "Randomizations" and "Specify number of points".) Item identifiers start with the item's position (`q001_…`, since ADAPT imports in identifier order); after it, version 1 keeps the question's own id and later versions hash `<uuid>:v<n>`.
 6. **Exact answer keys:** ADAPT stores a numerical answer as `(low + high) / 2` in doubles, so a plain decimal range can turn 0.346154 into 0.34615399999999996. `numericRange` (in `qti/canvas.ts`) detects this. It then writes the bounds as two doubles whose sum is exactly twice the answer, printed so PHP reads back the same doubles. This applies to the numerical type too.
 
 **Real-model test (Qwen3.5 4B, 2026-10-05).** Source: OpenStax College Physics 2.3 and 2.5, 6 math questions requested, review on.
@@ -129,6 +129,38 @@ In the end-to-end run the hint alone was enough; no question had to borrow. Borr
 - **Limit: it cannot catch a formula that is wrong in substance.** The one wrong formula, `d / v / t + b` for a stopping distance, came after the app rejected an unused variable `d`. The model forced `d` into the formula, and its "hand" example simply evaluated that formula.
 - **Copying:** when the variables are called d and t, the model often copies the prompt's example values (100 km, 4 h). The check is still valid, because it evaluates the model's own formula on those values.
 - **Why the yield rose:** before the repair, step 0 sank 19 of 44 attempts. Afterwards it was repaired in 6 of 16 attempts.
+
+**Capitalised variable names (Gemma 4 E4B, 2026-10-06).** Gemma names
+variables the way physics writes them (`F_net`, `F_foot`). The Transformers.js
+grammar cannot carry the name pattern, and the model kept the capitals on every
+retry: in the end-to-end test a math question failed all three tries on
+`F_net`. `repairDraft` now lowercases a declared name that is valid in lowercase,
+and every use of it: the formula, the constraints, the `{{ }}` placeholders and
+the worked example. A use that differs from a declared name only in case is
+lowercased too. TeX outside the placeholders is left alone, and names that would
+collide (`M` and `m`) or become reserved (`E`) are left for the error message.
+Ten math drafts of the four quantitative concepts in College Physics 4.3 and 4.4:
+
+| | Questions | Model calls | Attempts with capitals | Rejected for capitals | Time |
+|---|---|---|---|---|---|
+| Before | 6 of 10 | 22 | 5 | 5 | 478 s |
+| The same 22 attempts, re-checked with the repair | 8 of 10 | — | 5 | 0 (3 now pass, 2 fail for other reasons) | — |
+| After (new run) | 9 of 10 | 18 | 4 | 0 | 388 s |
+
+The other rejections across both runs (40 attempts) were a name used but not
+declared, such as `m*a` with only `m` or an explanation's `{{w}}` (14), a
+constant such as g = 9.8 declared with min equal to max (4), and a stem missing
+a placeholder (2). None of these is repaired.
+
+**Starting over automatically (2026-10-07).** A question whose three attempts
+all fail now starts over in a new conversation, up to twice more, and is then
+left out without a notice. A full run, Gemma 4 E4B, math only, 5 per page on
+College Physics 4.3 and 4.4: 9 of 10 questions in 436 s, 20 model calls. All 9
+passed in their first round (8 on the first attempt). The tenth used `m*a`
+with only `m` declared in all 9 attempts across the three rounds, about 150 s,
+so a fresh start does not get past a mistake the model makes every time on a
+concept. Earlier, the same fresh start by hand (the Try again button this
+replaced) wrote 2 of 2.
 
 **Review pass for math (2026-10-06).** Decision: on the in-browser model, math questions skip the review pass, saving about 20 s each. OpenAI still reviews them, wording only. Other question types are reviewed as before. The measurements behind the decision:
 - The reviewer only rewords math questions. Its schema has the wording fields only (title, stem, explanation, Bloom, difficulty, citations), and the validated computation is merged back in. Given the chance, Qwen3.5 4B rewrote a correct `(v0 + v) / 2` as `v0 + v / 2`. That passes every check but gives a wrong answer key in every version, and it is the likely source of an `xf - x0 / t` item seen in testing.

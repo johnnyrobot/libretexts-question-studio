@@ -32,6 +32,12 @@ export interface QuizItem {
   draft: QuestionDraft
 }
 
+// The item's own id (seeds its shuffles) and its identifier in the file.
+interface ItemKey {
+  id: string
+  ident: string
+}
+
 export interface QuizPackageInput {
   id: string
   title: string
@@ -103,7 +109,7 @@ export function buildAssessmentXml(quiz: QuizPackageInput): string {
     `<assessment ident="${ident(quiz.id)}" title="${xml(oneLine(quiz.title))}">`,
     '<qtimetadata>\n<qtimetadatafield>\n<fieldlabel>cc_maxattempts</fieldlabel>\n<fieldentry>1</fieldentry>\n</qtimetadatafield>\n</qtimetadata>',
     '<section ident="root_section">',
-    ...quiz.items.map((item) => buildItemXml(item, points)),
+    ...quiz.items.map((item, index) => buildItemXml(item, points, itemIdent(item.id, index, quiz.items.length))),
     '</section>',
     '</assessment>',
     '</questestinterop>',
@@ -111,29 +117,30 @@ export function buildAssessmentXml(quiz: QuizPackageInput): string {
   ].join('\n')
 }
 
-export function buildItemXml(item: QuizItem, points = 1): string {
+export function buildItemXml(item: QuizItem, points = 1, identifier = ident(item.id)): string {
+  const key: ItemKey = { id: item.id, ident: identifier }
   const draft = item.draft
   switch (draft.item_type) {
     case 'multiple_choice':
-      return choiceItem(item.id, draft, 'multiple_choice_question', points)
+      return choiceItem(key, draft, 'multiple_choice_question', points)
     case 'true_false':
-      return choiceItem(item.id, trueFalseAsChoices(draft), 'true_false_question', points)
+      return choiceItem(key, trueFalseAsChoices(draft), 'true_false_question', points)
     case 'multiple_answers':
-      return multipleAnswersItem(item.id, draft, points)
+      return multipleAnswersItem(key, draft, points)
     case 'numerical':
-      return numericalItem(item.id, draft, points)
+      return numericalItem(key, draft, points)
     case 'math':
       // On its own a math question exports its first version; export.ts can
       // also write every version as a quiz for ADAPT's randomization.
-      return numericalItem(item.id, mathVersion(draft, compileMath(draft).variants[0]), points)
+      return numericalItem(key, mathVersion(draft, compileMath(draft).variants[0]), points)
     case 'matching':
-      return matchingItem(item.id, draft, points)
+      return matchingItem(key, draft, points)
     case 'fill_in_blank':
-      return fillInBlankItem(item.id, draft, points)
+      return fillInBlankItem(key, draft, points)
     case 'dropdowns':
-      return dropdownsItem(item.id, draft, points)
+      return dropdownsItem(key, draft, points)
     case 'essay':
-      return essayItem(item.id, draft, points)
+      return essayItem(key, draft, points)
   }
 }
 
@@ -172,12 +179,12 @@ function trueFalseAsChoices(draft: DraftOf<'true_false'>): ChoiceLike {
   }
 }
 
-function choiceItem(id: string, draft: ChoiceLike, questionType: string, points: number): string {
+function choiceItem(key: ItemKey, draft: ChoiceLike, questionType: string, points: number): string {
   const labels = draft.choices.map((choice, index) => ({ ...choice, ident: String(1000 + index) }))
   const correct = labels.find((label) => label.correct)
   if (!correct) throw new Error(`"${draft.title}" has no correct choice.`)
   const choiceFeedback = labels.filter((label) => label.feedback)
-  return item(id, draft.title, questionType, points, [
+  return item(key, draft.title, questionType, points, [
     presentation(
       draft.stem,
       `<response_lid ident="response1" rcardinality="Single">\n<render_choice>\n${labels
@@ -198,7 +205,7 @@ function choiceItem(id: string, draft: ChoiceLike, questionType: string, points:
   ])
 }
 
-function multipleAnswersItem(id: string, draft: DraftOf<'multiple_answers'>, points: number): string {
+function multipleAnswersItem(key: ItemKey, draft: DraftOf<'multiple_answers'>, points: number): string {
   const labels = draft.choices.map((choice, index) => ({ ...choice, ident: String(1000 + index) }))
   const conditions = labels
     .map((label) =>
@@ -207,7 +214,7 @@ function multipleAnswersItem(id: string, draft: DraftOf<'multiple_answers'>, poi
         : `<not>\n<varequal respident="response1">${label.ident}</varequal>\n</not>`,
     )
     .join('\n')
-  return item(id, draft.title, 'multiple_answers_question', points, [
+  return item(key, draft.title, 'multiple_answers_question', points, [
     presentation(
       draft.stem,
       `<response_lid ident="response1" rcardinality="Multiple">\n<render_choice>\n${labels
@@ -223,10 +230,10 @@ function multipleAnswersItem(id: string, draft: DraftOf<'multiple_answers'>, poi
   ])
 }
 
-function numericalItem(id: string, draft: DraftOf<'numerical'>, points: number): string {
+function numericalItem(key: ItemKey, draft: DraftOf<'numerical'>, points: number): string {
   const [low, high] = numericRange(draft.answer, draft.tolerance)
   const stem = draft.units ? `${draft.stem} (Answer in ${draft.units}.)` : draft.stem
-  return item(id, draft.title, 'numerical_question', points, [
+  return item(key, draft.title, 'numerical_question', points, [
     presentation(
       stem,
       '<response_str ident="response1" rcardinality="Single">\n<render_fib fibtype="Decimal">\n<response_label ident="answer1"/>\n</render_fib>\n</response_str>',
@@ -267,7 +274,7 @@ export function numericRange(answer: number, tolerance: number): [string, string
   return plain
 }
 
-function matchingItem(id: string, draft: DraftOf<'matching'>, points: number): string {
+function matchingItem(key: ItemKey, draft: DraftOf<'matching'>, points: number): string {
   const options = [...draft.pairs.map((pair) => pair.match), ...draft.distractors].map((text, index) => ({
     ident: String(2000 + index),
     text,
@@ -280,11 +287,11 @@ function matchingItem(id: string, draft: DraftOf<'matching'>, points: number): s
   // Listed in pair order, option N would answer term N. ADAPT and Canvas
   // shuffle per student, but other importers may not; a seeded shuffle keeps
   // the file byte-stable.
-  seededShuffle(options, id)
+  seededShuffle(options, key.id)
   // <render_choice> must carry no attributes: ADAPT iterates its children.
   const renderChoice = `<render_choice>\n${options.map((o) => responseLabel(o.ident, o.text)).join('\n')}\n</render_choice>`
   const share = formatNumber(Math.round((100 / terms.length) * 100) / 100)
-  return item(id, draft.title, 'matching_question', points, [
+  return item(key, draft.title, 'matching_question', points, [
     presentation(
       draft.stem,
       terms
@@ -304,11 +311,11 @@ function matchingItem(id: string, draft: DraftOf<'matching'>, points: number): s
   ])
 }
 
-function fillInBlankItem(id: string, draft: DraftOf<'fill_in_blank'>, points: number): string {
+function fillInBlankItem(key: ItemKey, draft: DraftOf<'fill_in_blank'>, points: number): string {
   // Normalise the single blank to exactly four underscores.
   const stem = draft.stem.replace(BLANK_RUN, '____')
   const answers = [draft.answer, ...draft.alternates]
-  return item(id, draft.title, 'short_answer_question', points, [
+  return item(key, draft.title, 'short_answer_question', points, [
     presentation(
       stem,
       '<response_str ident="response1" rcardinality="Single">\n<render_fib>\n<response_label ident="answer1" rshuffle="No"/>\n</render_fib>\n</response_str>',
@@ -324,7 +331,7 @@ function fillInBlankItem(id: string, draft: DraftOf<'fill_in_blank'>, points: nu
   ])
 }
 
-function dropdownsItem(id: string, draft: DraftOf<'dropdowns'>, points: number): string {
+function dropdownsItem(key: ItemKey, draft: DraftOf<'dropdowns'>, points: number): string {
   let next = 3000
   const blanks = draft.blanks.map((blank) => ({
     ...blank,
@@ -333,7 +340,7 @@ function dropdownsItem(id: string, draft: DraftOf<'dropdowns'>, points: number):
     options: [blank.correct, ...blank.distractors].map((text) => ({ ident: String(next++), text })),
   }))
   const share = formatNumber(Math.round((100 / blanks.length) * 100) / 100)
-  return item(id, draft.title, 'multiple_dropdowns_question', points, [
+  return item(key, draft.title, 'multiple_dropdowns_question', points, [
     presentation(
       draft.stem,
       blanks
@@ -355,8 +362,8 @@ function dropdownsItem(id: string, draft: DraftOf<'dropdowns'>, points: number):
   ])
 }
 
-function essayItem(id: string, draft: DraftOf<'essay'>, points: number): string {
-  return item(id, draft.title, 'essay_question', points, [
+function essayItem(key: ItemKey, draft: DraftOf<'essay'>, points: number): string {
+  return item(key, draft.title, 'essay_question', points, [
     presentation(
       draft.stem,
       '<response_str ident="response1" rcardinality="Single">\n<render_fib>\n<response_label ident="answer1" rshuffle="No"/>\n</render_fib>\n</response_str>',
@@ -368,13 +375,13 @@ function essayItem(id: string, draft: DraftOf<'essay'>, points: number): string 
 
 // ------------------------------------------------------------------ builders
 
-function item(id: string, title: string, questionType: string, points: number, body: string[]): string {
+function item(key: ItemKey, title: string, questionType: string, points: number, body: string[]): string {
   return [
-    `<item ident="${ident(id)}" title="${xml(oneLine(title))}">`,
+    `<item ident="${key.ident}" title="${xml(oneLine(title))}">`,
     '<itemmetadata>\n<qtimetadata>',
     metadataField('question_type', questionType),
     metadataField('points_possible', formatNumber(points)),
-    metadataField('assessment_question_identifierref', `${ident(id)}_aq`),
+    metadataField('assessment_question_identifierref', `${key.ident}_aq`),
     '</qtimetadata>\n</itemmetadata>',
     ...body,
     '</item>',
@@ -431,6 +438,17 @@ export function ident(id: string): string {
   const hex = id.toLowerCase().replace(/-/g, '')
   if (/^[0-9a-f]{32}$/.test(hex)) return 'g' + hex
   return 'g' + simpleHash(id)
+}
+
+// ADAPT imports a quiz's items in identifier order, not file order: its
+// QtiJobController reads them back with no ORDER BY, and the unique index on
+// (qti_job_id, identifier) returns them sorted. So an item's identifier starts
+// with its zero-padded position ("q001_g…"). ADAPT dedupes a re-import by the
+// item's whole XML, so an unchanged question dedupes only while it keeps its
+// position; a moved one imports again as a new question.
+export function itemIdent(id: string, position: number, count: number): string {
+  const width = Math.max(3, String(count).length)
+  return `q${String(position + 1).padStart(width, '0')}_${ident(id)}`
 }
 
 function seededShuffle<T>(values: T[], seed: string): void {
