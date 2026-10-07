@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Icon } from './components/Icon'
 import { localModel, useLoadedLocalModel } from './lib/llm/local-models'
 import { db } from './lib/storage/db'
@@ -7,6 +7,7 @@ import { getSessionKey } from './lib/storage/secrets'
 import { useRoute } from './router'
 import { localModelId, useEngineSettings } from './state/engine'
 import { useGeneration } from './state/generation'
+import { TEXT_SIZES, setTextSize, useNarrowLayout, useTextSize } from './state/text-size'
 import { setTheme, useTheme } from './state/theme'
 import { Create } from './views/Create'
 import { Library } from './views/Library'
@@ -40,6 +41,7 @@ export default function App({ updateReady, applyUpdate }: { updateReady: boolean
   const [online, setOnline] = useState(navigator.onLine)
   const [navOpen, setNavOpen] = useState(false)
   const [navRoute, setNavRoute] = useState(route)
+  const narrow = useNarrowLayout()
   const main = useRef<HTMLElement>(null)
   const shownRoute = useRef(route)
 
@@ -48,6 +50,10 @@ export default function App({ updateReady, applyUpdate }: { updateReady: boolean
     setNavRoute(route)
     setNavOpen(false)
   }
+
+  // The menu also closes if the window widens, or the text shrinks, to the
+  // two-column layout (where the content must not stay inert).
+  if (navOpen && !narrow) setNavOpen(false)
 
   useEffect(() => {
     const onPrompt = (event: Event) => {
@@ -74,19 +80,12 @@ export default function App({ updateReady, applyUpdate }: { updateReady: boolean
     if (!main.current?.contains(document.activeElement)) main.current?.focus({ preventScroll: true })
   }, [route])
 
-  // The narrow-screen menu closes with Escape, and on its own if the window
-  // widens to the two-column layout (where the content must not stay inert).
+  // The narrow-screen menu closes with Escape.
   useEffect(() => {
     if (!navOpen) return
     const close = (event: KeyboardEvent) => event.key === 'Escape' && setNavOpen(false)
-    const wide = window.matchMedia('(min-width: 901px)')
-    const onWide = () => wide.matches && setNavOpen(false)
     window.addEventListener('keydown', close)
-    wide.addEventListener('change', onWide)
-    return () => {
-      window.removeEventListener('keydown', close)
-      wide.removeEventListener('change', onWide)
-    }
+    return () => window.removeEventListener('keydown', close)
   }, [navOpen])
 
   // Warn before closing mid-generation; finished questions are already saved.
@@ -156,6 +155,7 @@ export default function App({ updateReady, applyUpdate }: { updateReady: boolean
         <div className="sidebar-foot">
           <EngineStatus />
           <ThemeSwitch />
+          <TextSize />
           {installPrompt && (
             <button type="button" onClick={() => installPrompt.prompt().then(() => setInstallPrompt(null))}>
               Install app
@@ -280,5 +280,45 @@ function ThemeSwitch() {
         <span className="thumb" />
       </span>
     </button>
+  )
+}
+
+// The slider is the control (arrow keys, or a click anywhere on the track);
+// the two A's are a pointer shortcut for one step and are hidden from screen
+// readers, which hear the slider's value instead.
+function TextSize() {
+  const size = useTextSize()
+  const index = TEXT_SIZES.indexOf(size)
+  const percent = `${Math.round(size * 100)}%`
+  const step = (by: number) => {
+    const next = TEXT_SIZES[index + by]
+    if (next) setTextSize(next)
+  }
+  return (
+    <div className="text-size">
+      <div className="text-size-head">
+        <label htmlFor="text-size">Text size</label>
+        <span aria-hidden="true">{percent}</span>
+      </div>
+      <div className="text-size-row">
+        <span className="text-size-a smaller" aria-hidden="true" onClick={() => step(-1)}>
+          A
+        </span>
+        <input
+          id="text-size"
+          type="range"
+          min={0}
+          max={TEXT_SIZES.length - 1}
+          step={1}
+          value={index}
+          aria-valuetext={percent}
+          onChange={(event) => setTextSize(TEXT_SIZES[Number(event.target.value)])}
+          style={{ '--fill': `${(index / (TEXT_SIZES.length - 1)) * 100}%` } as CSSProperties}
+        />
+        <span className="text-size-a larger" aria-hidden="true" onClick={() => step(1)}>
+          A
+        </span>
+      </div>
+    </div>
   )
 }

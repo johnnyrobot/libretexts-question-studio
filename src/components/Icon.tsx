@@ -1,5 +1,6 @@
 // Small line icons (24px grid, stroked with currentColor). Always decorative:
-// every icon sits next to text that carries its meaning.
+// every icon sits next to text that carries its meaning. Sized in rem so they
+// grow with the Text size setting.
 
 const PATHS = {
   plus: 'M12 5v14M5 12h14',
@@ -27,6 +28,7 @@ export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
       className="icon"
       width={size}
       height={size}
+      style={{ width: `${size / 16}rem`, height: `${size / 16}rem` }}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
