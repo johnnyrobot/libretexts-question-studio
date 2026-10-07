@@ -28,20 +28,22 @@ export default defineConfig({
         // catalog.json is the bundled LibreTexts book catalog: precaching it
         // lets instructors browse books offline.
         globPatterns: ['**/*.{js,css,html,svg,png,woff2,json}'],
-        // The in-browser model runtime (WebLLM, ~6 MB per chunk) is only needed
-        // by people who use it, so it is cached on first use instead of being
-        // precached for everyone.
-        globIgnores: ['**/local-*.js', '**/local.worker-*.js'],
+        // The in-browser model runtimes (WebLLM, ~6 MB per chunk; Transformers.js,
+        // 0.6 MB plus ONNX Runtime) are only needed by people who use them, so
+        // they are cached on first use instead of being precached for everyone.
+        globIgnores: ['**/local-*.js', '**/local.worker-*.js', '**/transformers-*.js', '**/transformers.worker-*.js', '**/ort-wasm-*'],
         navigateFallback: 'index.html',
         runtimeCaching: [
           {
-            // Hashed build assets never change, so cache-first is safe.
-            urlPattern: ({ sameOrigin, url }) => sameOrigin && url.pathname.includes('/assets/'),
+            // Hashed build assets never change, so cache-first is safe. ONNX
+            // Runtime's 27 MB .wasm is left to Transformers.js, which caches it.
+            urlPattern: ({ sameOrigin, url }) =>
+              sameOrigin && url.pathname.includes('/assets/') && !url.pathname.endsWith('.wasm'),
             handler: 'CacheFirst',
             options: { cacheName: 'app-assets', expiration: { maxEntries: 40 } },
           },
-          // Model weights are cached by WebLLM itself (Cache API); LibreTexts and
-          // OpenAI requests always go to the network.
+          // Model weights are cached by WebLLM and Transformers.js themselves
+          // (Cache API); LibreTexts and OpenAI requests always go to the network.
         ],
       },
     }),

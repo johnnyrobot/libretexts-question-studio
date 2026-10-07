@@ -4,21 +4,22 @@ import {
   hasModelInCache,
   prebuiltAppConfig,
   type AppConfig,
-  type InitProgressReport,
 } from '@mlc-ai/web-llm'
 import {
   completeWithRetries,
   LLMError,
   retryTemperature,
+  schemaInstruction,
   type Completion,
   type CompletionRequest,
   type CompletionUsage,
   type LLMProvider,
 } from './types'
-import { loadedLocalModel, setLoadedLocalModel } from './local-models'
+import { loadedLocalModel, setLoadedLocalModel, unloadAnyLocalModel, type LoadProgress } from './local-models'
 
-// In-browser generation with WebLLM (WebGPU). Qwen3.5 is Apache-2.0, ships
-// prebuilt for WebLLM, and its hybrid attention keeps an 8K context cheap.
+// In-browser generation with WebLLM (WebGPU), for Qwen3.5 4B. Qwen3.5 is
+// Apache-2.0, ships prebuilt for WebLLM, and its hybrid attention keeps an 8K
+// context cheap.
 // Weights download once from Hugging Face into the Cache API and are reused.
 // This module is ~6 MB with WebLLM, so it is only loaded on demand.
 
@@ -26,7 +27,7 @@ const CONTEXT_WINDOW = 8192
 
 export const appConfig: AppConfig = { ...prebuiltAppConfig, cacheBackend: 'cache' }
 
-export function vramRequiredMB(modelId: string): number | null {
+export function gpuMemoryMB(modelId: string): number | null {
   return appConfig.model_list.find((m) => m.model_id === modelId)?.vram_required_MB ?? null
 }
 
@@ -54,17 +55,18 @@ export async function downloadBytes(modelId: string): Promise<number | null> {
 let worker: Worker | null = null
 let engine: WebWorkerMLCEngine | null = null
 
-export async function loadLocalModel(
-  modelId: string,
-  onProgress: (report: InitProgressReport) => void,
-): Promise<void> {
+export async function loadLocalModel(modelId: string, onProgress: (progress: LoadProgress) => void): Promise<void> {
   if (engine && loadedLocalModel() === modelId) return
+  unloadAnyLocalModel()
   unloadLocalModel()
   worker = new Worker(new URL('./local.worker.ts', import.meta.url), { type: 'module' })
-  engine = new WebWorkerMLCEngine(worker, { appConfig, initProgressCallback: onProgress })
+  engine = new WebWorkerMLCEngine(worker, {
+    appConfig,
+    initProgressCallback: (report) => onProgress({ value: report.progress, text: report.text }),
+  })
   try {
     await engine.reload(modelId, { context_window_size: CONTEXT_WINDOW })
-    setLoadedLocalModel(modelId)
+    setLoadedLocalModel(modelId, unloadLocalModel)
   } catch (error) {
     unloadLocalModel()
     throw new LLMError(describeLoadError(error))
@@ -72,10 +74,15 @@ export async function loadLocalModel(
 }
 
 export function unloadLocalModel(): void {
+  const wasLoaded = !!engine && loadedLocalModel() !== null
   worker?.terminate()
   worker = null
   engine = null
-  setLoadedLocalModel(null)
+  if (wasLoaded) setLoadedLocalModel(null)
+}
+
+export function createProvider(modelId: string): LLMProvider {
+  return new LocalProvider(modelId)
 }
 
 function describeLoadError(error: unknown): string {
@@ -118,12 +125,7 @@ export class LocalProvider implements LLMProvider {
         stream_options: { include_usage: true },
         messages: [
           { role: 'system', content: request.system },
-          {
-            role: 'user',
-            // Grammar-constrained JSON still needs the model told to answer in JSON,
-            // otherwise it can stall emitting whitespace.
-            content: `${prompt}\n\nRespond ONLY with a JSON object that matches this JSON schema:\n${JSON.stringify(request.schema)}`,
-          },
+          { role: 'user', content: schemaInstruction(prompt, request.schema) },
         ],
         response_format: { type: 'json_object', schema: JSON.stringify(request.schema) },
         extra_body: { enable_thinking: false },

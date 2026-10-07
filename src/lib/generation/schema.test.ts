@@ -20,6 +20,17 @@ describe('LLM schemas', () => {
     expect(units(' m/s ')).toBe('m/s')
   })
 
+  it('drop lower-only number bounds, which stop WebLLM writing values between 0 and 1', () => {
+    const math = llmSchemaFor('math') as { properties: Record<string, { items?: { properties: Record<string, unknown> } }> }
+    expect(math.properties.variables.items!.properties.step).toEqual({ type: 'number' })
+    expect(math.properties.tolerance_percent).toMatchObject({ minimum: 0, maximum: expect.any(Number) })
+    const numerical = llmSchemaFor('numerical') as { properties: Record<string, unknown> }
+    expect(numerical.properties.tolerance).toEqual({ type: 'number' })
+    // Zod still enforces them.
+    const { item_type, ...payload } = SAMPLE_DRAFTS.find((d) => d.item_type === 'numerical')!
+    expect(() => parseDraft(item_type, { ...payload, tolerance: -1 })).toThrow(/tolerance/)
+  })
+
   it('reads {{name}} placeholders in math formulas as the variables they name', () => {
     const { item_type, ...payload } = SAMPLE_DRAFTS.find((d) => d.item_type === 'math')!
     const draft = parseDraft(item_type, { ...payload, answer_formula: '{{v}} / {{ t }}', constraints: ['{{v}} < {{t}}'] }) as DraftOf<'math'>

@@ -11,11 +11,12 @@ browser.
   - Close the tab and come back: nothing has to be regenerated.
 - **LibreTexts only.** Find a book from the full LibreTexts catalog, paste any LibreTexts page, chapter or book URL, or paste text copied from a page. Then pick whole chapters, sections or single pages.
 - **Two AI engines:**
-  - **In-browser** (default): Qwen3.5 4B on WebGPU via WebLLM. Free and private, and the text never leaves the device. One-time 2.4 GB download.
+  - **In-browser** (default): Gemma 4 E4B on WebGPU via Transformers.js (one-time 4.9 GB download), or Qwen3.5 4B via WebLLM (2.4 GB). Free and private, and the text never leaves the device.
   - **OpenAI, bring your own key:** GPT-6 Luna (or GPT-5.6 Luna) at high reasoning effort, called directly from the browser.
 - **ADAPT-ready export.**
   - The export is Canvas-style QTI 1.2, the only QTI format ADAPT's Bulk Import accepts, checked against ADAPT's own PHP parser. It also imports into Canvas.
   - Nine question types: multiple choice, true/false, select all that apply, numerical, math (randomized numbers), matching, fill in the blank, multiple dropdowns, and essay.
+- **Duplicate check.** EmbeddingGemma 2 (174 MB, on the device) notes a new question that repeats one already in its set.
 - **Math with computed answers.** For a math question the model writes a template (variables with ranges, constraints, an answer formula), never the final number. It also works one example by hand, and the formula must agree with it. The app computes and checks every answer over 25 sets of numbers, then exports versions as numerical questions.
 
 ## Using it
@@ -54,7 +55,8 @@ PHP_WASM_DIR=/tmp/php-wasm npm run verify:adapt
 src/lib/content/     LibreTexts access: URL parsing, cross-library page/tree/contents,
                      HTML → numbered paragraphs, bundled catalog search, page cache
 src/lib/generation/  per-type zod schemas (= ADAPT import rules), prompts, pipeline
-src/lib/llm/         provider interface + validation/retry loop; WebLLM worker; OpenAI
+src/lib/llm/         provider interface + validation/retry loop; Transformers.js worker
+                     (Gemma 4, EmbeddingGemma 2); WebLLM worker (Qwen3.5); OpenAI
 src/lib/math/        math questions: formula parser (no eval), seeded versions, checks
 src/lib/qti/         Canvas QTI 1.2 package builder and export history
 src/lib/storage/     Dexie (IndexedDB) schema, encrypted API-key storage
@@ -70,7 +72,8 @@ tests/adapt-parser/  harness that runs ADAPT's QtiImport.php on our packages
    - A math or numerical question whose section has no numbers takes a quantitative concept from another section of the same page. Only if the page has none is another type written instead.
 4. Validation failures are sent back to the model to fix, up to 3 attempts.
 5. The reviewer pass (on by default) critiques and rewrites each question. Its notes are kept and shown with the question. On the in-browser model, math questions skip it.
-6. Every question is saved as soon as it validates.
+6. With the duplicate check on, a question whose stem is very close to one already in the set (cosine ≥ 0.94 between EmbeddingGemma 2 embeddings) gets a note.
+7. Every question is saved as soon as it validates.
 
 **Math questions.** [docs/adapt-formats-and-math.md](docs/adapt-formats-and-math.md)
 covers the template format, the checks, and how versions map onto ADAPT's
@@ -91,7 +94,7 @@ also works from a sub-path.
 
 - **Network access** (used directly from the browser):
   - `api.libretexts.org`: book trees and page text, through the public `cross-library` read proxy.
-  - `huggingface.co` and `*.hf.co`: model weights.
+  - `huggingface.co` and `*.hf.co`: model weights (Gemma 4, EmbeddingGemma 2, Qwen3.5). ONNX Runtime's WebAssembly is served with the app.
   - `raw.githubusercontent.com`: WebLLM model libraries.
   - `api.openai.com`: only when a key is used.
 - **Content Security Policy:** if you set one, it needs `connect-src` for the hosts above, plus `'wasm-unsafe-eval'` in `script-src` for WebGPU/WASM.
@@ -100,7 +103,7 @@ also works from a sub-path.
 
 ## Known limits
 
-- The in-browser model needs WebGPU: recent desktop Chrome or Edge, Safari 26, or Firefox on Windows / Apple Silicon. Phones are not supported.
+- The in-browser models need WebGPU: recent desktop Chrome or Edge, Safari 26, or Firefox on Windows / Apple Silicon. Phones are not supported. Gemma 4 E4B has only been tested in desktop Chrome on Apple Silicon; Qwen3.5 4B is the fallback.
 - Small local models write weaker distractors than GPT-6 Luna. Every question is a draft until an instructor approves it.
 - Images and figures are not used as question material. Image alt text is kept as text.
 - ADAPT grades fill-in-the-blank against a single answer (alternates are honoured by Canvas only) and ignores feedback on several types.

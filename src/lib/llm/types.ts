@@ -38,6 +38,19 @@ export interface LLMProvider {
   complete<T>(request: CompletionRequest<T>): Promise<Completion<T>>
 }
 
+// Turns texts into unit vectors whose dot product is their similarity.
+export interface Embedder {
+  readonly model: string
+  load(onProgress?: (progress: { value: number; text: string }) => void): Promise<void>
+  embed(texts: string[]): Promise<Float32Array[]>
+}
+
+// Grammar-constrained JSON still needs the model told to answer in JSON,
+// otherwise it can stall emitting whitespace.
+export function schemaInstruction(prompt: string, schema: JsonSchema): string {
+  return `${prompt}\n\nRespond ONLY with a JSON object that matches this JSON schema:\n${JSON.stringify(schema)}`
+}
+
 export class LLMError extends Error {
   readonly retryable: boolean
 
@@ -92,18 +105,78 @@ export async function completeWithRetries<T>(
 }
 
 export function parseJsonResponse(text: string): unknown {
-  const trimmed = text.trim()
+  const trimmed = repairLatexEscapes(text.trim())
   try {
     return JSON.parse(trimmed)
   } catch {
-    // Small local models sometimes wrap JSON in a code fence or add a preface.
+    // Small local models sometimes wrap JSON in a code fence or add a preface,
+    // and Transformers.js's structured output lets a trailing comma through.
     const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)
-    if (fenced) return JSON.parse(fenced[1])
     const start = trimmed.indexOf('{')
     const end = trimmed.lastIndexOf('}')
-    if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1))
+    const body = fenced ? fenced[1] : start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed
+    for (const candidate of [body, dropTrailingCommas(body)]) {
+      try {
+        return JSON.parse(candidate)
+      } catch {
+        // try the next repair
+      }
+    }
     throw new ValidationFailure('Response was not valid JSON.')
   }
+}
+
+// LaTeX commands whose backslash and first letter make a JSON escape: a model
+// that writes "\frac" in JSON means \frac, not a form feed and "rac". Escaped
+// strings that read as text ("\nu" after a line break, "\ne", "\to") are left.
+const LATEX_AFTER_ESCAPE =
+  /^(?:b(?:ar|eta|inom|oldsymbol|ullet|egin|igg?|f)|f(?:rac|orall|lat)|n(?:abla|eq|ot|eg|ewline|onumber|mid)|r(?:ho|ight(?:arrow)?|angle|floor|ceil|m)|t(?:heta|au|imes|ext(?:bf|it|rm)?|anh?|riangle|ilde|frac|herefore|op))(?![a-zA-Z])/
+
+// Doubles the backslash of each such escape inside JSON strings.
+export function repairLatexEscapes(json: string): string {
+  let out = ''
+  let inString = false
+  for (let i = 0; i < json.length; i++) {
+    const char = json[i]
+    if (!inString) {
+      if (char === '"') inString = true
+      out += char
+      continue
+    }
+    if (char === '"') {
+      inString = false
+      out += char
+    } else if (char === '\\') {
+      const next = json[++i] ?? ''
+      const latex = next !== '' && 'bfnrt'.includes(next) && LATEX_AFTER_ESCAPE.test(json.slice(i, i + 16))
+      out += `${latex ? '\\\\' : '\\'}${next}`
+    } else {
+      out += char
+    }
+  }
+  return out
+}
+
+// Removes commas before a closing bracket or brace, outside strings.
+export function dropTrailingCommas(json: string): string {
+  let out = ''
+  let inString = false
+  for (let i = 0; i < json.length; i++) {
+    const char = json[i]
+    if (inString) {
+      if (char === '\\') {
+        out += char + (json[++i] ?? '')
+        continue
+      }
+      if (char === '"') inString = false
+    } else if (char === '"') {
+      inString = true
+    } else if (char === ',' && /^\s*[\]}]/.test(json.slice(i + 1))) {
+      continue
+    }
+    out += char
+  }
+  return out
 }
 
 function addUsage(a: CompletionUsage | null, b: CompletionUsage | null): CompletionUsage | null {

@@ -1,7 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/Page'
-import { LOCAL_MODEL, probeWebGPU, useLoadedLocalModel, type GpuSupport } from '../lib/llm/local-models'
+import {
+  EMBEDDER,
+  LOCAL_MODELS,
+  localModel,
+  localRuntime,
+  probeWebGPU,
+  useLoadedLocalModel,
+  type GpuSupport,
+  type LoadProgress,
+  type LocalModelKey,
+  type LocalRuntime,
+} from '../lib/llm/local-models'
 import { checkOpenAIKey, OPENAI_MODELS, type ReasoningEffort } from '../lib/llm/openai'
 import { createBackup, restoreBackup } from '../lib/storage/backup'
 import { db, requestPersistentStorage } from '../lib/storage/db'
@@ -49,26 +60,31 @@ function EngineSettingsPage() {
             </span>
           </label>
         </fieldset>
-        <section className="card section-gap">{engine.provider === 'local' ? <LocalSettings /> : <OpenAISettings />}</section>
+        <div className="engine-panels section-gap">
+          <section className="card">{engine.provider === 'local' ? <LocalSettings /> : <OpenAISettings />}</section>
+          <section className="card mt">
+            <DuplicateCheckSettings />
+          </section>
+        </div>
       </div>
     </>
   )
 }
-
-type WebLLM = typeof import('../lib/llm/local')
 
 function LocalSettings() {
   const engine = useEngineSettings()
   const generation = useGeneration()
   const loadedModel = useLoadedLocalModel()
   const [gpu, setGpu] = useState<GpuSupport | null>(null)
-  const [webllm, setWebllm] = useState<WebLLM | null>(null)
+  const [runtime, setRuntime] = useState<{ key: LocalModelKey; module: LocalRuntime } | null>(null)
   const [info, setInfo] = useState<{ modelId: string; cached: boolean; bytes: number | null } | null>(null)
   const [loading, setLoading] = useState(false)
-  const [progress, setProgress] = useState<{ value: number; text: string } | null>(null)
+  const [progress, setProgress] = useState<LoadProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const model = localModel(engine.localModel)
   const modelId = localModelId(engine)
   const loaded = loadedModel === modelId
+  const active = runtime?.key === model.key ? runtime.module : null
 
   useEffect(() => {
     probeWebGPU().then(setGpu)
@@ -80,13 +96,13 @@ function LocalSettings() {
 
   useEffect(() => {
     let current = true
-    import('../lib/llm/local')
-      .then(async (runtime) => {
+    localRuntime(model)
+      .then(async (module) => {
         if (!current) return
-        setWebllm(runtime)
+        setRuntime({ key: model.key, module })
         const [cached, bytes] = await Promise.all([
-          runtime.isModelCached(modelId).catch(() => false),
-          runtime.downloadBytes(modelId),
+          module.isModelCached(modelId).catch(() => false),
+          module.downloadBytes(modelId),
         ])
         if (current) setInfo({ modelId, cached, bytes })
       })
@@ -94,18 +110,18 @@ function LocalSettings() {
     return () => {
       current = false
     }
-  }, [modelId])
+  }, [model, modelId])
 
   const status = info?.modelId === modelId ? info : null
-  const vramMB = webllm?.vramRequiredMB(modelId) ?? null
+  const memoryMB = active?.gpuMemoryMB(modelId) ?? null
 
   const load = async () => {
-    if (!webllm) return
+    if (!active) return
     setError(null)
     setLoading(true)
     await requestPersistentStorage()
     try {
-      await webllm.loadLocalModel(modelId, (report) => setProgress({ value: report.progress, text: report.text }))
+      await active.loadLocalModel(modelId, setProgress)
       setInfo({ modelId, cached: true, bytes: status?.bytes ?? null })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -117,12 +133,32 @@ function LocalSettings() {
 
   return (
     <>
-      <h2>{LOCAL_MODEL.label}</h2>
-      {gpu && !gpu.webgpu && <p className="error">{gpu.reason}</p>}
+      <h2>In-browser model</h2>
+      <fieldset className="choice-cards" disabled={loading || generation.running}>
+        <legend className="sr-only">In-browser model</legend>
+        {LOCAL_MODELS.map((option) => (
+          <label className="option" key={option.key}>
+            <input
+              type="radio"
+              name="local-model"
+              checked={model.key === option.key}
+              onChange={() => {
+                setError(null)
+                void saveEngineSettings({ localModel: option.key })
+              }}
+            />
+            <span>
+              <strong>{option.label}</strong>
+              <span className="muted">{option.summary}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      {gpu && !gpu.webgpu && <p className="error mt">{gpu.reason}</p>}
       {gpu?.webgpu && !gpu.f16 && (
-        <p className="notice">This GPU lacks 16-bit shader support, so the larger 32-bit build of the model is used.</p>
+        <p className="notice mt">This GPU lacks 16-bit shader support, so the larger 32-bit build of the model is used.</p>
       )}
-      <dl className="facts">
+      <dl className="facts mt">
         <dt>Status</dt>
         <dd>
           {loaded ? (
@@ -143,14 +179,14 @@ function LocalSettings() {
             <dd>{formatBytes(status.bytes)}, once</dd>
           </>
         )}
-        {!!vramMB && (
+        {!!memoryMB && (
           <>
             <dt>GPU memory</dt>
-            <dd>About {(vramMB / 1024).toFixed(1)} GB</dd>
+            <dd>About {(memoryMB / 1024).toFixed(1)} GB</dd>
           </>
         )}
         <dt>License</dt>
-        <dd>{LOCAL_MODEL.license}</dd>
+        <dd>{model.license}</dd>
       </dl>
       {progress && (
         <div aria-live="polite" className="mt">
@@ -165,7 +201,12 @@ function LocalSettings() {
       )}
       <div className="actions">
         {!loaded && (
-          <button type="button" className="primary" disabled={loading || !webllm || !gpu?.webgpu} onClick={load}>
+          <button
+            type="button"
+            className="primary"
+            disabled={loading || generation.running || !active || !gpu?.webgpu}
+            onClick={load}
+          >
             {loading
               ? 'Loading…'
               : status?.cached
@@ -173,19 +214,19 @@ function LocalSettings() {
                 : `Download and load${status?.bytes ? ` (${formatBytes(status.bytes)})` : ''}`}
           </button>
         )}
-        {loaded && webllm && (
-          <button type="button" disabled={generation.running} onClick={() => webllm.unloadLocalModel()}>
+        {loaded && active && (
+          <button type="button" disabled={generation.running} onClick={() => active.unloadLocalModel()}>
             Unload (free GPU memory)
           </button>
         )}
-        {status?.cached && !loading && webllm && (
+        {status?.cached && !loading && active && (
           <button
             type="button"
             className="danger-link push-right"
             disabled={generation.running}
             onClick={async () => {
-              webllm.unloadLocalModel()
-              await webllm.deleteCachedModel(modelId)
+              active.unloadLocalModel()
+              await active.deleteCachedModel(modelId)
               setInfo({ modelId, cached: false, bytes: status.bytes })
             }}
           >
@@ -195,8 +236,75 @@ function LocalSettings() {
       </div>
       <p className="fine mt">
         The model downloads from Hugging Face once and stays in this browser. Load it each time you open the app (from disk,
-        which is quick). It runs on recent desktop Chrome, Edge, and Safari 26, not on phones. Build: <code>{modelId}</code>
+        which is quick). {model.runtime === 'webllm'
+          ? 'It runs on recent desktop Chrome, Edge, and Safari 26, not on phones.'
+          : 'It has been tested in desktop Chrome; if it will not load, try Qwen3.5 4B.'}{' '}
+        Build: <code>{modelId}</code>
       </p>
+    </>
+  )
+}
+
+function DuplicateCheckSettings() {
+  const engine = useEngineSettings()
+  const generation = useGeneration()
+  const [gpu, setGpu] = useState<GpuSupport | null>(null)
+  const [info, setInfo] = useState<{ cached: boolean; bytes: number | null } | null>(null)
+
+  useEffect(() => {
+    probeWebGPU().then(setGpu)
+  }, [])
+
+  useEffect(() => {
+    if (!engine.duplicateCheck || !gpu?.webgpu) return
+    let current = true
+    import('../lib/llm/transformers')
+      .then(async ({ embedder }) => {
+        const [cached, bytes] = await Promise.all([embedder.isCached().catch(() => false), embedder.downloadBytes()])
+        if (current) setInfo({ cached, bytes })
+      })
+      .catch(() => current && setInfo(null))
+    return () => {
+      current = false
+    }
+  }, [engine.duplicateCheck, gpu])
+
+  return (
+    <>
+      <h2>Duplicate check</h2>
+      <label className="inline">
+        <input
+          type="checkbox"
+          checked={engine.duplicateCheck}
+          onChange={(e) => saveEngineSettings({ duplicateCheck: e.target.checked })}
+        />
+        <span>
+          Flag questions that repeat one already in the set
+          <small>
+            A note is added to the new question; nothing is removed. Uses {EMBEDDER.label}, a small model that runs on this
+            device{info && !info.cached && info.bytes ? ` and downloads once (${formatBytes(info.bytes)}) the first time you generate` : ''}.
+          </small>
+        </span>
+      </label>
+      {engine.duplicateCheck && gpu && !gpu.webgpu && (
+        <p className="notice mt">This browser does not support WebGPU, so questions are not checked for duplicates.</p>
+      )}
+      {engine.duplicateCheck && info?.cached && (
+        <div className="actions">
+          <button
+            type="button"
+            className="danger-link"
+            disabled={generation.running}
+            onClick={async () => {
+              const { embedder } = await import('../lib/llm/transformers')
+              await embedder.deleteCached()
+              setInfo({ ...info, cached: false })
+            }}
+          >
+            Delete downloaded model
+          </button>
+        </div>
+      )}
     </>
   )
 }

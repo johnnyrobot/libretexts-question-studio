@@ -5,12 +5,12 @@ on 2026-10-05.
 
 ## 1. Running a model in the browser
 
-### Runtime: WebLLM
+### Runtimes: Transformers.js and WebLLM
 
 | Runtime | Version | GPU / CPU | Schema-constrained JSON | Notes |
 |---|---|---|---|---|
-| **WebLLM** (`@mlc-ai/web-llm`) | 0.2.85 (2026-09) | WebGPU only | **Yes**: XGrammar, `response_format: {type: "json_object", schema}` | Prebuilt Qwen3.5 models, `hasModelInCache()`, runs in a Web Worker, needs no COOP/COEP headers. Apache-2.0. **Chosen.** |
-| Transformers.js | 4.3.0 | WebGPU or WASM | Experimental (separate package) | Already used by the LibreTexts reader for speech. A good fallback runtime. |
+| **WebLLM** (`@mlc-ai/web-llm`) | 0.2.85 (2026-09) | WebGPU only | **Yes**: XGrammar, `response_format: {type: "json_object", schema}` | Prebuilt Qwen3.5 models, `hasModelInCache()`, runs in a Web Worker, needs no COOP/COEP headers. Apache-2.0. **Used for Qwen3.5 4B.** |
+| **Transformers.js** (`@huggingface/transformers`) | 4.3.1 | WebGPU or WASM | **Yes**, with `@huggingface/transformers-structured-output` 4.3.1 (experimental) as a logits processor | Runs Gemma 4 and EmbeddingGemma 2, which WebLLM has no builds of. `ModelRegistry` checks and clears the cache. Already used by the LibreTexts reader for speech. **Used for Gemma 4 E4B and EmbeddingGemma 2 (2026-10-06).** |
 | wllama (llama.cpp WASM) | 3.8.1 | WebGPU + CPU fallback | Yes (`json_schema`, grammar) | The only real CPU path, but slow, and multi-threading needs cross-origin isolation. |
 | Chrome Prompt API (Gemini Nano) | Chrome 148+ stable | browser-managed model | Yes (`responseConstraint`) | Chrome desktop only, not available in workers, 22 GB free disk required. A possible zero-download extra later. |
 | MediaPipe LLM Inference | 0.10.29 | WebGPU | not documented | Maintenance-only; Google points to LiteRT-LM, which is in early preview. |
@@ -22,7 +22,11 @@ on 2026-10-05.
 
 ### Models
 
-**Decision (2026-10-05):** the app offers one in-browser model, **Qwen3.5 4B**.
+**Decision (2026-10-06):** **Gemma 4 E4B** (Transformers.js) is the default in-browser
+model and **Qwen3.5 4B** (WebLLM) stays as the smaller option; see
+[Gemma 4 E4B and EmbeddingGemma 2](#gemma-4-e4b-and-embeddinggemma-2-2026-10-06).
+
+**Earlier decision (2026-10-05):** the app offers one in-browser model, **Qwen3.5 4B**.
 Qwen3.5 2B, Qwen3.5 9B and MiniCPM5 2B were removed, along with the wllama
 runtime MiniCPM5 needed. The notes below are kept as the record of what was
 compared.
@@ -65,6 +69,48 @@ All are Apache-2.0 and prebuilt for WebLLM. GPU memory is WebLLM's estimate at a
 **Model ranking at the time:**
 - **Qwen3.5 4B** stayed the default, and is now the only option.
 - **MiniCPM5 2B** was the "fast" choice and the only one that could fall back to the CPU. It has since been removed.
+
+### Gemma 4 E4B and EmbeddingGemma 2 (2026-10-06)
+
+Evaluated in a throwaway bench (`experiments/gemma4/`, uncommitted) and then
+built into the app. Same setup throughout: *College Physics 1e* 2.3 "Time,
+Velocity, and Speed" (82 paragraphs), nine questions, one of each type, review
+off, Chrome on an Apple M2 Max, weights already cached.
+
+| Engine | Valid questions | Time | Notes |
+|---|---|---|---|
+| Qwen3.5 4B (WebLLM) | 6/9 · 6/9 | 355 s · 311 s | Before the lower-bound fix. |
+| Gemma 4 E2B, structured output (bench) | 7/9 · 8/9 | 126 s · 120 s | More wrong answer keys. |
+| Gemma 4 E4B, structured output (bench) | 8/9 · 7/9 | 179 s · 209 s | |
+| **Gemma 4 E4B in the app** | **7/9** | **186 s** | Failed: a math item whose range let the answer be 0, and a matching item that repeated "Speed". 9 of 11 calls valid first try. |
+
+Hand-graded usable questions in the bench: Qwen 10/18, E2B 11/18, E4B 12/18 (one
+reader, one page: within noise). The speed difference is not.
+
+**How it runs:** `src/lib/llm/transformers.worker.ts` hosts both models in one
+Web Worker. Gemma 4 E4B loads text-only (`embed_tokens` and
+`decoder_model_merged`, q4f16, 4.92 GB; q4 at 5.62 GB without `shader-f16`,
+untested) and loads from cache in about 4 s. ONNX Runtime's WebAssembly is
+bundled with the app rather than fetched from jsDelivr.
+
+**Pitfalls handled in code:**
+- The structured-output package rejects string `pattern`; it is stripped from the schema it sees, and zod still checks it.
+- It lets a trailing comma through (`[2,]`); `parseJsonResponse` drops trailing commas when the JSON does not parse.
+- Gemma writes LaTeX with one backslash inside JSON, so `\frac` arrives as a form feed and `\text` as a tab. `parseJsonResponse` reads `\b \f \n \r \t` as LaTeX when they start a known command (it leaves `\nu`, `\ne` and `\to`, which read as text after a line break).
+- Gemma writes `$…$` math despite the prompt; `repairDraft` turns it into `\( \)` using Pandoc's rule, so "$5 and $10" stays a price.
+
+**EmbeddingGemma 2** (q4, 174 MB, text part only) runs the duplicate check: a
+new question whose stem has cosine ≥ 0.94 with one already in its set gets a
+note. In the bench it separated hand-labelled duplicates from distinct questions
+with AUC 0.99 (no task prefix; 85% found at 91% precision at 0.937). In the app
+a reworded stem scored 0.956 against its original, and the closest pair of
+distinct stems in the new set 0.898. Ten stems embed in under 0.1 s. Its other
+use from the bench, showing the best-matching source paragraph in review, is not
+built: the cited paragraph ranked in the top three for only 61% of questions.
+
+**Not yet tested:** Safari, Firefox, Windows and Intel/AMD GPUs, GPU memory use
+(not measurable from a page), the review pass on Gemma, more source pages, and
+an ADAPT import of Gemma-written questions (the export code is unchanged).
 
 ### MiniCPM5-2B (openbmb, Apache-2.0, 2026-09-06)
 
@@ -112,7 +158,7 @@ All are Apache-2.0 and prebuilt for WebLLM. GPU memory is WebLLM's estimate at a
 **Other models considered:**
 - **Phi-4-mini 3.8B** (MIT, 2.2 GB) and **Ministral 3 3B** (Apache-2.0, 2.0 GB): both are in WebLLM and worth A/B testing against Qwen3.5-4B.
 - **Llama 3.2 1B/3B:** community license.
-- **Gemma 4 E2B/E4B** (now Apache-2.0): not in WebLLM yet. Rechecked 2026-10-05: WebLLM 0.2.85's prebuilt list has only Gemma 2 and Gemma 3 1B. A GGUF build would need wllama, which the app no longer includes.
+- **Gemma 4 E2B/E4B** (now Apache-2.0): not in WebLLM (rechecked 2026-10-05: only Gemma 2 and Gemma 3 1B). E4B was added through Transformers.js on 2026-10-06, see below. E2B was about 1.6 times as fast again but wrote more wrong answer keys, so it is not offered.
 - **LFM2.5-1.2B:** the license restricts commercial use above $10M revenue.
 - **Phones:** iOS tabs are killed at roughly 1.5–3 GB, so phones are out of scope.
 
@@ -123,6 +169,7 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
 - **Thinking mode:** Qwen3.5 "thinks" by default, so the app passes `enable_thinking: false` and strips any `</think>` prefix.
 - **JSON mode prompting:** the prompt must also ask for JSON, or the model can stall emitting whitespace.
 - **Model download caching:** WebLLM keeps weights in the Cache API. The service worker never caches them. `navigator.storage.persist()` is requested before download.
+- **Numbers with only a lower bound:** XGrammar compiles `minimum` or `exclusiveMinimum` without a maximum into a grammar that cannot write 0.5 or 0.05, only 0 or numbers of 1 or more. That is why Qwen wrote `step: 0` and `tolerance: 0`. `toLlmSchema` now drops lower-only bounds on numbers; zod still enforces them. Asked for `{"step": 0.5, "tolerance": 0.05}`, Qwen3.5 4B wrote `0, 0` in 3 of 3 tries before the change and `0.5, 0.05` in 3 of 3 after. In a math-only run afterwards (4 questions from *College Physics* 2.3), none of 7 attempts wrote step 0, against 19 of 44 before the step repair; that page's ranges were all whole numbers, so the probe is the stronger evidence.
 - **Not handled yet:** WebLLM issues #807/#766 report an occasional XGrammar "invalid token id" abort with q4f16. Retrying usually works; switching to the q4f32 build is the fallback.
 
 ## 2. OpenAI bring-your-own-key: "Luna"

@@ -1659,7 +1659,7 @@ details[open] > summary {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .engine-layout > .card {
+  .engine-layout > .engine-panels {
     margin-top: 0;
   }
 }

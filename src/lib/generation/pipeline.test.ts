@@ -1,9 +1,9 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SAMPLE_DRAFTS } from '../qti/fixtures'
-import { completeWithRetries, LLMError, type CompletionRequest, type LLMProvider } from '../llm/types'
+import { completeWithRetries, LLMError, type CompletionRequest, type Embedder, type LLMProvider } from '../llm/types'
 import { db, type StoredSource } from '../storage/db'
-import { planUnits, repairDraft, runGeneration, stripSourceReferences } from './pipeline'
+import { dollarsToDelimiters, planUnits, repairDraft, runGeneration, stripSourceReferences } from './pipeline'
 import type { DraftOf, ItemType } from './schema'
 
 const source: StoredSource = {
@@ -322,6 +322,59 @@ describe('stripSourceReferences', () => {
   })
 })
 
+// Gives each distinct text its own direction, so equal texts have similarity 1
+// and different ones 0.
+function fakeEmbedder(failLoad = false): Embedder & { texts: string[] } {
+  const seen: string[] = []
+  return {
+    model: 'fake-embedder',
+    texts: seen,
+    load: async () => {
+      if (failLoad) throw new Error('offline')
+    },
+    embed: async (texts) =>
+      texts.map((text) => {
+        seen.push(text)
+        const vector = new Float32Array(16)
+        vector[[...new Set(seen)].indexOf(text)] = 1
+        return vector
+      }),
+  }
+}
+
+describe('duplicate check', () => {
+  it('notes a question whose stem repeats one already in the set', async () => {
+    const mc = SAMPLE_DRAFTS.find((d) => d.item_type === 'multiple_choice')!
+    await db.items.add({
+      id: 'old',
+      setId: 'set-1',
+      position: 0,
+      status: 'approved',
+      draft: mc,
+      sourcePageIndex: 0,
+      critique: [],
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    const embedder = fakeEmbedder()
+    const plan = { itemTypes: ['multiple_choice', 'essay'] as ItemType[], perPage: 2, reviewPass: false }
+    await runGeneration('set-1', source, plan, new FakeProvider(), new AbortController().signal, callbacks, embedder)
+    const items = await db.items.where('setId').equals('set-1').sortBy('position')
+    const notes = items.slice(1).map((i) => i.critique.filter((note) => note.startsWith('Very similar')))
+    // Positions continue the type rotation from the existing item: essay, then multiple choice.
+    expect(items.slice(1).map((i) => i.draft.item_type)).toEqual(['essay', 'multiple_choice'])
+    expect(notes[0]).toEqual([])
+    expect(notes[1]).toHaveLength(1)
+    expect(notes[1][0]).toContain(mc.stem.slice(0, 40))
+  })
+
+  it('still writes the questions when the check cannot load', async () => {
+    const plan = { itemTypes: ['multiple_choice'] as ItemType[], perPage: 2, reviewPass: false }
+    const result = await runGeneration('set-1', source, plan, new FakeProvider(), new AbortController().signal, callbacks, fakeEmbedder(true))
+    expect(result).toEqual({ created: 2, failures: [] })
+  })
+})
+
 describe('repairDraft', () => {
   const { item_type: _, ...math } = SAMPLE_DRAFTS.find((d) => d.item_type === 'math')!
   void _
@@ -348,5 +401,27 @@ describe('repairDraft', () => {
     expect(repairDraft('math', broken)).toBe(broken)
     const numerical = { tolerance: 0 }
     expect(repairDraft('numerical', numerical)).toBe(numerical)
+  })
+})
+
+describe('dollarsToDelimiters', () => {
+  it('turns $ and $$ math into the \\( \\) and \\[ \\] that ADAPT renders', () => {
+    // As Gemma 4 E4B wrote them.
+    expect(dollarsToDelimiters('the formula $\\bar{v}=\\frac{\\Delta x}{t}$? Select all')).toBe(
+      'the formula \\(\\bar{v}=\\frac{\\Delta x}{t}\\)? Select all',
+    )
+    expect(dollarsToDelimiters('position is $x_0$ at time $t_0$.')).toBe('position is \\(x_0\\) at time \\(t_0\\).')
+    expect(dollarsToDelimiters('$$v = {{d}} / {{t}}$$')).toBe('\\[v = {{d}} / {{t}}\\]')
+  })
+
+  it('leaves prices and escaped dollars alone', () => {
+    for (const text of ['It costs $5 and $10.', 'between $5-$10', 'from $3.50 to $4', 'a \\$ sign and $x\\$']) {
+      expect(dollarsToDelimiters(text)).toBe(text)
+    }
+  })
+
+  it('applies to prose fields but not formulas, names or units', () => {
+    const draft = { stem: 'Find $v$.', answer_formula: 'd / t', units: '$', choices: [{ text: '$2t$', feedback: null }] }
+    expect(repairDraft('multiple_choice', draft)).toEqual({ ...draft, stem: 'Find \\(v\\).', choices: [{ text: '\\(2t\\)', feedback: null }] })
   })
 })

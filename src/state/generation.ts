@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { runGeneration, type GenerationPlan } from '../lib/generation/pipeline'
-import type { LLMProvider } from '../lib/llm/types'
+import type { Embedder, LLMProvider } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
 
 // Generation outlives any one screen: the instructor can browse the library
@@ -41,6 +41,7 @@ export async function startGeneration(
   source: StoredSource,
   plan: GenerationPlan,
   provider: LLMProvider,
+  embedder: Embedder | null = null,
 ): Promise<void> {
   if (state.running) throw new Error('A generation is already running.')
   controller = new AbortController()
@@ -56,7 +57,7 @@ export async function startGeneration(
         else if (event.kind === 'reasoning') update({ detail: event.text })
         else update({ detail: `${event.generated} chunks generated…` })
       },
-    })
+    }, embedder)
     const error = result.failures.length
       ? `${result.failures.length} question(s) could not be generated: ${result.failures.slice(0, 3).join(' · ')}`
       : null

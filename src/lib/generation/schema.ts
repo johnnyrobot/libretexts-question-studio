@@ -368,12 +368,20 @@ export function toLlmSchema(schema: z.ZodType): JsonSchema {
   return stripKeys(json, new Set(['minLength', 'maxLength'])) as JsonSchema
 }
 
+// XGrammar (WebLLM's grammar engine) compiles a number with a lower bound but
+// no upper bound into a grammar that cannot write 0.5 or 0.05, only 0 or ≥ 1:
+// Qwen3.5 4B wrote step 0 when asked for 0.5. Those bounds are dropped; zod
+// enforces them.
+const LOWER_BOUNDS = new Set(['minimum', 'exclusiveMinimum'])
+
 function stripKeys(node: unknown, keys: Set<string>): unknown {
   if (Array.isArray(node)) return node.map((child) => stripKeys(child, keys))
   if (!node || typeof node !== 'object') return node
+  const record = node as Record<string, unknown>
+  const lowerOnly = record.type === 'number' && !('maximum' in record) && !('exclusiveMaximum' in record)
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(node)) {
-    if (keys.has(key)) continue
+    if (keys.has(key) || (lowerOnly && LOWER_BOUNDS.has(key))) continue
     // zod emits safe-integer bounds for z.int(); they add nothing for the model.
     if ((key === 'minimum' || key === 'maximum') && Math.abs(value as number) >= Number.MAX_SAFE_INTEGER) continue
     out[key] = stripKeys(value, keys)

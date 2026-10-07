@@ -13,8 +13,9 @@ import {
   type ResolvedUrl,
 } from '../lib/content/sources'
 import { ITEM_TYPE_LABELS, ITEM_TYPES, type ItemType } from '../lib/generation/schema'
+import { localModel } from '../lib/llm/local-models'
 import { db, newId, type StoredSource } from '../lib/storage/db'
-import { createProvider, useEngineSettings } from '../state/engine'
+import { createEmbedder, createProvider, useEngineSettings } from '../state/engine'
 import { startGeneration, useGeneration } from '../state/generation'
 import { navigate } from '../router'
 
@@ -417,7 +418,7 @@ function Configure({ source }: { source: StoredSource }) {
       createdAt: now,
       updatedAt: now,
     })
-    void startGeneration(setId, source, { itemTypes: types, perPage, reviewPass }, provider)
+    void startGeneration(setId, source, { itemTypes: types, perPage, reviewPass }, provider, await createEmbedder(engine))
     navigate(`/set/${setId}`)
   }
 
@@ -482,7 +483,7 @@ function Configure({ source }: { source: StoredSource }) {
         <div className="action-bar">
           <p className="muted">
             About {calls} model calls with{' '}
-            {engine.provider === 'openai' ? `OpenAI ${engine.openaiModel}` : 'the in-browser model'}
+            {engine.provider === 'openai' ? `OpenAI ${engine.openaiModel}` : localModel(engine.localModel).label}
             {engine.provider === 'local' && total > 30 && '. Large sets take a long time in the browser.'}
           </p>
           <button type="button" className="primary" disabled={types.length === 0 || generation.running} onClick={start}>
