@@ -232,7 +232,7 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
   - Each of its 16 finds pointed at the bad choice.
   - It missed "friction is *always* an external force" and "the weight is 9.8 N *only if* its mass is 1.0 kg".
   - Of its 5 false flags, 3 were physics mistakes by the check and 2 were questions with unclear stems.
-  - It is the format in the app (`keyCheckPrompt`, `checkAnswerKey`). It was chosen after seeing its results on these 120, so the first numbers from other pages will be the real test.
+  - It is the format in the app (`keyCheckPrompt`, `checkAnswerKey`), with shorter lines since 2026-10-08 (see below). It was chosen after seeing its results on these 120, so the first numbers from other pages will be the real test.
 
 **In the app:**
 - The check runs on the in-browser model only, for multiple-choice and select-all questions, after the review.
@@ -250,9 +250,21 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
 | Time for 60 questions | 3163 s (53 s each) | 5198 s (87 s each, 28 s of it the check and fixes) |
 
 - **What the fixes did:** none introduced a new error. The 3 wrong keys a fix did not repair all kept a note, and the one wrong key without a note was a miss by the check.
-- **Cost:** these question types take about 64% longer on Gemma. Drafting and review also ran 6 s slower per question than in the before run, which is normal variation between runs.
+- **Cost:** these question types took about 64% longer on Gemma. Drafting and review also ran 6 s slower per question than in the before run, which is normal variation between runs. The shorter lines below cut the check from 24 s to 8 s a question.
 - **Limits:** one pair of pages, one model and one judge.
-- **Not tried:** a shorter `working` field to cut the check's time. Its reasoning sometimes runs to a paragraph per choice.
+
+**Shorter reasoning (2026-10-08):** asked for "a short reason" per choice, the check wrote about 1,000 characters of `working` and often ignored the one-line format. With no reasoning at all, it took 4 s a question, so nearly all of the 24 s was the reasoning. Same 120 judged questions:
+
+| | "A short reason" (end-to-end test above) | One line per choice, at most 12 words (now in the app) | No reasoning, only the list of right choices |
+|---|---|---|---|
+| Wrong keys found | 16 of 18 | 16 of 18 | 14 of 18 |
+| Right keys flagged | 5 of 93 | 4 of 93 | 8 of 93 |
+| Debatable keys flagged | 2 of 9 | 4 of 9 | 4 of 9 |
+| Time per question | 24 s | 8 s | 4 s |
+| Reasoning written | about 1,000 characters | about 300 | none |
+
+- **The short lines found the same wrong keys:** the same 2 misses. In 13 of the 16 finds the check disagreed on exactly the same choices; in the other 3 the choices overlapped.
+- **Not measured end-to-end.** From the end-to-end test (a fix for about 1 question in 6, each a review call plus another check), the check and fixes should drop from about 28 s to about 13 s a question. On top of the before run's 53 s, that is about 25% more time instead of about 50%.
 
 ### Fine-tuning Gemma (considered 2026-10-07, not started)
 

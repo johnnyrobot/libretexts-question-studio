@@ -465,7 +465,7 @@ export async function reviewItem(
 // to the key F = ma, or "if the net force is zero, the acceleration is zero"
 // marked wrong. The reviewer kept all of them: shown the key, it defends it.
 // Asked to answer the question without the key, the same model disagreed with
-// 16 of the 18 keys and with 5 of 93 right ones. A key it disagrees with goes
+// 16 of the 18 keys and with 4 of 93 right ones. A key it disagrees with goes
 // back once, naming the choices; if the check still disagrees, the instructor
 // gets a note. The check is a convenience: if it cannot run, the question is
 // kept as it is.
