@@ -7,6 +7,8 @@ import { db, newId, type StoredItem, type StoredSource } from '../storage/db'
 import {
   conceptPrompt,
   draftPrompt,
+  KEY_CHECK_SYSTEM,
+  keyCheckPrompt,
   reviewPrompt,
   SYSTEM_PROMPT,
   type Concept,
@@ -323,6 +325,11 @@ export async function runGeneration(
             critique = [...notes, `Automatic review could not complete (${message(error)}); the unreviewed draft was kept.`]
           }
         }
+        if (provider.id === 'local') {
+          const checked = await verifyAnswerKey(provider, unit, concept, draft, allowed, signal, callbacks)
+          draft = checked.draft
+          critique = [...critique, ...checked.notes]
+        }
         draft = finalize(draft, concept)
         const similar = await duplicates?.add(draft.stem).catch(() => null)
         if (similar && similar.similarity >= DUPLICATE_SIMILARITY) {
@@ -428,6 +435,7 @@ export async function reviewItem(
   allowed: Set<number>,
   signal: AbortSignal,
   callbacks: GenerationCallbacks,
+  keyProblems: string[] = [],
 ): Promise<{ draft: QuestionDraft; issues: string[] }> {
   const schema = z.object({
     issues: z.array(z.string().trim().min(1).max(400)).max(8),
@@ -435,7 +443,7 @@ export async function reviewItem(
   })
   const result = await provider.complete({
     system: SYSTEM_PROMPT,
-    prompt: reviewPrompt(unit, concept, draft),
+    prompt: reviewPrompt(unit, concept, draft, keyProblems),
     schemaName: 'item_review',
     schema: toLlmSchema(schema),
     signal,
@@ -450,6 +458,95 @@ export async function reviewItem(
     },
   })
   return result.value
+}
+
+// Gemma 4 E4B wrote a true statement as a wrong choice in 18 of 120
+// multiple-choice and select-all questions (2026-10-07), such as a = F/m next
+// to the key F = ma, or "if the net force is zero, the acceleration is zero"
+// marked wrong. The reviewer kept all of them: shown the key, it defends it.
+// Asked to answer the question without the key, the same model disagreed with
+// 16 of the 18 keys and with 5 of 93 right ones. A key it disagrees with goes
+// back once, naming the choices; if the check still disagrees, the instructor
+// gets a note. The check is a convenience: if it cannot run, the question is
+// kept as it is.
+export interface KeyDisagreement {
+  choice: string
+  // What the check makes of the choice; the key says the opposite.
+  checkSaysCorrect: boolean
+}
+
+export async function checkAnswerKey(
+  provider: LLMProvider,
+  unit: SourceUnit,
+  draft: QuestionDraft,
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<KeyDisagreement[]> {
+  if (draft.item_type !== 'multiple_choice' && draft.item_type !== 'multiple_answers') return []
+  const { choices } = draft
+  const schema = z.object({ working: z.string(), answers: z.array(z.int().min(1).max(choices.length)) })
+  const result = await provider.complete({
+    system: KEY_CHECK_SYSTEM,
+    prompt: keyCheckPrompt(unit, draft),
+    schemaName: 'key_check',
+    schema: toLlmSchema(schema),
+    signal,
+    onProgress: callbacks.onModelEvent,
+    validate: (value) => {
+      const parsed = schema.safeParse(value)
+      if (!parsed.success) throw new Error(formatIssues(parsed.error))
+      if (!parsed.data.answers.length) throw new Error('answers must list the number of at least one right choice')
+      return new Set(parsed.data.answers)
+    },
+  })
+  return choices.flatMap((choice, i) =>
+    result.value.has(i + 1) === choice.correct ? [] : [{ choice: choice.text, checkSaysCorrect: !choice.correct }],
+  )
+}
+
+export async function verifyAnswerKey(
+  provider: LLMProvider,
+  unit: SourceUnit,
+  concept: Concept,
+  draft: QuestionDraft,
+  allowed: Set<number>,
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<{ draft: QuestionDraft; notes: string[] }> {
+  if (draft.item_type !== 'multiple_choice' && draft.item_type !== 'multiple_answers') return { draft, notes: [] }
+  const check = (question: QuestionDraft) =>
+    checkAnswerKey(provider, unit, question, signal, callbacks).catch((error: unknown) => {
+      if (signal.aborted) throw error
+      console.warn('Answer check unavailable:', error)
+      return null
+    })
+  callbacks.onStatus(`Checking the answer key of “${draft.title}”…`)
+  const disagreements = await check(draft)
+  if (!disagreements?.length) return { draft, notes: [] }
+  callbacks.onStatus(`Fixing the answer key of “${draft.title}”…`)
+  let fixed: QuestionDraft
+  try {
+    const problems = disagreements.map((d) => keyProblem(draft.item_type, d))
+    fixed = (await reviewItem(provider, unit, concept, draft, allowed, signal, callbacks, problems)).draft
+  } catch (error) {
+    if (signal.aborted) throw error
+    return { draft, notes: [keyNote(disagreements)] }
+  }
+  const remaining = await check(fixed)
+  return { draft: fixed, notes: remaining?.length ? [keyNote(remaining)] : [] }
+}
+
+function keyProblem(itemType: ItemType, { choice, checkSaysCorrect }: KeyDisagreement): string {
+  if (!checkSaysCorrect) {
+    return `The choice "${clip(choice, 160)}" is marked correct, but it may not be: make sure it is true and answers the question, or mark it incorrect.`
+  }
+  const fix = itemType === 'multiple_answers' ? 'mark it correct, or replace it with a statement that is clearly false' : 'replace it with a choice that is clearly wrong'
+  return `The choice "${clip(choice, 160)}" is marked incorrect, but it is also a correct answer: ${fix}.`
+}
+
+function keyNote(disagreements: KeyDisagreement[]): string {
+  const judged = disagreements.map(({ choice, checkSaysCorrect }) => `“${clip(choice, 100)}” is ${checkSaysCorrect ? 'also correct' : 'not correct'}`)
+  return `An automatic answer check disagrees with the answer key: it judged that ${judged.join('; ')}.`
 }
 
 // The instructor reads the reviewer's notes on the question card. Gemma 4 E4B

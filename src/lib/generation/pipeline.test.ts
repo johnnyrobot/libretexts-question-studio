@@ -45,6 +45,9 @@ class FakeProvider implements LLMProvider {
   readonly model = 'fake'
   calls: string[] = []
   breakFirst = new Set<string>()
+  // The answer check's answers, one list per call; after that it agrees with
+  // the fixture's key.
+  keyAnswers: number[][] = []
 
   constructor(id: LLMProvider['id'] = 'openai') {
     this.id = id
@@ -58,6 +61,12 @@ class FakeProvider implements LLMProvider {
         // A reviewer with nothing to change.
         const draft = JSON.parse(prompt.slice(prompt.indexOf('<draft>') + 7, prompt.indexOf('</draft>')))
         return { text: JSON.stringify({ issues: [], revised: draft }), usage: null }
+      }
+      if (request.schemaName === 'key_check') {
+        const type = prompt.includes('select-all') ? 'multiple_answers' : 'multiple_choice'
+        const fixture = SAMPLE_DRAFTS.find((d): d is DraftOf<'multiple_choice' | 'multiple_answers'> => d.item_type === type)!
+        const answers = this.keyAnswers.shift() ?? fixture.choices.flatMap((c, i) => (c.correct ? [i + 1] : []))
+        return { text: JSON.stringify({ working: '1 wrong: …', answers }), usage: null }
       }
       if (request.schemaName === 'concept_batch') {
         return {
@@ -270,6 +279,66 @@ describe('runGeneration', () => {
     const openai = new FakeProvider('openai')
     await runGeneration('set-1', source, { itemTypes: ['math'], perPage: 1, reviewPass: true }, openai, new AbortController().signal, callbacks)
     expect(openai.calls).toContain('item_review')
+  })
+
+  it('checks multiple-choice and select-all answer keys on the in-browser model only', async () => {
+    const local = new FakeProvider('local')
+    const plan = { itemTypes: ['multiple_choice', 'multiple_answers', 'true_false'] as ItemType[], perPage: 3, reviewPass: false }
+    await runGeneration('set-1', source, plan, local, new AbortController().signal, callbacks)
+    expect(local.calls.filter((c) => c !== 'concept_batch')).toEqual([
+      'multiple_choice_item',
+      'key_check',
+      'multiple_answers_item',
+      'key_check',
+      'true_false_item',
+    ])
+    const items = await db.items.where('setId').equals('set-1').toArray()
+    expect(items.every((i) => i.critique.length === 0)).toBe(true)
+    const openai = new FakeProvider('openai')
+    await runGeneration('set-1', source, plan, openai, new AbortController().signal, callbacks)
+    expect(openai.calls).not.toContain('key_check')
+  })
+
+  it('sends a key the check disagrees with back once, naming the choice, and notes it if the check still disagrees', async () => {
+    const run = async (keyAnswers: number[][]) => {
+      await db.items.clear()
+      const provider = new FakeProvider('local')
+      provider.keyAnswers = keyAnswers
+      const original = provider.complete.bind(provider)
+      const reviews: string[] = []
+      provider.complete = (request) => {
+        if (request.schemaName === 'item_review') reviews.push(request.prompt)
+        return original(request)
+      }
+      const plan = { itemTypes: ['multiple_answers'] as ItemType[], perPage: 1, reviewPass: false }
+      const result = await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+      const [item] = await db.items.where('setId').equals('set-1').toArray()
+      return { result, reviews, calls: provider.calls, critique: item.critique }
+    }
+    // The fixture's key is choices 1 and 2; the check also picks "Glucose".
+    const fixed = await run([[1, 2, 3]])
+    expect(fixed.calls.filter((c) => c !== 'concept_batch')).toEqual(['multiple_answers_item', 'key_check', 'item_review', 'key_check'])
+    expect(fixed.reviews[0]).toContain('The choice "Glucose" is marked incorrect, but it is also a correct answer: mark it correct')
+    expect(fixed.critique).toEqual([])
+    const unfixed = await run([[1, 2, 3], [2, 3]])
+    expect(unfixed.result.created).toBe(1)
+    expect(unfixed.critique).toEqual([
+      'An automatic answer check disagrees with the answer key: it judged that “Water” is not correct; “Glucose” is also correct.',
+    ])
+  })
+
+  it('keeps the question as it is when the answer check cannot run', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const provider = new FakeProvider('local')
+    const original = provider.complete.bind(provider)
+    provider.complete = (request) =>
+      request.schemaName === 'key_check' ? completeWithRetries(request, async () => ({ text: '{"working": "x", "answers": []}', usage: null })) : original(request)
+    const result = await runGeneration('set-1', source, { itemTypes: ['multiple_choice'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.critique).toEqual([])
+    expect(warn).toHaveBeenCalledWith('Answer check unavailable:', expect.anything())
+    warn.mockRestore()
   })
 
   it('retries a response cut off at the output limit, but not other engine errors', async () => {

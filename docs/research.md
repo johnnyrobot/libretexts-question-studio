@@ -118,7 +118,7 @@ were reviewed with the old and the new review prompt:
 - **Prompt:** the reviewer is told the instructor reads the list, to use plain words ("the choice '…'", "the explanation"), not field names, and that the app checks format, the concept label and citations.
 - **Filter (`cleanReviewNotes`):** drops notes about the app's side, notes that only call a wrong choice wrong or unsupported (unless they also say it is too easy, also true, misleading and so on), and notes that the explanation is redundant or not needed (it is the feedback students read). It writes any snake_case name as words. The phrases are narrow, because "field", "output" and "stem" are also subject words. With the old prompt the filter alone would have shown 8 of the 15 notes.
 - **In the app:** a full run of 6 questions (the end-to-end settings) gave 4 notes on 3 questions, none naming a field; the filter caught one more "explanation was redundant" note, which led to that rule.
-- **Still weak:** two kept notes only say the question is wordy. The reviewer also missed a wrong answer key: a select-all draft marked "The acceleration is directly proportional to the net external force" incorrect, and both reviews defended it.
+- **Still weak:** two kept notes only say the question is wordy. The reviewer also missed a wrong answer key: a select-all draft marked "The acceleration is directly proportional to the net external force" incorrect, and both reviews defended it. The answer check (see "Wrong answer keys" below) was added for this.
 
 **EmbeddingGemma 2** (q4, 174 MB, text part only) runs the duplicate check: a
 new question whose stem has cosine ≥ 0.94 with one already in its set gets a
@@ -194,6 +194,100 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
 - **Model download caching:** WebLLM keeps weights in the Cache API. The service worker never caches them. `navigator.storage.persist()` is requested before download.
 - **Numbers with only a lower bound:** XGrammar compiles `minimum` or `exclusiveMinimum` without a maximum into a grammar that cannot write 0.5 or 0.05, only 0 or numbers of 1 or more. That is why Qwen wrote `step: 0` and `tolerance: 0`. `toLlmSchema` now drops lower-only bounds on numbers; zod still enforces them. Asked for `{"step": 0.5, "tolerance": 0.05}`, Qwen3.5 4B wrote `0, 0` in 3 of 3 tries before the change and `0.5, 0.05` in 3 of 3 after. In a math-only run afterwards (4 questions from *College Physics* 2.3), none of 7 attempts wrote step 0, against 19 of 44 before the step repair; that page's ranges were all whole numbers, so the probe is the stronger evidence.
 - **Not handled yet:** WebLLM issues #807/#766 report an occasional XGrammar "invalid token id" abort with q4f16. Retrying usually works; switching to the q4f32 build is the fallback.
+
+### Wrong answer keys and the answer check (2026-10-07)
+
+**The problem:**
+- Gemma 4 E4B writes true statements as wrong choices in multiple-choice and select-all questions. Examples:
+  - `a = F/m` as a wrong choice next to the key `F = ma`.
+  - "The net external force is proportional to the acceleration" marked wrong.
+  - "If the net force is zero, the acceleration is zero" marked wrong.
+  - In "which forces are left out" questions, one left-out force marked correct and the others marked wrong.
+- Its feedback on such a choice often admits it is true ("This equation is correct…, but…").
+- Of 18 wrong keys in 120 questions, 15 were already in the draft. The reviewer kept all 15 and introduced the other 3. Twice it noted the problem ("mathematically equivalent to the correct choice") and kept the key: shown a key, it defends it.
+
+**How it was measured:**
+- 60 questions per run: 4 for each of 15 concepts from *College Physics* 4.3 and 4.4 (multiple choice, select-all, multiple choice, select-all), review on, Gemma 4 E4B.
+- The runs were shuffled together and judged blind, from the stem and the choices with their key. Feedback was left out, because it could give the run away.
+- **Wrong:** a choice marked correct is false, a choice marked incorrect is true, or a multiple-choice question has a second, equally correct choice.
+- **Debatable:** a wrong choice that is true but less complete than the key, or whose truth depends on how it is read.
+
+**Prompt rules and a phrase check did not work:**
+- The prompts said a wrong choice must be false, never true but unstated in the excerpt. A code check sent back a wrong choice whose feedback said "not explicitly stated" or "implied".
+- Result: wrong keys 8 → 10 of 60, debatable 5 → 4, time 3163 → 3541 s.
+- The phrase check never fired. That phrasing came from the 4 wrong keys seen earlier, and it appeared only once in the 60 new drafts.
+- The change was reverted.
+
+**The answer check:** a separate call answers the question without seeing the key, using the whole section the question was written from. Two output formats were run on the same 120 judged questions (18 wrong keys, 9 debatable, 93 right):
+
+| | True/false per choice after a reason | "1 wrong: reason" for each choice, then the list of right choices |
+|---|---|---|
+| Wrong keys found | 11 of 18 | 16 of 18 |
+| Right keys flagged | 21 of 93 | 5 of 93 |
+| Debatable keys flagged | 1 of 9 | 2 of 9 |
+| Time per question | 17 s | 24 s |
+
+- **First format:** about 17 of its 21 false flags were a reason that called the choice wrong, followed by a verdict marking it correct.
+- **Second format:**
+  - Each of its 16 finds pointed at the bad choice.
+  - It missed "friction is *always* an external force" and "the weight is 9.8 N *only if* its mass is 1.0 kg".
+  - Of its 5 false flags, 3 were physics mistakes by the check and 2 were questions with unclear stems.
+  - It is the format in the app (`keyCheckPrompt`, `checkAnswerKey`). It was chosen after seeing its results on these 120, so the first numbers from other pages will be the real test.
+
+**In the app:**
+- The check runs on the in-browser model only, for multiple-choice and select-all questions, after the review.
+- **On a disagreement:** the question goes back once through the reviewer, naming the choices (`verifyAnswerKey`), and is checked again. If the check still disagrees, the question keeps a note for the instructor.
+- **gpt-6-luna is not checked:** none of its 32 multiple-choice and select-all questions had a wrong key.
+
+**End-to-end test:** the same 60 questions as the before run, written with the check. The 120 were judged blind together. My verdicts on the 60 before questions matched the first judging for all 60.
+
+| | Before | With the check |
+|---|---|---|
+| Wrong keys | 8 | 4 |
+| Wrong keys without a note | 8 | 1 |
+| Debatable keys | 5 | 3 |
+| Sent back to be fixed | — | 10: 6 fixed, 4 kept with a note (3 wrong, 1 debatable) |
+| Time for 60 questions | 3163 s (53 s each) | 5198 s (87 s each, 28 s of it the check and fixes) |
+
+- **What the fixes did:** none introduced a new error. The 3 wrong keys a fix did not repair all kept a note, and the one wrong key without a note was a miss by the check.
+- **Cost:** these question types take about 64% longer on Gemma. Drafting and review also ran 6 s slower per question than in the before run, which is normal variation between runs.
+- **Limits:** one pair of pages, one model and one judge.
+- **Not tried:** a shorter `working` field to cut the check's time. Its reasoning sometimes runs to a paragraph per choice.
+
+### Fine-tuning Gemma (considered 2026-10-07, not started)
+
+The question: could a large model (Luna, another GPT-6 model, or Claude) teach Gemma 4 E4B to write better questions, by fine-tuning it on the large model's questions (distillation), for example with Unsloth? And would a smaller fine-tuned model, such as E2B, do as well while fitting on more machines? Parked for now; this is what was found.
+
+**Today nothing is distilled.** Luna is only the yardstick in the before/after tests. Every improvement to Gemma so far came from the prompts, the app's checks and automatic retries.
+
+**Training is the easy part:**
+- Unsloth supports Gemma 4 E2B and E4B (text, vision, audio and RL fine-tuning). Its guide gives about 17 GB of GPU memory for E4B with LoRA and 18–22 GB with QLoRA, and recommends E4B QLoRA over E2B LoRA.
+- Unsloth Studio is its open-source, no-code interface for training, running and exporting models. Its "Data Recipes" turn documents into synthetic datasets.
+- Training needs a GPU machine or a cloud GPU; none of it runs in the browser.
+
+**Getting it into the app is the risk:**
+- The app loads `onnx-community/gemma-4-E4B-it-ONNX` (q4f16) through Transformers.js. A fine-tune has to be merged, exported to ONNX (Gemma 4's "E" architecture), quantized to q4f16 and hosted on Hugging Face for download.
+- Unsloth exports GGUF and safetensors, not this ONNX build, and no published recipe for exporting Gemma 4 to ONNX turned up (2026-10-07).
+- **First step if this is revisited:** export the unmodified E4B ourselves and check that it runs in the app and writes the same questions as the onnx-community build. If that fails, fine-tuning Gemma is a dead end here. Qwen3.5 4B through WebLLM may be easier, because MLC compiles fine-tuned weights of an architecture it already supports.
+
+**Training data:**
+- **Provider terms:** OpenAI's terms forbid using its output to develop models that compete with OpenAI. Anthropic's commercial terms have a similar clause about training competing models. Whether a question-writing model counts is for LibreTexts to decide, for either provider.
+- **A route without that question:** generate many questions with Gemma itself and train only on those that pass the app's checks and a judge. In the long run, the questions instructors approve are the best data; collecting them needs opt-in, because nothing leaves the browser today (see Laya above).
+- **Source licenses:** LibreTexts books are mostly CC BY-NC-SA, so check each book's license (the app stores it with each source).
+- **Format:** the exact prompts and JSON schemas the app sends (`draftPrompt`, `reviewPrompt`, `llmSchemaFor`), from many subjects, not only physics.
+
+**What to expect:**
+- Fine-tuning fixes habits well: valid JSON on the first try (fewer retries, so faster runs), feedback that says why a choice is false, stems that state every given, and not marking a true statement wrong because the excerpt does not say it.
+- It adds little knowledge. Whether a statement is true still depends on what the model knows and what it was shown. E2B wrote more wrong answer keys than E4B (above); a fine-tune might close part of that gap, but outside the subjects it was trained on, smaller models should be expected to get more keys wrong.
+- **Memory:** WebGPU runs the model in GPU memory, which on Macs and laptops with integrated graphics is system RAM, so a smaller model fits more machines. Not measured: a page cannot read GPU memory use.
+
+**If revisited, in this order:**
+1. Prove the ONNX export path with the stock model.
+2. Build a held-out test set from several subjects, with an automatic judge. Today's tests use two physics pages, judged by hand.
+3. Generate and filter training data in the app's format.
+4. Train E2B and E4B with LoRA, and compare them with the stock models on that set, for quality and for time per question.
+
+Sources: [Unsloth Gemma 4 fine-tuning guide](https://unsloth.ai/docs/models/gemma-4/train), [Introducing Unsloth Studio](https://unslothai.substack.com/p/introducing-unsloth-studio), [OpenAI Terms of Use, prohibited conduct (summary)](https://conductatlas.com/platform/openai/openai-terms-of-use/usage-policy-and-prohibited-conduct/), [Model distillation: terms of service and IP law](https://www.ertas.ai/blog/ai-model-distillation-ip-law).
 
 ## 2. OpenAI bring-your-own-key: "Luna"
 

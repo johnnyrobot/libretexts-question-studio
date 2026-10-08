@@ -24,7 +24,7 @@ browser.
 1. **Settings:** either download and load the in-browser model, or paste an OpenAI API key.
 2. **Create:**
    - Choose a source and tick the pages you want.
-   - Choose question types and how many questions per page. The second-pass review is on by default; it catches wrong answer keys.
+   - Choose question types and how many questions per page. The second-pass review is on by default. With the in-browser model, an answer check also answers each multiple-choice and select-all question without its key, and sends back keys it disagrees with.
    - Generate. Questions appear as they are written, and the run continues if you switch screens.
 3. **Review:** approve, edit, or reject each question. Each question can show the exact source paragraphs it cites.
 4. **Export to ADAPT** (from the set's page): download the QTI (.zip). In ADAPT, go to Dashboard → My Questions → Bulk Import tab → Canvas QTI, pick a folder and license, and upload the file. Earlier downloads stay listed and can be downloaded again.
@@ -72,8 +72,9 @@ tests/adapt-parser/  harness that runs ADAPT's QtiImport.php on our packages
    - A math or numerical question whose section has no numbers takes a quantitative concept from another section of the same page. Only if the page has none is another type written instead.
 4. Validation failures are sent back to the model to fix, up to 3 attempts. If all 3 fail, the question starts over in a new conversation, up to twice more. A question that still fails is left out without a notice; only engine errors (such as a model that is not loaded) are shown.
 5. The reviewer pass (on by default) critiques and rewrites each question. Its notes are kept and shown with the question. On the in-browser model, math questions skip it.
-6. With the duplicate check on, a question whose stem is very close to one already in the set (cosine ≥ 0.94 between EmbeddingGemma 2 embeddings) gets a note.
-7. Every question is saved as soon as it validates.
+6. On the in-browser model, an answer check answers each multiple-choice and select-all question without seeing its key. If it disagrees, the question goes back once to be fixed, naming the choices; if the check still disagrees, the question gets a note. See [docs/research.md](docs/research.md), "Wrong answer keys".
+7. With the duplicate check on, a question whose stem is very close to one already in the set (cosine ≥ 0.94 between EmbeddingGemma 2 embeddings) gets a note.
+8. Every question is saved as soon as it validates.
 
 **Math questions.** [docs/adapt-formats-and-math.md](docs/adapt-formats-and-math.md)
 covers the template format, the checks, and how versions map onto ADAPT's
