@@ -97,8 +97,11 @@ The exporter (`src/lib/qti/canvas.ts`) follows all of these. The schemas
 - Fill-in-the-blank is graded by exact match after trimming, ignoring case
   (`QtiImport.php` stores `matchingType: exact`, `caseSensitive: no`). "w=mg"
   does not match "w = mg", nor "9.8N" "9.8 N". When a model answer is a number,
-  symbol or equation, the review pass is asked to blank a word instead, and the
-  instructor gets a note if it does not (`typedAnswerProblem`).
+  symbol or equation, the review pass is asked to blank a word instead
+  (`typedAnswerProblem`). On the in-browser model, the fill-in-the-blank check
+  then blanks another word of the sentence if the key is still one, or if the
+  check fills the blank differently (`verifyBlank`). The instructor gets a note
+  if neither works.
 - Essays (`technology=text`) take the assignment's **Default Open-ended
   Submission Type** (`AssignmentSyncQuestion.php`). An assignment template
   where it is None gives students nothing to submit ("Nothing to submit" in the

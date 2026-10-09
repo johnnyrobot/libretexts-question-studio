@@ -6,16 +6,21 @@ import { db, type StoredSource } from '../storage/db'
 import { checkWorkedExample } from '../math/spec'
 import {
   bareLatexToMath,
+  blankedDraft,
   bracketsToDelimiters,
   cleanReviewNotes,
   controlsToBackslashes,
   dollarsToDelimiters,
+  fillIn,
   planUnits,
   repairDraft,
   runGeneration,
+  sameAnswer,
   stripParagraphMentions,
+  stripSourceClaims,
   stripSourceReferences,
   symbolsToMath,
+  withFinalValue,
 } from './pipeline'
 import { checkModelDraft, parseDraft, type DraftOf, type ItemType } from './schema'
 
@@ -60,6 +65,12 @@ class FakeProvider implements LLMProvider {
   // The answer check's answers, one list per call; after that it agrees with
   // the fixture's key.
   keyAnswers: number[][] = []
+  // The blank check's answers and the words offered for a new blank; after
+  // them it fills in the fixture's key.
+  blankAnswers: string[] = []
+  blankWords: string[][] = []
+  // The true/false check's answers; after them it agrees with the fixture.
+  trueFalseAnswers: boolean[] = []
 
   constructor(id: LLMProvider['id'] = 'openai') {
     this.id = id
@@ -79,6 +90,15 @@ class FakeProvider implements LLMProvider {
         const fixture = SAMPLE_DRAFTS.find((d): d is DraftOf<'multiple_choice' | 'multiple_answers'> => d.item_type === type)!
         const answers = this.keyAnswers.shift() ?? fixture.choices.flatMap((c, i) => (c.correct ? [i + 1] : []))
         return { text: JSON.stringify({ working: '1 wrong: …', answers }), usage: null }
+      }
+      if (request.schemaName === 'blank_check') {
+        return { text: JSON.stringify({ answer: this.blankAnswers.shift() ?? 'chlorophyll' }), usage: null }
+      }
+      if (request.schemaName === 'blank_choice') {
+        return { text: JSON.stringify({ words: this.blankWords.shift() ?? ['pigment'] }), usage: null }
+      }
+      if (request.schemaName === 'true_false_check') {
+        return { text: JSON.stringify({ working: 'true: …', answer: this.trueFalseAnswers.shift() ?? true }), usage: null }
       }
       if (request.schemaName === 'concept_batch') {
         return {
@@ -191,6 +211,25 @@ describe('runGeneration', () => {
     expect(rounds).toBe(2)
   })
 
+  it('sends back concepts labelled only with their kind, such as "Concept"', async () => {
+    const provider = new FakeProvider()
+    const original = provider.complete.bind(provider)
+    const prompts: string[] = []
+    provider.complete = (request) =>
+      request.schemaName === 'concept_batch'
+        ? completeWithRetries(request, async (prompt) => {
+            prompts.push(prompt)
+            const label = prompts.length === 1 ? 'Concept' : 'Gas exchange'
+            return { text: JSON.stringify({ concepts: [{ label, description: 'What plants take in', source_paragraphs: [0], quantitative: false }] }), usage: null }
+          })
+        : original(request)
+    await runGeneration('set-1', source, { itemTypes: ['essay'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain('label "Concept" says what kind of concept it is')
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.draft.concept_label).toBe('Gas exchange')
+  })
+
   it('sends math spec errors back to the model with the reason', async () => {
     const provider = new FakeProvider()
     const original = provider.complete.bind(provider)
@@ -293,9 +332,10 @@ describe('runGeneration', () => {
     expect(openai.calls).toContain('item_review')
   })
 
-  it('checks multiple-choice and select-all answer keys on the in-browser model only', async () => {
+  it('checks multiple-choice, select-all, true/false and fill-in-the-blank keys on the in-browser model only', async () => {
     const local = new FakeProvider('local')
-    const plan = { itemTypes: ['multiple_choice', 'multiple_answers', 'true_false'] as ItemType[], perPage: 3, reviewPass: false }
+    const types: ItemType[] = ['multiple_choice', 'multiple_answers', 'true_false', 'fill_in_blank', 'essay']
+    const plan = { itemTypes: types, perPage: 5, reviewPass: false }
     await runGeneration('set-1', source, plan, local, new AbortController().signal, callbacks)
     expect(local.calls.filter((c) => c !== 'concept_batch')).toEqual([
       'multiple_choice_item',
@@ -303,46 +343,81 @@ describe('runGeneration', () => {
       'multiple_answers_item',
       'key_check',
       'true_false_item',
+      'true_false_check',
+      'fill_in_blank_item',
+      'blank_check',
+      'essay_item',
     ])
     const items = await db.items.where('setId').equals('set-1').toArray()
     expect(items.every((i) => i.critique.length === 0)).toBe(true)
     const openai = new FakeProvider('openai')
     await runGeneration('set-1', source, plan, openai, new AbortController().signal, callbacks)
-    expect(openai.calls).not.toContain('key_check')
+    expect(openai.calls.filter((c) => /_check$|^blank_choice$/.test(c))).toEqual([])
   })
 
-  it('sends a key the check disagrees with back once, naming the choice, and notes it if the check still disagrees', async () => {
-    const run = async (keyAnswers: number[][]) => {
+  it('blanks another word when the check fills the blank differently, keeping the sentence', async () => {
+    const run = async (blankAnswers: string[], blankWords: string[][]) => {
       await db.items.clear()
       const provider = new FakeProvider('local')
-      provider.keyAnswers = keyAnswers
-      const original = provider.complete.bind(provider)
-      const reviews: string[] = []
-      provider.complete = (request) => {
-        if (request.schemaName === 'item_review') reviews.push(request.prompt)
-        return original(request)
-      }
-      const plan = { itemTypes: ['multiple_answers'] as ItemType[], perPage: 1, reviewPass: false }
-      const result = await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+      provider.blankAnswers = blankAnswers
+      provider.blankWords = blankWords
+      const plan = { itemTypes: ['fill_in_blank'] as ItemType[], perPage: 1, reviewPass: false }
+      await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
       const [item] = await db.items.where('setId').equals('set-1').toArray()
-      return { result, reviews, calls: provider.calls, critique: item.critique }
+      return { calls: provider.calls.filter((c) => c !== 'concept_batch'), item, draft: item.draft as DraftOf<'fill_in_blank'> }
     }
-    // The fixture's key is choices 1 and 2; the check also picks "Glucose".
-    const fixed = await run([[1, 2, 3]])
-    expect(fixed.calls.filter((c) => c !== 'concept_batch')).toEqual(['multiple_answers_item', 'key_check', 'item_review', 'key_check'])
-    expect(fixed.reviews[0]).toContain('The choice "Glucose" is marked incorrect, but it is also a correct answer: mark it correct')
-    expect(fixed.critique).toEqual([])
-    const unfixed = await run([[1, 2, 3], [2, 3]])
-    expect(unfixed.result.created).toBe(1)
-    expect(unfixed.critique).toEqual([
-      'An automatic answer check disagrees with the answer key: it judged that “Water” is not correct; “Glucose” is also correct.',
+    // The first word offered is filled differently too; the second passes.
+    const fixed = await run(['chloroplast', 'absorbs', 'green'], [['captures', 'green']])
+    expect(fixed.calls).toEqual(['fill_in_blank_item', 'blank_check', 'blank_choice', 'blank_check', 'blank_check'])
+    expect(fixed.draft.stem).toBe('The ____ pigment that captures light is called chlorophyll.')
+    expect(fixed.draft.answer).toBe('green')
+    expect(fixed.draft.alternates).toEqual([])
+    expect(fixed.item.critique).toEqual([])
+    // No word offered is in the sentence: the question stays, with a note.
+    const unfixed = await run(['chloroplast'], [['photosynthesis']])
+    expect(unfixed.calls).toEqual(['fill_in_blank_item', 'blank_check', 'blank_choice'])
+    expect(unfixed.draft.answer).toBe('chlorophyll')
+    expect(unfixed.item.critique).toEqual([
+      'An automatic check filled the blank with “chloroplast”, not “chlorophyll”: students may give an answer other than the key and be marked wrong.',
     ])
+  })
+
+  it('blanks a word instead of a number key on the in-browser model', async () => {
+    const provider = new FakeProvider('local')
+    provider.blankAnswers = ['680 nm', 'red']
+    provider.blankWords = [['680 nm', 'red']]
+    const original = provider.complete.bind(provider)
+    provider.complete = (request) =>
+      request.schemaName === 'fill_in_blank_item'
+        ? completeWithRetries(request, async () => {
+            const { item_type: _, ...fixture } = SAMPLE_DRAFTS.find((d) => d.item_type === 'fill_in_blank')!
+            void _
+            const draft = { ...fixture, stem: 'Chlorophyll absorbs red light of about ____.', answer: '680 nm', alternates: [], citation_paragraphs: [0] }
+            return { text: JSON.stringify(draft), usage: null }
+          })
+        : original(request)
+    await runGeneration('set-1', source, { itemTypes: ['fill_in_blank'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    const draft = item.draft as DraftOf<'fill_in_blank'>
+    expect(draft.stem).toBe('Chlorophyll absorbs ____ light of about 680 nm.')
+    expect(draft.answer).toBe('red')
+    expect(item.critique).toEqual([])
+  })
+
+  it('notes a true/false key the check disagrees with, without sending it back', async () => {
+    const provider = new FakeProvider('local')
+    provider.trueFalseAnswers = [false]
+    await runGeneration('set-1', source, { itemTypes: ['true_false'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['true_false_item', 'true_false_check'])
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect((item.draft as DraftOf<'true_false'>).answer).toBe(true)
+    expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it judged the statement false.'])
   })
 
   it('asks the reviewer to fix a fill-in-the-blank answer students cannot type exactly, and notes it if it stays', async () => {
     const run = async (reviewPass: boolean) => {
       await db.items.clear()
-      const provider = new FakeProvider('local')
+      const provider = new FakeProvider('openai')
       const original = provider.complete.bind(provider)
       const reviews: string[] = []
       provider.complete = (request) => {
@@ -467,6 +542,38 @@ describe('runGeneration', () => {
   })
 })
 
+describe('fill-in-the-blank checks', () => {
+  const draft = { ...SAMPLE_DRAFTS.find((d) => d.item_type === 'fill_in_blank')! } as DraftOf<'fill_in_blank'>
+
+  it('treats case, articles, punctuation and plurals as the same answer', () => {
+    expect(sameAnswer('Systems', 'the system.')).toBe(true)
+    expect(sameAnswer('\\(F_{net}\\)', 'F_{net}')).toBe(true)
+    expect(sameAnswer('objects', 'systems')).toBe(false)
+    expect(sameAnswer("Newton's third law of motion", "Newton's Third Law")).toBe(false)
+  })
+
+  it('fills the blank in, writing a word the key repeats once', () => {
+    expect(fillIn('An ____ force acts between elements of the system.', 'internal force')).toBe('An internal force acts between elements of the system.')
+    expect(fillIn('Acceleration is ____ to the net force.', 'proportional to')).toBe('Acceleration is proportional to the net force.')
+    expect(fillIn('w = mg = (1.0 kg) (____).', '9.8 m/s^2')).toBe('w = mg = (1.0 kg) (9.8 m/s^2).')
+    expect(fillIn('Forces come in ____.', 'pairs')).toBe('Forces come in pairs.')
+  })
+
+  it('blanks a word that is in the prose exactly once, keeping its case', () => {
+    const sentence = 'The Green pigment that captures \\(green\\) light is called chlorophyll.'
+    expect(blankedDraft(draft, sentence, 'green')).toBeNull()
+    const ok = blankedDraft(draft, 'The Green pigment that captures light is called chlorophyll.', 'green')
+    expect(ok?.stem).toBe('The ____ pigment that captures light is called chlorophyll.')
+    expect(ok?.answer).toBe('Green')
+    // Not in the sentence, the old key, a number, or too long.
+    expect(blankedDraft(draft, 'The pigment is called chlorophyll.', 'leaf')).toBeNull()
+    expect(blankedDraft(draft, 'The pigment is called chlorophyll.', 'chlorophyll')).toBeNull()
+    expect(blankedDraft(draft, 'The pigment absorbs 680 nm light.', '680 nm')).toBeNull()
+    expect(blankedDraft(draft, 'Its weight is 9.8 N.', 'N')).toBeNull()
+    expect(blankedDraft(draft, 'The pigment that captures light in plants is green.', 'captures light in plants')).toBeNull()
+  })
+})
+
 describe('planUnits', () => {
   // Each paragraph also costs ~16 characters for its "[paragraph N]" label.
   it('splits long pages into budget-sized sections and spreads questions by length', () => {
@@ -489,6 +596,91 @@ describe('stripSourceReferences', () => {
     expect(stripSourceReferences('Match each term to its definition as found in the source text.')).toBe(
       'Match each term to its definition.',
     )
+  })
+
+  it('also removes "the context provided" and "the provided information", only where a clause ends', () => {
+    expect(stripSourceReferences('Which statements describe the relationship based on the context provided? Select all that apply.')).toBe(
+      'Which statements describe the relationship? Select all that apply.',
+    )
+    expect(stripSourceReferences('Mass is constant. Based on the provided information, which statement is true?')).toBe(
+      'Mass is constant. Which statement is true?',
+    )
+    expect(stripSourceReferences('The force, according to the text, is internal.')).toBe('The force is internal.')
+    const kept = 'A larger force gives a larger acceleration, as shown in the context of the two children pushing the wagon.'
+    expect(stripSourceReferences(kept)).toBe(kept)
+  })
+})
+
+describe('stripSourceClaims', () => {
+  it('writes a reported clause or quotation as the claim itself', () => {
+    expect(stripSourceClaims('The source states that the net force causes acceleration.')).toBe('The net force causes acceleration.')
+    // Also the textbook, as stripParagraphMentions writes it for "Paragraph 10 explicitly states".
+    expect(stripSourceClaims('The textbook explicitly states, "Mass is constant."')).toBe('Mass is constant.')
+    expect(stripSourceClaims('Mass is constant. The text explicitly states that weight varies.')).toBe('Mass is constant. Weight varies.')
+    expect(stripSourceClaims('The text explicitly states, "An internal force acts between elements of the system."')).toBe(
+      'An internal force acts between elements of the system.',
+    )
+    expect(stripSourceClaims('The excerpt states: "forces always occur in pairs".')).toBe('Forces always occur in pairs.')
+    expect(stripSourceClaims("The source states, 'Each problem needs its own system.' The answer is internal.")).toBe(
+      'Each problem needs its own system. The answer is internal.',
+    )
+    expect(stripSourceClaims('The text states that forces are internal. It also explicitly states that friction is external.')).toBe(
+      'Forces are internal. Friction is external.',
+    )
+    expect(stripSourceClaims('The text states that mass does not vary, while weight does and does depend on gravity.')).toBe(
+      'Mass does not vary, while weight does and does depend on gravity.',
+    )
+    expect(stripSourceClaims('The text states that \\(F_{prof}\\) is internal.')).toBe('\\(F_{prof}\\) is internal.')
+    expect(stripSourceClaims('The text states that forces add. It also explicitly states, "Experiments confirm this."')).toBe(
+      'Forces add. Experiments confirm this.',
+    )
+    expect(stripSourceClaims('The text states that these are internal. It also states that \\(F_{foot}\\) acts on the floor, not on the cart.')).toBe(
+      'These are internal. \\(F_{foot}\\) acts on the floor, not on the cart.',
+    )
+  })
+
+  it('makes the source the textbook where the claim cannot stand alone', () => {
+    expect(stripSourceClaims('The text states that a larger force produces a larger acceleration, not that they are equal.')).toBe(
+      'The textbook states that a larger force produces a larger acceleration, not that they are equal.',
+    )
+    expect(stripSourceClaims('The source explicitly states the relationship for weight: w = mg.')).toBe(
+      'The textbook explicitly states the relationship for weight: w = mg.',
+    )
+    expect(stripSourceClaims('The text of the law is short.')).toBe('The text of the law is short.')
+    expect(stripSourceClaims('The text states that a larger force gives a larger acceleration, but does not say how much.')).toBe(
+      'The textbook states that a larger force gives a larger acceleration, but does not say how much.',
+    )
+    expect(stripSourceClaims('The text states that the net force equals ma, and provides the equation F = ma.')).toBe(
+      'The textbook states that the net force equals ma, and provides the equation F = ma.',
+    )
+    expect(stripSourceClaims('The text states that motion changes, and that a force causes it.')).toBe(
+      'The textbook states that motion changes, and that a force causes it.',
+    )
+    // A quotation that is not the whole rest of the sentence, or holds another one.
+    expect(stripSourceClaims('The text states, "Mass is matter (how much “stuff”)" and later, "Mass is constant."')).toBe(
+      'The textbook states, "Mass is matter (how much “stuff”)" and later, "Mass is constant."',
+    )
+    expect(stripSourceClaims('It states that mass is constant.')).toBe('It states that mass is constant.')
+  })
+})
+
+describe('withFinalValue', () => {
+  const math = SAMPLE_DRAFTS.find((d) => d.item_type === 'math') as DraftOf<'math'>
+
+  it('ends an explanation that never gives the result with {{answer}} and the units', () => {
+    const draft = { ...math, answer_formula: 'f_net / m', units: 'm/s^2', explanation: 'Acceleration is the net force divided by the mass: a = F_net / m' }
+    expect(withFinalValue(draft).explanation).toBe(
+      'Acceleration is the net force divided by the mass: a = F_net / m. With these numbers, the answer is {{answer}} m/s².',
+    )
+    // The math still compiles with the sentence added.
+    expect(() => parseDraft('math', { ...withFinalValue(math), explanation: withFinalValue({ ...math, explanation: 'Divide.' }).explanation })).not.toThrow()
+  })
+
+  it('leaves one that shows {{answer}} or the answer formula', () => {
+    const withAnswer = { ...math, explanation: 'Rate is {{v}} / {{t}} = {{answer}}.' }
+    expect(withFinalValue(withAnswer)).toBe(withAnswer)
+    const withFormula = { ...math, explanation: `Rate is {{ ${math.answer_formula} }} mL/min.` }
+    expect(withFinalValue(withFormula)).toBe(withFormula)
   })
 })
 

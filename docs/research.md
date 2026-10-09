@@ -235,7 +235,7 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
   - It is the format in the app (`keyCheckPrompt`, `checkAnswerKey`), with shorter lines since 2026-10-08 (see below). It was chosen after seeing its results on these 120, so the first numbers from other pages will be the real test.
 
 **In the app:**
-- The check runs on the in-browser model only, for multiple-choice and select-all questions, after the review.
+- The check runs on the in-browser model only, for multiple-choice and select-all questions, after the review. Since 2026-10-09 it also checks true/false questions (a note only) and fill-in-the-blank questions; see "The fill-in-the-blank check" and "Smaller fixes" below.
 - **On a disagreement:** the question goes back once through the reviewer, naming the choices (`verifyAnswerKey`), and is checked again. If the check still disagrees, the question keeps a note for the instructor.
 - **gpt-6-luna is not checked:** none of its 32 multiple-choice and select-all questions had a wrong key.
 
@@ -286,12 +286,12 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
 - **The 2 questions left out in the last run** failed on the older paragraph-number rule: Gemma wrote "paragraph 3" into the explanation in all 9 attempts. That rule rejected 16 to 29 attempts per run of 30. Such mentions are now rewritten instead; see the next section.
 - **What the app does now:** `typedAnswerProblem` sends such a key to the review pass that already runs, asking for a word to blank instead. If the key is still a number, symbol or equation, the instructor gets a note. Over two runs Gemma's reviewer fixed 1 of the 8 keys it was sent. It usually recognized the problem and listed it, so its own note on that answer is dropped in favour of the app's. In practice this is a note. Single letters such as "g" in "w = m____" are allowed: they match exactly.
 - **Plain-text symbols are repaired, not rejected:** as a check that sent them back, Gemma could not write "F_net" as math in 9 attempts, and 2 of 30 questions failed on it. `symbolsToMath` now wraps a one-letter name with a subscript, outside math and placeholders, in `\( \)`, except in titles. On the 823 saved drafts, it changed 139 of 5,595 texts. Every change was F_net or a professor-example force label, and all rendered in KaTeX.
-- **Figure labels remain:** wrapping makes `\(F_{prof}\)` render, but students still don't know what it is. In 13 multiple-choice and select-all questions on the professor example, 4 used the figure's labels ("System 1", F_prof), only 1 of them as plain text. No code check can tell a label from a symbol the question defines.
+- **Figure labels remain:** wrapping makes `\(F_{prof}\)` render, but students still don't know what it is. In 13 multiple-choice and select-all questions on the professor example, 4 used the figure's labels ("System 1", F_prof), only 1 of them as plain text. No code check can tell a label from a symbol the question defines. **Addressed 2026-10-09** with a prompt and reviewer rule; see "Figure labels" below.
 
 **Gemma's other weak blanks (not fixed):** about half of its fill-in-the-blank questions were weak either way.
 - Ambiguous blanks copied from the textbook: "do not cancel if they act on different ____" ("systems", but "objects" is also right), "experiencing a force ____" ("itself"), "defined differently for each ____" ("problem").
 - Multi-word keys few students would type exactly: "elements of the system", or "proportional to" before the word "to".
-- **Possible next step:** an answer check like the one for multiple choice. The model fills the blank without seeing the key, and a different answer is sent back or noted.
+- **Fixed 2026-10-09:** see "The fill-in-the-blank check" below.
 
 ### Paragraph numbers: rewritten, not rejected (2026-10-08)
 
@@ -330,6 +330,144 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
 - **Not fixed, seen while reading:**
   - One attempt copied the textbook's display math without its backslashes ("[a = \dfrac{F_{net}}{m}. \nonumber ]"). The paragraph rule happened to reject it. **Fixed 2026-10-09:** `bracketsToDelimiters` turns square brackets outside math that hold a LaTeX command back into `\[ \]`. On all 3,892 saved texts it changed only that one, which then rendered in KaTeX. 3 texts had LaTeX with no delimiters at all. **Fixed 2026-10-09:** `bareLatexToMath` wraps a text that is only a formula in `\( \)`, such as a choice "x = x_0 + \bar{v} t" or a key "a \propto F_{net}". In a sentence it writes common commands as characters ("w = (1.0 kg) × (9.8 m/s^2) = 9.8 N"), because a formula's ends cannot be told from the words around it. On all 4,138 saved texts it changed only those 3. Both wrapped formulas rendered in KaTeX, and no saved text has LaTeX outside math any more.
   - One reviewer revision replaced `\(w\)` and `\(m\)` with "™" and "Å". This was the only case in all the saved runs.
+
+### The fill-in-the-blank check (2026-10-09)
+
+**The problem:** in the blind read of 57 Gemma 4 E4B fill-in-the-blank questions (previous sections), 29 were good. The rest:
+- 13 had a blank another word fits as well. Examples: "do not cancel if they act on different ____" (systems, but objects too) and "without experiencing a force ____" (itself).
+- 8 had a key few students would type the same way: "elements of the system", "force of gravity", "9.8 N".
+- 6 were broken, and 1 blanked a filler word ("between").
+
+ADAPT marks only the exact key right, so a student who writes "objects" is marked wrong.
+
+**The check:** the model fills the blank the way a student would, without seeing the key. Three forms were run on all 115 saved questions from the earlier runs, 57 of them judged blind:
+
+| | Without the textbook (now in the app) | With the textbook | Listing every right answer |
+|---|---|---|---|
+| Ambiguous blanks it disagreed with | 12 of 13 | 7 of 13 | 13 of 13 |
+| Hard-to-type keys it disagreed with | 4 of 8 | 3 of 8 | 8 of 8 |
+| Good blanks it disagreed with | 6 of 29 | 1 of 29 | 29 of 29 |
+| Time per question | 0.7 s | 3.3 s | 1.4 s |
+
+- **With the textbook,** the check copied the textbook's word, so it filled "systems" and "itself" exactly as the keys, though students would not.
+- **Listing every right answer** produced synonyms for every question.
+- **Without the textbook,** some of the 6 disagreements on good blanks were fair. "A change in motion is equivalent to a change in ____" (velocity) drew "momentum", and "weight varies depending on ____" (gravity) drew "location".
+- **What is in the app:** the form without the textbook (`checkBlank`). It never catches a number key it can copy from the sentence, such as "9.8 N"; the app's own number check (`typedAnswerProblem`) covers those.
+
+**The fix:** sent to the reviewer, a number key was replaced 1 time in 8 (see "Fill-in-the-blank answers" above). So the fix is narrower (`verifyBlank`):
+1. The key goes back into the sentence.
+2. The model names up to three other words of it to blank (`reblank`).
+3. The app blanks each in turn, if it appears once outside math and is a word of at least three letters, not a number or symbol.
+4. It keeps the first one the check fills in as the key.
+
+The sentence and explanation stay as they were, so the question's facts do not change. If no word passes, the question keeps its blank, with a note if the check disagreed.
+
+- **On the 115 saved questions:**
+  - 51 passed the check, 49 got a new blank, and 15 kept theirs with a note, at 1.7 s a question on average.
+  - Ambiguous blanks: 8 of 13 got a new blank, 4 a note, and 1 was missed.
+  - Hard-to-type keys: 7 of 8 got a new blank, and 1 was missed.
+  - Good blanks: 23 of 29 were left alone, 4 got a new blank and 2 a note.
+- **Typical new blanks:** "the ____ of a 1.0 kg object on Earth is 9.8 N" (weight) in place of "9.8 N", and "Forces always occur in ____" (pairs) in place of "itself".
+- **Obvious words:** Gemma also offers words the rest of the sentence gives away, such as "Two equal and opposite ____ exerted during an interaction" (forces).
+  - It offered that word first even when the prompt named this very example.
+  - Asking it first to say what the sentence teaches did not change the words it picked, and took 60% longer (4.1 s against 2.6 s per fix).
+- **Repeated words:** a two-word key put back into its sentence repeated a word ("an internal force force", "proportional to to"). `fillIn` writes it once.
+
+**End to end:**
+- **Setup:** the same 30 fill-in-the-blank jobs as the last run in "Paragraph numbers" (review on, Gemma 4 E4B), now with the check.
+- **Blind read:** the two runs were shuffled together and read blind from the stem and key; the notes were hidden because they would give the run away.
+- **Verdicts, fixed before reading:**
+  - **Good:** a student who knows the material would type exactly the key, the sentence pins it down, and the rest of the sentence does not give it away.
+  - **Ambiguous:** another answer fits.
+  - **Hard to type:** the key is a phrase, number, symbol or equation that students would type differently.
+  - **Given away:** the rest of the sentence gives the word away.
+  - **Broken:** the sentence or key is wrong or garbled.
+
+| | Before (paragraph rewrite run) | With the check |
+|---|---|---|
+| Good | 11 of 30 | 23 of 30 |
+| Ambiguous | 8 | 4, each with a note |
+| Hard to type | 10 (6 with a note) | 0 |
+| Given away | 0 | 2 |
+| Broken | 1 | 1 |
+| Weak with no note | 13 | 3 |
+| Questions written | 30 of 30 | 30 of 30 |
+| Time | 14.0 min | 21.0 min |
+
+- **What the check did:**
+  - 16 questions passed the check.
+  - 10 got a new blank. Four were "9.8 N", "9.8 m/s^2" or "force of gravity" becoming "weight" or "mass". Others included "itself" becoming "pairs" and "internal forces" becoming "internal".
+  - 4 kept their blank with a note: "differently" twice, "motion" and "reaction force".
+- **Given away:** both new weak blanks were "given away". "An ____ force acts from outside the system …, while an internal force acts between elements" replaced the hard-to-type key "elements of the system", and "net external ____ … `\(F_{net}\)`" replaced "`\(F_{net}\)`/m". Both are still gradable, which the old keys were not.
+- **Broken:** the broken question had the key "is" in "The weight ____ of an object…". Its new blank kept the stray word, giving "The ____ is of an object".
+- **Time:** the check and the new blanks took 2.2 s a question, 67 s in all. The other 6 minutes came from drafting and review. They had 26 rejected attempts against 17 and 2 fresh starts, which is the variation between runs seen before.
+- **Limits:** one pair of pages, one model and one judge, who also wrote the check.
+
+### Figure labels (2026-10-09)
+
+**The problem:** the textbook's worked example names its parts in a figure:
+- "System 1" is the professor and the cart, and "System 2" is the cart alone.
+- The forces are labelled `\(F_{prof}\)`, `\(F_{cart}\)`, `\(F_{foot}\)` and `\(F_{floor}\)`.
+
+Gemma copied these labels into questions, where students have no figure to look them up. No code check can tell such a label from a symbol the question defines.
+
+**The fix:**
+- The system prompt says never to use the excerpt's own labels for the parts of its figures and examples. It asks for the thing in words instead: "the professor and the cart together", "the force of the floor on the professor".
+- The reviewer is told to look for such labels too.
+
+**How it was measured:**
+- Jobs: the three professor-example concepts and "System Dependence of Forces", as multiple choice and select-all, 3 times each (draft and review, Gemma 4 E4B).
+- **Before:** the same code with the two new sentences removed from the prompts. I checked that this gives exactly the old prompts.
+- The 6 calculation jobs were left out of the before run. They never used a label in either run and take 2 to 3 minutes each.
+
+| Of 18 questions | Before | After |
+|---|---|---|
+| Use any label from the figure | 10 | 4 |
+| Use a force label such as `\(F_{prof}\)` | 4 | 0 |
+| Use a label the question never explains | 3 | 0 |
+| Time | 18.8 min | 21.1 min |
+
+- **Remaining labels:** all 4 after questions use "System 1" and "System 2", but define them in the stem ("if System 1 includes both the professor and the cart, and System 2 includes only the cart"). Students can follow that.
+- **Force labels:** none were left. The questions say "the force from the floor" and "the force the professor exerts on the cart" instead.
+- **Unexplained labels before:** for example, "why are the forces `\(F_{prof}\)` and `\(F_{cart}\)` not included …", and a select-all whose choices were only "The force `\(F_{prof}\)`", "The force `\(F_{cart}\)`" and so on.
+
+### Concept labels (2026-10-09)
+
+**The problem:** one section's concepts once came back labelled "Calculation", "Concept" and "Concept". The test runs reused those concepts, so 6 of every 30 questions carried "Concept" or "Calculation" as the concept label that instructors see on the question.
+
+**The fix:**
+- The concept prompt asks for a label that names the idea itself ("Newton's third law", "Mass versus weight"), never a word for its kind.
+- `extractConcepts` sends back a batch with a label that is only such a word, optionally numbered: concept, calculation, topic, definition, relationship, formula and the like (`GENERIC_LABEL`).
+
+**Measured:** all 8 sections of *College Physics* 4.3 and 4.4, 3 times each, with and without the new prompt line:
+- 0 of 36 labels were generic in either run, and no attempt was rejected.
+- Extraction took 12.4 s against 12.8 s per section.
+- The bad labels did not come back, so the rejection is a safety net. A unit test covers it.
+
+### Smaller fixes (2026-10-09)
+
+**"The source states that …":**
+- Gemma opens explanations and choice feedback with "The text states that …" or "The source explicitly states, "…"". Students never saw "the source".
+- Across 2,542 distinct stems, explanations, feedback and model answers in the saved runs, 556 had such an opening that the earlier clean-up left, nearly all explanations and feedback.
+- `stripSourceClaims` now runs on stems, explanations, feedback and model answers when a question is saved:
+  - A sentence that only reports a clause or a quotation becomes the clause itself (410 texts): "The text states that weight is a measure of the force of gravity" → "Weight is a measure of the force of gravity". This includes "The textbook states that …", which the paragraph-number rewrite produces.
+  - Where the clause cannot stand alone, "the source" becomes "the textbook" (146 texts). Examples: "…, not that they are equal", "…, but does not say …", "…, and provides the equation …", or a quotation followed by more text.
+  - "It also states that …" after such a sentence is dropped too.
+- `stripSourceReferences` also removes "based on the context provided" and "based on the provided information". It now runs on feedback too, and removes only a reference that ends a clause, so "as shown in the context of the wagon" stays.
+- I read samples of the rewritten texts after each change and fixed the forms that broke a sentence. In the last sample of 30, 29 read correctly; one kept a dangling "…, using the example of a swimmer and a pool wall". 4 texts still mention the source in other wordings.
+
+**Math explanations without the result:**
+- 21 of 25 saved Gemma math explanations explain the formula but never give the result, for example "a = F_net / m.", so a student who got the question wrong never sees the number.
+- `withFinalValue` adds "With these numbers, the answer is {{answer}} m/s²." to an explanation that shows neither {{answer}} nor a placeholder equal to the answer formula. The app computes the value for each version.
+
+**True/false keys:**
+- The check from "Wrong answer keys" now also judges true/false statements without the key (`checkTrueFalse`, about 4.5 s).
+- On the 28 saved true/false questions (Gemma and Luna, all keys right in the blind read), it agreed with 27. The one disagreement was the check's own mistake: it judged "two equal and opposite forces … cancel if they act on the same system" false.
+- Sent back to the reviewer like a multiple-choice key, that question came back 4 times:
+  - twice with a different true statement;
+  - once kept, with a note;
+  - once with its correct key flipped to false, which the recheck then agreed with.
+- So a true/false disagreement only adds a note for the instructor. No wrong true/false key has been seen in these runs, so the check mainly guards against one.
 
 ### Fine-tuning Gemma (considered 2026-10-07, not started)
 

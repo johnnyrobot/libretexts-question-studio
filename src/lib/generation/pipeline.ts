@@ -2,19 +2,24 @@ import { z } from 'zod'
 import { withPageNumbers } from '../content/normalize'
 import { NoValidResponse, type Embedder, type LLMProvider, type ProgressEvent } from '../llm/types'
 import { CONSTANT_NAMES, FUNCTION_NAMES } from '../math/expr'
+import { formatUnits } from '../math/format'
 import { checkWorkedExample, VARIABLE_NAME } from '../math/spec'
 import { db, newId, type StoredItem, type StoredSource } from '../storage/db'
 import {
+  blankCheckPrompt,
   conceptPrompt,
   draftPrompt,
   KEY_CHECK_SYSTEM,
   keyCheckPrompt,
+  reblankPrompt,
   reviewPrompt,
   SYSTEM_PROMPT,
+  trueFalseCheckPrompt,
   type Concept,
   type SourceUnit,
 } from './prompts'
 import {
+  BLANK_RUN,
   checkModelDraft,
   formatIssues,
   ITEM_SCHEMAS,
@@ -25,6 +30,7 @@ import {
   toLlmSchema,
   typedAnswerProblem,
   WORKED_EXAMPLE_SCHEMA,
+  type DraftOf,
   type ItemType,
   type QuestionDraft,
 } from './schema'
@@ -370,6 +376,12 @@ export async function runGeneration(
   return { created, skipped, errors }
 }
 
+// The label is what the instructor sees on every question. Gemma 4 E4B once
+// labelled a section's concepts "Calculation", "Concept" and "Concept", and
+// the test runs that reused those concepts put the labels on 6 of 30 questions.
+const GENERIC_LABEL =
+  /^(?:(?:key|main|core|basic|important)\s+)?(?:concepts?|calculations?|topics?|ideas?|definitions?|relationships?|formulas?|equations?|examples?|principles?|facts?|laws?|processes?|terms?|applications?|problems?)(?:\s*\d+)?$/i
+
 export async function extractConcepts(
   provider: LLMProvider,
   unit: SourceUnit,
@@ -397,6 +409,10 @@ export async function extractConcepts(
         .filter((c) => c.source_paragraphs.length > 0)
       if (!concepts.length) {
         throw new Error(`every concept must cite paragraph numbers from: ${[...allowed].join(', ')}`)
+      }
+      const generic = concepts.find((c) => GENERIC_LABEL.test(c.label))
+      if (generic) {
+        throw new Error(`label "${generic.label}" says what kind of concept it is; label each concept with the idea itself, such as "Newton's third law"`)
       }
       return concepts
     },
@@ -513,6 +529,8 @@ export async function checkAnswerKey(
   )
 }
 
+// Checks the key of a multiple-choice, select-all, true/false or
+// fill-in-the-blank question, and fixes it or notes it.
 export async function verifyAnswerKey(
   provider: LLMProvider,
   unit: SourceUnit,
@@ -522,13 +540,39 @@ export async function verifyAnswerKey(
   signal: AbortSignal,
   callbacks: GenerationCallbacks,
 ): Promise<{ draft: QuestionDraft; notes: string[] }> {
-  if (draft.item_type !== 'multiple_choice' && draft.item_type !== 'multiple_answers') return { draft, notes: [] }
+  switch (draft.item_type) {
+    case 'multiple_choice':
+    case 'multiple_answers':
+      return verifyByReview(provider, unit, concept, draft, allowed, signal, callbacks)
+    case 'true_false':
+      return verifyTrueFalse(provider, unit, draft, signal, callbacks)
+    case 'fill_in_blank':
+      return verifyBlank(provider, unit, concept, draft, signal, callbacks)
+    default:
+      return { draft, notes: [] }
+  }
+}
+
+// The checks are a convenience: one that cannot run leaves the question as it is.
+function unlessAborted<T>(signal: AbortSignal) {
+  return (error: unknown): T | null => {
+    if (signal.aborted) throw error
+    console.warn('Answer check unavailable:', error)
+    return null
+  }
+}
+
+async function verifyByReview(
+  provider: LLMProvider,
+  unit: SourceUnit,
+  concept: Concept,
+  draft: QuestionDraft,
+  allowed: Set<number>,
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<{ draft: QuestionDraft; notes: string[] }> {
   const check = (question: QuestionDraft) =>
-    checkAnswerKey(provider, unit, question, signal, callbacks).catch((error: unknown) => {
-      if (signal.aborted) throw error
-      console.warn('Answer check unavailable:', error)
-      return null
-    })
+    checkAnswerKey(provider, unit, question, signal, callbacks).catch(unlessAborted<KeyDisagreement[]>(signal))
   callbacks.onStatus(`Checking the answer key of “${draft.title}”…`)
   const disagreements = await check(draft)
   if (!disagreements?.length) return { draft, notes: [] }
@@ -539,10 +583,218 @@ export async function verifyAnswerKey(
     fixed = (await reviewItem(provider, unit, concept, draft, allowed, signal, callbacks, problems)).draft
   } catch (error) {
     if (signal.aborted) throw error
-    return { draft, notes: [keyNote(disagreements)] }
+    return { draft, notes: [keyNote(draft.item_type, disagreements)] }
   }
   const remaining = await check(fixed)
-  return { draft: fixed, notes: remaining?.length ? [keyNote(remaining)] : [] }
+  return { draft: fixed, notes: remaining?.length ? [keyNote(draft.item_type, remaining)] : [] }
+}
+
+// True/false keys get the same check, but a disagreement is only noted. The
+// check agreed with 27 of 28 saved Gemma 4 E4B and gpt-6-luna statements, all
+// of whose keys were right (2026-10-09). Its one disagreement was its own
+// mistake ("forces in the same system cancel" judged false), and sent back to
+// the reviewer that way, a correct key was flipped to false in 1 of 4 tries,
+// which the recheck then agreed with.
+async function verifyTrueFalse(
+  provider: LLMProvider,
+  unit: SourceUnit,
+  draft: QuestionDraft,
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<{ draft: QuestionDraft; notes: string[] }> {
+  callbacks.onStatus(`Checking the answer key of “${draft.title}”…`)
+  const disagreements = await checkTrueFalse(provider, unit, draft, signal, callbacks).catch(unlessAborted<KeyDisagreement[]>(signal))
+  return { draft, notes: disagreements?.length ? [keyNote(draft.item_type, disagreements)] : [] }
+}
+
+export async function checkTrueFalse(
+  provider: LLMProvider,
+  unit: SourceUnit,
+  draft: QuestionDraft,
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<KeyDisagreement[]> {
+  if (draft.item_type !== 'true_false') return []
+  const schema = z.object({ working: z.string(), answer: z.boolean() })
+  const result = await provider.complete({
+    system: KEY_CHECK_SYSTEM,
+    prompt: trueFalseCheckPrompt(unit, draft.stem),
+    schemaName: 'true_false_check',
+    schema: toLlmSchema(schema),
+    signal,
+    onProgress: callbacks.onModelEvent,
+    validate: (value) => {
+      const parsed = schema.safeParse(value)
+      if (!parsed.success) throw new Error(formatIssues(parsed.error))
+      return parsed.data.answer
+    },
+  })
+  return result.value === draft.answer ? [] : [{ choice: draft.stem, checkSaysCorrect: result.value }]
+}
+
+// ADAPT marks a fill-in-the-blank answer right only when it is the key, typed
+// exactly. About half of Gemma 4 E4B's blanks were weak in a blind read of 57
+// (2026-10-08): another word fits as well ("do not cancel if they act on
+// different ____": systems, but objects too), or the key is a phrase few would
+// type the same way ("elements of the system"). Asked to fill the blank without
+// the key or the textbook, the same model wrote something else for 12 of 13
+// ambiguous blanks and for 6 of 29 good ones (2026-10-09).
+//
+// Sent back to the reviewer, a number key was replaced 1 time in 8, so the fix
+// is narrower: the blank goes back into the sentence, the model names other
+// words of it to blank, and the first one the check fills in as the key is
+// kept. The sentence and the explanation stay as they were, so the question's
+// facts do not change. If none passes, the question keeps its blank, with a
+// note if the check disagreed.
+export async function checkBlank(
+  provider: LLMProvider,
+  unit: SourceUnit,
+  stem: string,
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<string> {
+  const schema = z.object({ answer: z.string().trim().min(1).max(120) })
+  const result = await provider.complete({
+    system: KEY_CHECK_SYSTEM,
+    prompt: blankCheckPrompt(unit.pageTitle, stem),
+    schemaName: 'blank_check',
+    schema: toLlmSchema(schema),
+    maxOutputTokens: provider.id === 'local' ? 100 : undefined,
+    signal,
+    onProgress: callbacks.onModelEvent,
+    validate: (value) => {
+      const parsed = schema.safeParse(value)
+      if (!parsed.success) throw new Error(formatIssues(parsed.error))
+      return parsed.data.answer
+    },
+  })
+  return result.value
+}
+
+async function verifyBlank(
+  provider: LLMProvider,
+  unit: SourceUnit,
+  concept: Concept,
+  draft: DraftOf<'fill_in_blank'>,
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<{ draft: QuestionDraft; notes: string[] }> {
+  const fill = (stem: string) => checkBlank(provider, unit, stem, signal, callbacks).catch(unlessAborted<string>(signal))
+  callbacks.onStatus(`Checking the answer of “${draft.title}”…`)
+  const filled = await fill(draft.stem)
+  if (filled === null) return { draft, notes: [] }
+  const agrees = [draft.answer, ...draft.alternates].some((answer) => sameAnswer(filled, answer))
+  if (agrees && !typedAnswerProblem(draft)) return { draft, notes: [] }
+
+  callbacks.onStatus(`Choosing a better blank for “${draft.title}”…`)
+  const sentence = repairProse(fillIn(draft.stem, draft.answer)) as string
+  const words = await reblank(provider, unit, concept, sentence, [draft.answer], signal, callbacks).catch(unlessAborted<string[]>(signal))
+  for (const word of words ?? []) {
+    const candidate = blankedDraft(draft, sentence, word)
+    if (!candidate) continue
+    const answer = await fill(candidate.stem)
+    if (answer !== null && sameAnswer(answer, candidate.answer)) return { draft: candidate, notes: [] }
+  }
+  return { draft, notes: agrees ? [] : [blankNote(filled, draft.answer)] }
+}
+
+export async function reblank(
+  provider: LLMProvider,
+  unit: SourceUnit,
+  concept: Concept,
+  sentence: string,
+  avoid: string[],
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<string[]> {
+  const schema = z.object({ words: z.array(z.string().trim().min(1).max(80)).min(1).max(3) })
+  const result = await provider.complete({
+    system: KEY_CHECK_SYSTEM,
+    prompt: reblankPrompt(unit.pageTitle, concept, sentence, avoid),
+    schemaName: 'blank_choice',
+    schema: toLlmSchema(schema),
+    maxOutputTokens: provider.id === 'local' ? 200 : undefined,
+    signal,
+    onProgress: callbacks.onModelEvent,
+    validate: (value) => {
+      const parsed = schema.safeParse(value)
+      if (!parsed.success) throw new Error(formatIssues(parsed.error))
+      return parsed.data.words
+    },
+  })
+  return result.value
+}
+
+// The stem with its blank filled in. A key of several words often repeats the
+// word next to the blank ("an ____ force" with the key "internal force", "is
+// ____ to" with "proportional to"), which is written once.
+export function fillIn(stem: string, answer: string): string {
+  const [before, after = ''] = stem.split(BLANK_RUN)
+  const words = answer.trim().split(/\s+/)
+  let head = before
+  let tail = after
+  if (words.length > 1) {
+    const next = tail.match(/^\s*([\p{L}\p{N}]+)/u)
+    if (next && next[1].toLowerCase() === words.at(-1)!.toLowerCase()) tail = tail.slice(next[0].length)
+    const previous = head.match(/([\p{L}\p{N}]+)\s*$/u)
+    if (previous && previous[1].toLowerCase() === words[0].toLowerCase()) head = head.slice(0, -previous[0].length)
+  }
+  return `${head}${answer.trim()}${tail}`
+}
+
+// The question with `word` blanked out of `sentence`, or null if the word is
+// not in the sentence's prose exactly once or the question would fail a check.
+export function blankedDraft(draft: DraftOf<'fill_in_blank'>, sentence: string, word: string): DraftOf<'fill_in_blank'> | null {
+  const target = word.trim().replace(/[.,;:!]+$/, '')
+  // A letter or two is a symbol or a unit ("N"), not a word.
+  if (!/\p{L}{3,}/u.test(target) || target.split(/\s+/).length > 3 || sameAnswer(target, draft.answer)) return null
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(target)}(?![\\p{L}\\p{N}])`, 'giu')
+  if ((sentence.match(pattern) ?? []).length !== 1) return null
+  let answer = ''
+  const parts = sentence.split(MATH_OR_PLACEHOLDER)
+  const stem = parts
+    .map((part, i) =>
+      i % 2
+        ? part
+        : part.replace(pattern, (match) => {
+            answer = match
+            return '____'
+          }),
+    )
+    .join('')
+  if (!answer) return null
+  try {
+    const { item_type, ...payload } = draft
+    const next = parseDraft(item_type, { ...payload, stem, answer, alternates: [] })
+    checkModelDraft(next)
+    return next.item_type === 'fill_in_blank' && !typedAnswerProblem(next) ? next : null
+  } catch {
+    return null
+  }
+}
+
+// Case, a leading article, punctuation and a plural ending are not what the
+// check is after.
+export function sameAnswer(a: string, b: string): boolean {
+  const plain = (text: string) =>
+    text
+      .toLowerCase()
+      .replace(/\\[()[\]]/g, ' ')
+      .replace(/[“”"'‘’.,;:!?()]/g, '')
+      .replace(/^\s*(?:the|a|an)\s+/, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  const singular = (text: string) => text.replace(/(?:es|s)$/, '')
+  const [x, y] = [plain(a), plain(b)]
+  return x === y || singular(x) === singular(y)
+}
+
+function blankNote(filled: string, key: string): string {
+  return `An automatic check filled the blank with “${clip(filled, 80)}”, not “${clip(key, 80)}”: students may give an answer other than the key and be marked wrong.`
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function keyProblem(itemType: ItemType, { choice, checkSaysCorrect }: KeyDisagreement): string {
@@ -553,7 +805,10 @@ function keyProblem(itemType: ItemType, { choice, checkSaysCorrect }: KeyDisagre
   return `The choice "${clip(choice, 160)}" is marked incorrect, but it is also a correct answer: ${fix}.`
 }
 
-function keyNote(disagreements: KeyDisagreement[]): string {
+function keyNote(itemType: ItemType, disagreements: KeyDisagreement[]): string {
+  if (itemType === 'true_false') {
+    return `An automatic answer check disagrees with the answer key: it judged the statement ${disagreements[0].checkSaysCorrect ? 'true' : 'false'}.`
+  }
   const judged = disagreements.map(({ choice, checkSaysCorrect }) => `“${clip(choice, 100)}” is ${checkSaysCorrect ? 'also correct' : 'not correct'}`)
   return `An automatic answer check disagrees with the answer key: it judged that ${judged.join('; ')}.`
 }
@@ -881,29 +1136,105 @@ function roundStep(min: number, max: number): number {
 }
 
 // "According to the provided text, …" reads oddly once the question is in a
-// course; students never saw "the text".
-const SOURCE_REFERENCE =
-  /\s*,?\s*\b(?:according to|based on|as (?:stated|described|explained|mentioned|found|given|shown) in)\s+the\s+(?:provided\s+|given\s+|above\s+)?(?:source\s+text|text|passage|excerpt|source|reading)\b,?/gi
+// course; students never saw "the text". Gemma 4 E4B also writes "based on
+// the context provided" and "based on the provided information". "The
+// textbook" is left: students have one. Only a reference that ends a clause
+// is dropped, so "as shown in the context of the wagon" stays whole.
+const SOURCE_NOUN = String.raw`(?:(?:provided|given|above|supplied)\s+)?(?:source\s+(?:text|material)|text|passage|excerpt|source|reading|context|information|material)(?:\s+(?:provided|given|above))?`
+const SOURCE_REFERENCE = new RegExp(
+  String.raw`\s*,?\s*\b(?:according to|based on|as (?:stated|described|explained|mentioned|found|given|shown|presented|noted|seen) in)\s+the\s+${SOURCE_NOUN}(?=\s*[,.;:?!)]|\s*$),?`,
+  'gi',
+)
+// Marks where a sentence lost its first words, so the next letter is capitalized.
+const CAPITALIZE = '\u0000'
 
 export function stripSourceReferences(value: string): string {
-  const stripped = value.replace(SOURCE_REFERENCE, '').replace(/\s+([?.!,])/g, '$1').trim()
+  const stripped = value
+    .replace(SOURCE_REFERENCE, (_, offset: number, whole: string) => (/(?:^|[.!?]\s*)$/.test(whole.slice(0, offset)) ? ` ${CAPITALIZE}` : ''))
+    .replace(/\s+([?.!,])/g, '$1')
+    .replace(new RegExp(`${CAPITALIZE}\\s*(\\p{L})?`, 'gu'), (_, letter?: string) => (letter ?? '').toUpperCase())
+    .replace(/ {2,}/g, ' ')
+    .trim()
   return stripped.charAt(0).toUpperCase() + stripped.slice(1)
+}
+
+// "The source states that …", "The text explicitly states, "…"": students
+// never saw the source, and an explanation should give the reason, not cite
+// it. Of 2,542 distinct stems, explanations, feedback and model answers in the
+// saved test runs (2026-10-09), 556 open a sentence this way after
+// stripSourceReferences, nearly all explanations and feedback. A sentence that
+// only reports a clause or a quotation becomes the clause itself (410 of
+// them), also after "The textbook states", which stripParagraphMentions writes.
+// Otherwise, as in "The text states that a larger force gives a larger
+// acceleration, not that they are equal", the source becomes the textbook (146).
+const REPORTER = String.raw`(?:(?:provided|given)\s+)?(?:source\s+text|textbook|text|passage|excerpt|source|reading)`
+const REPORTS = String.raw`(?:(?:also|explicitly|directly|clearly|specifically|further)\s+){0,2}(?:states?|explains?|notes?|says?|describes?|mentions?|indicates?|defines?|shows?|specifies|establishes|confirms?|emphasizes|highlights|clarifies|provides|gives|presents)`
+const SAYS = String.raw`(^|[.!?]\s+)(?:The\s+${REPORTER}|It)\s+${REPORTS}`
+// The quotation must be the rest of the sentence and hold no other quotation.
+const QUOTED_CLAIM = new RegExp(String.raw`${SAYS}(?:\s+that)?\s*[,:]?\s*(?:["“]([^"“”]+?)["”]|'([^"“”]+?)')(?=[.!?]?(?:\s+\p{Lu}|\s*$))`, 'gu')
+const CLAIM = new RegExp(String.raw`${SAYS}\s+that\s+(?=\S)(\p{L})?`, 'gu')
+const REPORTER_SUBJECT = new RegExp(String.raw`\b(the)\s+${REPORTER}(?=\s+${REPORTS}\b)`, 'gi')
+// The clause cannot stand alone when the rest of the sentence still speaks of
+// the source: "…, not that they are equal", "…, and that …", "…, but does not
+// specify …", "…, and provides the equation …".
+const LEANS_ON_THAT = new RegExp(
+  String.raw`\b(?:not|and|but) that\b|\brather than\b|\bbut not\b|\b(?:but|yet)\s+(?:does|did|do|is|was|has|only)\b|\b(?:and|but|yet)\s+${REPORTS}\b`,
+  'i',
+)
+
+export function stripSourceClaims(text: string): string {
+  if (!/\b(?:source|text|textbook|passage|excerpt|reading)\b/i.test(text)) return text
+  const sentenceRest = (whole: string, from: number) => whole.slice(from).split(/[.!?](?:\s|$)/)[0]
+  // "It also states that …" is rewritten only once a sentence has lost its
+  // "The text states", so a second pass catches it after either form.
+  let stripped = false
+  const pass = (current: string) =>
+    current
+      .replace(QUOTED_CLAIM, (match: string, before: string, double?: string, single?: string, ...rest: unknown[]) => {
+        if (/^It\b/.test(match.slice(before.length)) && !stripped) return match
+        stripped = true
+        const quote = (double ?? single)!
+        const [offset, whole] = rest as [number, string]
+        const next = whole.charAt(offset + match.length)
+        const claim = /[.!?]$/.test(quote) && /[.!?]/.test(next) ? quote.slice(0, -1) : quote
+        return before + claim.charAt(0).toUpperCase() + claim.slice(1)
+      })
+      .replace(CLAIM, (match: string, before: string, letter: string | undefined, offset: number, whole: string) => {
+        if ((/^It\b/.test(match.slice(before.length)) && !stripped) || LEANS_ON_THAT.test(sentenceRest(whole, offset + match.length))) return match
+        stripped = true
+        return before + (letter ?? '').toUpperCase()
+      })
+  return pass(pass(text)).replace(REPORTER_SUBJECT, '$1 textbook')
+}
+
+// 21 of 25 saved Gemma 4 E4B math explanations (2026-10-09) explain the
+// formula but never give its result, so a student who got the question wrong
+// never sees the number. Those get a closing sentence with {{answer}}.
+export function withFinalValue(draft: DraftOf<'math'>): DraftOf<'math'> {
+  const formula = draft.answer_formula.replace(/\s+/g, '')
+  const placeholders = [...draft.explanation.matchAll(/\{\{([^{}]*)\}\}/g)].map(([, inner]) => inner.replace(/\s+/g, ''))
+  if (placeholders.some((inner) => inner === 'answer' || inner === formula)) return draft
+  const explanation = draft.explanation.trim()
+  const ending = `${/[.!?]$/.test(explanation) ? '' : '.'} With these numbers, the answer is {{answer}}${draft.units ? ` ${formatUnits(draft.units)}` : ''}.`
+  return explanation.length + ending.length > 2_000 ? draft : { ...draft, explanation: explanation + ending }
 }
 
 // Deterministic clean-up the model should not be trusted with.
 function finalize(draft: QuestionDraft, concept: Concept): QuestionDraft {
+  const clean = (text: string) => stripSourceReferences(stripSourceClaims(text))
   const out = {
     ...draft,
     concept_label: concept.label,
-    stem: stripSourceReferences(draft.stem),
-    explanation: stripSourceReferences(draft.explanation),
+    stem: clean(draft.stem),
+    explanation: clean(draft.explanation),
   }
   if (out.item_type === 'multiple_choice' || out.item_type === 'multiple_answers') {
     // Models favour putting the answer first; spread it out for previews and
     // for importers that do not shuffle.
-    out.choices = shuffle(out.choices)
+    out.choices = shuffle(out.choices.map((choice) => ({ ...choice, feedback: choice.feedback && clean(choice.feedback) })))
   }
-  return out
+  if (out.item_type === 'essay') out.model_answer = clean(out.model_answer)
+  return out.item_type === 'math' ? withFinalValue(out) : out
 }
 
 function shuffle<T>(values: T[]): T[] {

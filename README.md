@@ -24,7 +24,7 @@ browser.
 1. **Settings:** either download and load the in-browser model, or paste an OpenAI API key.
 2. **Create:**
    - Choose a source and tick the pages you want.
-   - Choose question types and how many questions per page. The second-pass review is on by default. With the in-browser model, an answer check also answers each multiple-choice and select-all question without its key, and sends back keys it disagrees with.
+   - Choose question types and how many questions per page. The second-pass review is on by default. With the in-browser model, an answer check also answers each multiple-choice, select-all, true/false and fill-in-the-blank question without its key: it sends back multiple-choice and select-all keys it disagrees with, gives a fill-in-the-blank question a new blank when its answer differs from the key, and notes true/false keys it disagrees with.
    - Generate. Questions appear as they are written, and the run continues if you switch screens.
 3. **Review:** approve, edit, or reject each question. Each question can show the exact source paragraphs it cites.
 4. **Export to ADAPT** (from the set's page): download the QTI (.zip). In ADAPT, go to Dashboard → My Questions → Bulk Import tab → Canvas QTI, pick a folder and license, and upload the file. Earlier downloads stay listed and can be downloaded again.
@@ -72,7 +72,10 @@ tests/adapt-parser/  harness that runs ADAPT's QtiImport.php on our packages
    - A math or numerical question whose section has no numbers takes a quantitative concept from another section of the same page. Only if the page has none is another type written instead.
 4. Validation failures are sent back to the model to fix, up to 3 attempts. If all 3 fail, the question starts over in a new conversation, up to twice more. A question that still fails is left out without a notice; only engine errors (such as a model that is not loaded) are shown.
 5. The reviewer pass (on by default) critiques and rewrites each question. Its notes are kept and shown with the question. On the in-browser model, math questions skip it.
-6. On the in-browser model, an answer check answers each multiple-choice and select-all question without seeing its key. If it disagrees, the question goes back once to be fixed, naming the choices; if the check still disagrees, the question gets a note. See [docs/research.md](docs/research.md), "Wrong answer keys".
+6. On the in-browser model, an answer check answers each question without seeing its key (see [docs/research.md](docs/research.md), "Wrong answer keys" and "The fill-in-the-blank check"):
+   - **Multiple choice and select-all:** if the check disagrees, the question goes back once to be fixed, naming the choices. If the check still disagrees, the question gets a note.
+   - **Fill in the blank:** the check fills the blank without the key or the textbook. If its answer differs from the key, or the key is a number or symbol, the model names other words of the completed sentence. The app blanks each in turn and keeps the first that the check fills in as the key. The sentence and explanation stay the same. If none passes, a question the check disagreed with gets a note.
+   - **True/false:** a key the check disagrees with gets a note. It is not sent back, because the reviewer then flipped a correct key.
 7. With the duplicate check on, a question whose stem is very close to one already in the set (cosine ≥ 0.94 between EmbeddingGemma 2 embeddings) gets a note.
 8. Every question is saved as soon as it validates.
 
@@ -109,5 +112,5 @@ also works from a sub-path.
 - The in-browser models need WebGPU: recent desktop Chrome or Edge, Safari 26, or Firefox on Windows / Apple Silicon. Phones are not supported. Gemma 4 E4B has only been tested in desktop Chrome on Apple Silicon; Qwen3.5 4B is the fallback.
 - Small local models write weaker distractors than GPT-6 Luna. Every question is a draft until an instructor approves it.
 - Images and figures are not used as question material. Image alt text is kept as text.
-- ADAPT grades fill-in-the-blank against a single answer by exact match, ignoring case (alternates are honoured by Canvas only), so the app asks for answers in plain words and notes the ones that are not. It ignores feedback on several types.
+- ADAPT grades fill-in-the-blank against a single answer by exact match, ignoring case (alternates are honoured by Canvas only). The app asks for answers in plain words. On the in-browser model, it also blanks another word when the check fills the blank differently. Questions where it cannot are noted. ADAPT ignores feedback on several types.
 - In ADAPT, essays take the assignment's Default Open-ended Submission Type; with None, students have nothing to submit.

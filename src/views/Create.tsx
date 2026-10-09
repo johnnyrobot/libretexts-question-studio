@@ -363,6 +363,7 @@ function PasteSource({ onSource }: { onSource: (source: StoredSource) => void })
 // ---------------------------------------------------------------- step 2
 
 const DEFAULT_TYPES: ItemType[] = ['multiple_choice', 'true_false', 'multiple_answers', 'fill_in_blank']
+const CHECKED_TYPES = new Set<ItemType>(['multiple_choice', 'multiple_answers', 'true_false', 'fill_in_blank'])
 
 function ConfigureStep({ sourceId }: { sourceId: string }) {
   const source = useLiveQuery(async () => (await db.sources.get(sourceId)) ?? null, [sourceId])
@@ -395,11 +396,10 @@ function Configure({ source }: { source: StoredSource }) {
   // The in-browser model does not review math questions (see pipeline.ts).
   const skipsReview = engine.provider === 'local' && types.includes('math')
   const reviews = reviewPass ? Math.round(total * (skipsReview ? 1 - 1 / types.length : 1)) : 0
-  // It also checks every multiple-choice and select-all answer key.
+  // It also checks every multiple-choice, select-all, true/false and
+  // fill-in-the-blank answer key.
   const keyChecks =
-    engine.provider === 'local'
-      ? Math.round((total * types.filter((t) => t === 'multiple_choice' || t === 'multiple_answers').length) / types.length)
-      : 0
+    engine.provider === 'local' ? Math.round((total * types.filter((t) => CHECKED_TYPES.has(t)).length) / types.length) : 0
   const calls = total + reviews + keyChecks + source.pages.length
 
   const start = async () => {
