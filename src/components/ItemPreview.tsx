@@ -1,7 +1,7 @@
 import { Fragment, useMemo } from 'react'
 import { BLANK_RUN, DROPDOWN_PLACEHOLDER, type DraftOf, type QuestionDraft } from '../lib/generation/schema'
 import { toTex } from '../lib/math/expr'
-import { formatNumber } from '../lib/math/format'
+import { formatNumber, formatUnits } from '../lib/math/format'
 import { compileMath, MathSpecError } from '../lib/math/spec'
 import { Icon } from './Icon'
 import { MathText } from './MathText'
@@ -95,7 +95,7 @@ function AnswerKey({ draft }: { draft: QuestionDraft }) {
           <p className="answer-value">
             <strong>{draft.answer}</strong>
             {draft.tolerance > 0 && <> ± {draft.tolerance}</>}
-            {draft.units && <> {draft.units}</>}
+            {draft.units && <> {formatUnits(draft.units)}</>}
           </p>
         </div>
       )
@@ -179,7 +179,7 @@ function MathPreview({ draft }: { draft: DraftOf<'math'> }) {
         <p className="answer-value">
           <strong>{formatNumber(first.answer)}</strong>
           {first.margin > 0 && <> ± {formatNumber(first.margin)}</>}
-          {draft.units && <> {draft.units}</>}
+          {draft.units && <> {formatUnits(draft.units)}</>}
         </p>
         <p className="muted">
           Computed as <MathText text={`\\(\\displaystyle \\text{answer} = ${toTex(compiled.answer)}\\)`} />

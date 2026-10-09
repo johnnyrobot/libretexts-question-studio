@@ -13,3 +13,13 @@ export function formatNumber(value: number): string {
 export function formatComputed(value: number): string {
   return Number.isInteger(value) ? formatNumber(value) : formatNumber(Number(value.toPrecision(4)))
 }
+
+const SUPERSCRIPT: Record<string, string> = {
+  '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻', '−': '⁻',
+}
+
+// Units as a student reads them, since ADAPT shows the text as typed:
+// "m/s^2" -> "m/s²", "s^{-1}" -> "s⁻¹".
+export function formatUnits(units: string): string {
+  return units.replace(/\^\{?([-−]?\d+)\}?/g, (_, power: string) => [...power].map((c) => SUPERSCRIPT[c]).join(''))
+}

@@ -325,25 +325,16 @@ function uniqueTexts(values: string[], label: string, ctx: z.RefinementCtx) {
   }
 }
 
-// Validates a model payload for one item type, including that every citation
-// points at a paragraph the model was actually shown.
+// Validates a payload for one item type, including that every citation points
+// at a paragraph the model was actually shown. The editor and backup restore
+// use this too; rules only for what the model writes are in checkModelDraft.
 export function parseDraft(itemType: ItemType, value: unknown, allowedParagraphs?: Set<number>): QuestionDraft {
   const result = ITEM_SCHEMAS[itemType].safeParse(value)
   if (!result.success) throw new Error(formatIssues(result.error))
   const draft = { item_type: itemType, ...result.data } as QuestionDraft
-  const serialized = JSON.stringify({ ...draft, citation_paragraphs: undefined, concept_label: undefined })
   // Tested on the strings themselves: JSON.stringify writes a form feed as "\\f".
   if (stringsIn(draft).some((text) => XML_FORBIDDEN.test(text))) {
     throw new Error('text contains control characters that are not allowed in XML')
-  }
-  if (/\bparagraphs?\s+\d+/i.test(serialized)) {
-    throw new Error('student-facing text must not mention paragraph numbers; cite them only in citation_paragraphs')
-  }
-  const reference = serialized.match(SOURCE_LABEL)
-  if (reference) {
-    throw new Error(
-      `students never see "${reference[0]}"; describe in the question whatever it needs from it, and do not mention it`,
-    )
   }
   if (allowedParagraphs) {
     const invalid = draft.citation_paragraphs.filter((p) => !allowedParagraphs.has(p))
@@ -356,9 +347,38 @@ export function parseDraft(itemType: ItemType, value: unknown, allowedParagraphs
   return draft
 }
 
+// What the model writes must make sense to a student who sees only the
+// question. These rules stay out of parseDraft: an instructor may mean to
+// refer to a figure they show in ADAPT, and a backup saved before a rule was
+// added must still restore.
+export function checkModelDraft(draft: QuestionDraft): void {
+  const serialized = JSON.stringify({ ...draft, citation_paragraphs: undefined, concept_label: undefined })
+  if (/\bparagraphs?\s+\d+/i.test(serialized)) {
+    throw new Error('student-facing text must not mention paragraph numbers; cite them only in citation_paragraphs')
+  }
+  const reference = serialized.match(SOURCE_LABEL)
+  if (reference) {
+    throw new Error(
+      `students never see "${reference[0]}"; describe in the question whatever it needs from it, and do not mention it`,
+    )
+  }
+}
+
 // "Figure 4.3.1", "Table 2", "Example 4.4": students see the question, not
 // the page it was written from.
 const SOURCE_LABEL = /\b(?:Figures?|Fig\.|Tables?|Examples?)\s+\d+(?:\.\d+)*/i
+
+// ADAPT marks a fill-in-the-blank right only on an exact match, ignoring case,
+// and uses only the first answer. 5 of 30 Gemma 4 E4B answers (2026-10-08)
+// were numbers, symbols or equations: "9.8 N", "9.8 m/s^2", "F_{net}/m".
+// Rejecting them removed all 5 but doubled the time and left 3 questions out,
+// so the reviewer is asked to fix one and the instructor is told if it stays.
+const UNTYPEABLE_ANSWER = /[=_\\^{}<>*/|$²³⁻]|(?:^|\s)[-+−]?\d/
+
+export function typedAnswerProblem(draft: QuestionDraft): string | null {
+  if (draft.item_type !== 'fill_in_blank' || !UNTYPEABLE_ANSWER.test(draft.answer)) return null
+  return `Students must type the answer exactly, and "${draft.answer}" is a number, symbol or equation that many will type differently, so they would be marked wrong.`
+}
 
 function stringsIn(value: unknown): string[] {
   if (typeof value === 'string') return [value]

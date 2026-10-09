@@ -74,12 +74,22 @@ ${renderSource(unit, concept.source_paragraphs)}
 
 // `keyProblems` come from the answer check (checkAnswerKey in pipeline.ts):
 // told only to review, the reviewer defended wrong keys.
-export function reviewPrompt(unit: SourceUnit, concept: Concept, draft: QuestionDraft, keyProblems: string[] = []): string {
+export function reviewPrompt(
+  unit: SourceUnit,
+  concept: Concept,
+  draft: QuestionDraft,
+  keyProblems: string[] = [],
+  answerProblem: string | null = null,
+): string {
   const { item_type, ...payload } = draft
   const fix = keyProblems.length
     ? `\nA separate check answered the question without seeing the answer key and disagreed with it. Fix every one of these problems, by changing which choices are marked correct or by replacing the choice:\n${keyProblems.map((p) => `- ${untrusted(p)}`).join('\n')}`
     : ''
-  return `Act as a separate, critical assessment reviewer. Check the content of the draft ${item_type.replace(/_/g, ' ')} question against the source paragraphs: ${REVIEW_FOCUS[item_type] ?? REVIEW_FOCUS.default}${fix}
+  // From typedAnswerProblem in schema.ts.
+  const typed = answerProblem
+    ? `\n${answerProblem} Fix this without listing it: blank a word or short phrase that students would all type the same way, and keep numbers, units, symbols and equations in the sentence.`
+    : ''
+  return `Act as a separate, critical assessment reviewer. Check the content of the draft ${item_type.replace(/_/g, ' ')} question against the source paragraphs: ${REVIEW_FOCUS[item_type] ?? REVIEW_FOCUS.default}${fix}${typed}
 The app checks the format, the concept label and the citations, so say nothing about them, about the JSON, or about your revision.
 The instructor reads your list. Write each real problem you are sure of as one short sentence about the question as students will see it, in plain words such as "the question", "the choice '…'", "the correct answer", "the feedback" or "the explanation", never field names such as concept_label. Report only what makes the question wrong, ambiguous, misleading or easy to guess, not suggestions or things that are correct or unnecessary; a wrong choice does not need to appear in the source. Do not think out loud and never repeat a sentence. If nothing is wrong, return an empty list.
 Then return the complete revised question with every listed problem fixed, polishing the wording even when nothing is wrong. Keep the same question type and concept_label, and cite only paragraphs from ${JSON.stringify(concept.source_paragraphs)}.
@@ -158,7 +168,7 @@ export const ITEM_RULES: Record<ItemType, string> = {
 - explanation: the worked solution using placeholders, for example "Average speed is distance over time: {{d}} km / {{t}} h = {{answer}} km/h." {{answer}} and computed placeholders such as {{d/t}} are allowed here.
 ${PLACEHOLDERS_IN_MATH}`,
   matching: `Rules: three to six pairs; each prompt is a short term or description and each match is the short item it pairs with. All prompts are distinct and all matches are distinct. Optionally add up to two distractor matches that pair with nothing. The stem tells the student what to match.`,
-  fill_in_blank: `Rules: the stem is a sentence containing exactly one blank written as four underscores ____ and no other underscores. answer is the single word or short phrase (one to three words) from the source that fills the blank; alternates lists acceptable variants such as alternative spellings or singular/plural (or an empty list). The rest of the sentence must not give the answer away.`,
+  fill_in_blank: `Rules: the stem is a sentence containing exactly one blank written as four underscores ____ and no other underscores. answer is the single word or short phrase (one to three words) from the source that fills the blank. Students type it and must match it exactly, so it is ordinary words: never a number, unit, symbol, equation or variable name (keep those in the sentence). alternates lists acceptable variants such as alternative spellings or singular/plural (or an empty list). The rest of the sentence must not give the answer away.`,
   dropdowns: `Rules: the stem is one to three sentences containing two to four dropdown placeholders written as [b1], [b2], ... with matching ids in blanks. Each blank has the correct word or phrase and one to three plausible distractors of the same kind. The stem must contain no other square brackets and no \\[ \\] display math.`,
   essay: `Rules: the stem asks for a short written explanation, comparison, or application that requires understanding (not recall of a single fact). model_answer is a strong three to six sentence answer drawn from the source. explanation lists the key points a grader should look for.`,
 }

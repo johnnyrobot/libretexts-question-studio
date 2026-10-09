@@ -266,6 +266,33 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
 - **The short lines found the same wrong keys:** the same 2 misses. In 13 of the 16 finds the check disagreed on exactly the same choices; in the other 3 the choices overlapped.
 - **Not measured end-to-end.** From the end-to-end test (a fix for about 1 question in 6, each a review call plus another check), the check and fixes should drop from about 28 s to about 13 s a question. On top of the before run's 53 s, that is about 25% more time instead of about 50%.
 
+### Fill-in-the-blank answers and plain-text symbols (2026-10-08)
+
+**The problem:** found in the live-site end-to-end test (see [adapt-qti-import.md](adapt-qti-import.md)).
+- ADAPT grades fill-in-the-blank by exact match, ignoring case, against the first answer only. Gemma wrote keys such as "w = mg", "9.8 N", "9.8 m/s^2", "F_{net}/m" and "a ∈ F_{net}". A student who types "w=mg" or "9.8N" is marked wrong.
+- Gemma also writes symbols as plain text ("F_net", "F_{net}"), which ADAPT shows as typed. Some are the textbook figure's force labels (F_prof, F_floor), which students never saw.
+
+**How it was measured:** 30 fill-in-the-blank questions per run: 2 for each of 15 concepts from *College Physics* 4.3 and 4.4, review on, Gemma 4 E4B, drafted and reviewed as in a real run. The before run and the "reject and retry" run (57 questions) were shuffled together and judged blind. A question was good if a student who knows the answer would type the key, the sentence alone pins the answer down, and the blank tests an idea rather than a filler word.
+
+| | Before | Reject and retry | Review, then note (now in the app) |
+|---|---|---|---|
+| Keys that are numbers, symbols or equations | 5 | 0 | 4, each with a note |
+| Questions written | 30 of 30 | 27 of 30 | 28 of 30 |
+| Rejected attempts | 22 | 79 | 38 |
+| Time | 15.6 min | 31.1 min | 20.8 min |
+
+- **Rejecting worked but cost too much:** no bad keys, but twice the time and 3 questions left out, all on calculation concepts ("Weight Calculation"), where Gemma kept offering "9.8 N" or "g". Told not to use numbers, it blanked words already in the sentence, so "the stem gives the answer away" rejections went from 7 to 31.
+- **Blind read:** good questions 14 of 30 before, 15 of 27 after. The rule removes the bad keys, not Gemma's other weak blanks.
+- **The 2 questions left out in the last run** failed on the older paragraph-number rule: Gemma wrote "paragraph 3" into the explanation in all 9 attempts. That rule rejected 16 to 29 attempts per run of 30. Stripping such mentions, as `stripSourceReferences` does for "the text", would be cheaper than rejecting them; not tried.
+- **What the app does now:** `typedAnswerProblem` sends such a key to the review pass that already runs, asking for a word to blank instead. If the key is still a number, symbol or equation, the instructor gets a note. Over two runs Gemma's reviewer fixed 1 of the 8 keys it was sent. It usually recognized the problem and listed it, so its own note on that answer is dropped in favour of the app's. In practice this is a note. Single letters such as "g" in "w = m____" are allowed: they match exactly.
+- **Plain-text symbols are repaired, not rejected:** as a check that sent them back, Gemma could not write "F_net" as math in 9 attempts, and 2 of 30 questions failed on it. `symbolsToMath` now wraps a one-letter name with a subscript, outside math and placeholders, in `\( \)`, except in titles. On the 823 saved drafts, it changed 139 of 5,595 texts. Every change was F_net or a professor-example force label, and all rendered in KaTeX.
+- **Figure labels remain:** wrapping makes `\(F_{prof}\)` render, but students still don't know what it is. In 13 multiple-choice and select-all questions on the professor example, 4 used the figure's labels ("System 1", F_prof), only 1 of them as plain text. No code check can tell a label from a symbol the question defines.
+
+**Gemma's other weak blanks (not fixed):** about half of its fill-in-the-blank questions were weak either way.
+- Ambiguous blanks copied from the textbook: "do not cancel if they act on different ____" ("systems", but "objects" is also right), "experiencing a force ____" ("itself"), "defined differently for each ____" ("problem").
+- Multi-word keys few students would type exactly: "elements of the system", or "proportional to" before the word "to".
+- **Possible next step:** an answer check like the one for multiple choice. The model fills the blank without seeing the key, and a different answer is sent back or noted.
+
 ### Fine-tuning Gemma (considered 2026-10-07, not started)
 
 The question: could a large model (Luna, another GPT-6 model, or Claude) teach Gemma 4 E4B to write better questions, by fine-tuning it on the large model's questions (distillation), for example with Unsloth? And would a smaller fine-tuned model, such as E2B, do as well while fitting on more machines? Parked for now; this is what was found.

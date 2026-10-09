@@ -395,7 +395,12 @@ function Configure({ source }: { source: StoredSource }) {
   // The in-browser model does not review math questions (see pipeline.ts).
   const skipsReview = engine.provider === 'local' && types.includes('math')
   const reviews = reviewPass ? Math.round(total * (skipsReview ? 1 - 1 / types.length : 1)) : 0
-  const calls = total + reviews + source.pages.length
+  // It also checks every multiple-choice and select-all answer key.
+  const keyChecks =
+    engine.provider === 'local'
+      ? Math.round((total * types.filter((t) => t === 'multiple_choice' || t === 'multiple_answers').length) / types.length)
+      : 0
+  const calls = total + reviews + keyChecks + source.pages.length
 
   const start = async () => {
     setError(null)

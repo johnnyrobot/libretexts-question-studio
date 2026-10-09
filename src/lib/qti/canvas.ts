@@ -1,6 +1,6 @@
 import { zipSync, strToU8 } from 'fflate'
 import { BLANK_RUN, type DraftOf, type QuestionDraft } from '../generation/schema'
-import { formatNumber } from '../math/format'
+import { formatNumber, formatUnits } from '../math/format'
 import { compileMath, type MathVariant } from '../math/spec'
 
 export { formatNumber }
@@ -232,7 +232,7 @@ function multipleAnswersItem(key: ItemKey, draft: DraftOf<'multiple_answers'>, p
 
 function numericalItem(key: ItemKey, draft: DraftOf<'numerical'>, points: number): string {
   const [low, high] = numericRange(draft.answer, draft.tolerance)
-  const stem = draft.units ? `${draft.stem} (Answer in ${draft.units}.)` : draft.stem
+  const stem = draft.units ? `${draft.stem} (Answer in ${formatUnits(draft.units)}.)` : draft.stem
   return item(key, draft.title, 'numerical_question', points, [
     presentation(
       stem,

@@ -492,6 +492,13 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
               The file is Canvas-style QTI 1.2, so it also imports into Canvas and most LMSs that accept Canvas quiz exports. In
               ADAPT, fill-in-the-blank accepts only the first answer, and essays become open-ended questions.
             </p>
+            {exportableItems.some((i) => i.draft.item_type === 'essay') && (
+              <p className="fine">
+                Essays take the assignment’s <strong>Default Open-ended Submission Type</strong>. If you import into a
+                course, choose an assignment template where it is Rich Text; with None, ADAPT gives students nothing to submit
+                until you change it on each essay.
+              </p>
+            )}
           </section>
 
           {exports && exports.length > 0 && (

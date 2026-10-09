@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react'
 import { db } from './db'
 
 // The OpenAI key lives in memory for this tab by default. "Remember on this
@@ -10,6 +11,7 @@ const DEVICE_KEY = 'secret.deviceKey'
 const OPENAI_KEY = 'secret.openaiKey'
 
 let memoryKey: string | null = null
+const listeners = new Set<() => void>()
 
 export function getSessionKey(): string | null {
   return memoryKey
@@ -17,6 +19,17 @@ export function getSessionKey(): string | null {
 
 export function setSessionKey(key: string | null): void {
   memoryKey = key?.trim() || null
+  listeners.forEach((listener) => listener())
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+/** The key for this tab, re-rendering when it is saved or forgotten. */
+export function useSessionKey(): string | null {
+  return useSyncExternalStore(subscribe, getSessionKey)
 }
 
 export async function rememberKey(key: string): Promise<void> {

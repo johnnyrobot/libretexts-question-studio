@@ -15,11 +15,18 @@ describe('backup', () => {
       id: 'i', setId: 'set', position: 0, status: 'approved', draft: SAMPLE_DRAFTS[0], sourcePageIndex: 0, critique: [],
       createdAt: 1, updatedAt: 1,
     })
+    // Written before the rule against figure references, which applies only to model output.
+    const older = { ...SAMPLE_DRAFTS[0], stem: 'In Figure 4.3.1, which gas do plants absorb?' }
+    await db.items.put({
+      id: 'old', setId: 'set', position: 1, status: 'draft', draft: older, sourcePageIndex: 0, critique: [],
+      createdAt: 1, updatedAt: 1,
+    })
     const blob = await createBackup()
     await Promise.all([db.items.clear(), db.sets.clear(), db.sources.clear()])
     const file = new File([await blob.text()], 'backup.json')
-    expect(await restoreBackup(file)).toEqual({ sets: 1, items: 1 })
+    expect(await restoreBackup(file)).toEqual({ sets: 1, items: 2 })
     expect((await db.items.get('i'))?.draft.stem).toBe(SAMPLE_DRAFTS[0].stem)
+    expect((await db.items.get('old'))?.draft.stem).toBe(older.stem)
     await expect(restoreBackup(new File(['{"x":1}'], 'other.json'))).rejects.toThrow(/not a Question Studio backup/)
   })
 })

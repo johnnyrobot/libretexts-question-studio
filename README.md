@@ -93,6 +93,8 @@ browser can reach LibreTexts content are in [docs/research.md](docs/research.md)
 serves static files over HTTPS. It uses hash routing and relative paths, so it
 also works from a sub-path.
 
+- **Public site:** https://qtistudio.libretexts.dev, static files in `/opt/libretexts/qtistudio/` on the libretexts.dev VPS, served by Caddy. `/assets/*` is cached for a year and everything else is `no-cache`, so a new service worker and catalog reach users. Redeploy with `npm run build && rsync -a --delete dist/ <vps>:/opt/libretexts/qtistudio/`; Caddy needs no reload. Browsers keep downloaded models per site, so the first visit downloads the model again even if it was loaded on localhost.
+
 - **Network access** (used directly from the browser):
   - `api.libretexts.org`: book trees and page text, through the public `cross-library` read proxy.
   - `huggingface.co` and `*.hf.co`: model weights (Gemma 4, EmbeddingGemma 2, Qwen3.5). ONNX Runtime's WebAssembly is served with the app.
@@ -107,4 +109,5 @@ also works from a sub-path.
 - The in-browser models need WebGPU: recent desktop Chrome or Edge, Safari 26, or Firefox on Windows / Apple Silicon. Phones are not supported. Gemma 4 E4B has only been tested in desktop Chrome on Apple Silicon; Qwen3.5 4B is the fallback.
 - Small local models write weaker distractors than GPT-6 Luna. Every question is a draft until an instructor approves it.
 - Images and figures are not used as question material. Image alt text is kept as text.
-- ADAPT grades fill-in-the-blank against a single answer (alternates are honoured by Canvas only) and ignores feedback on several types.
+- ADAPT grades fill-in-the-blank against a single answer by exact match, ignoring case (alternates are honoured by Canvas only), so the app asks for answers in plain words and notes the ones that are not. It ignores feedback on several types.
+- In ADAPT, essays take the assignment's Default Open-ended Submission Type; with None, students have nothing to submit.

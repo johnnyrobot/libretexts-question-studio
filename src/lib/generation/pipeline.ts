@@ -15,6 +15,7 @@ import {
   type SourceUnit,
 } from './prompts'
 import {
+  checkModelDraft,
   formatIssues,
   ITEM_SCHEMAS,
   ITEM_TYPE_LABELS,
@@ -22,6 +23,7 @@ import {
   llmSchemaFor,
   parseDraft,
   toLlmSchema,
+  typedAnswerProblem,
   WORKED_EXAMPLE_SCHEMA,
   type ItemType,
   type QuestionDraft,
@@ -317,7 +319,7 @@ export async function runGeneration(
         if (review) {
           callbacks.onStatus(`Reviewing “${draft.title}”…`)
           try {
-            const reviewed = await reviewItem(provider, unit, concept, draft, allowed, signal, callbacks)
+            const reviewed = await reviewItem(provider, unit, concept, draft, allowed, signal, callbacks, [], typedAnswerProblem(draft))
             draft = reviewed.draft
             critique = [...notes, ...reviewed.issues]
           } catch (error) {
@@ -331,6 +333,12 @@ export async function runGeneration(
           critique = [...critique, ...checked.notes]
         }
         draft = finalize(draft, concept)
+        const typed = typedAnswerProblem(draft)
+        if (typed && draft.item_type === 'fill_in_blank') {
+          // The reviewer, told about it, tends to list it too, in its own words.
+          const answer = draft.answer.toLowerCase()
+          critique = [...critique.filter((note) => !note.toLowerCase().includes(answer)), typed]
+        }
         const similar = await duplicates?.add(draft.stem).catch(() => null)
         if (similar && similar.similarity >= DUPLICATE_SIMILARITY) {
           critique = [...critique, `Very similar to another question in this set: “${clip(similar.stem, 140)}”`]
@@ -416,6 +424,7 @@ export async function draftItem(
     validate: (value) => {
       const repaired = repairDraft(itemType, value)
       const draft = parseDraft(itemType, repaired, allowed)
+      checkModelDraft(draft)
       if (draft.item_type === 'math') {
         const example = WORKED_EXAMPLE_SCHEMA.safeParse((repaired as { worked_example?: unknown }).worked_example)
         if (!example.success) throw new Error(`worked_example: ${formatIssues(example.error)}`)
@@ -436,6 +445,7 @@ export async function reviewItem(
   signal: AbortSignal,
   callbacks: GenerationCallbacks,
   keyProblems: string[] = [],
+  answerProblem: string | null = null,
 ): Promise<{ draft: QuestionDraft; issues: string[] }> {
   const schema = z.object({
     issues: z.array(z.string().trim().min(1).max(400)).max(8),
@@ -443,7 +453,7 @@ export async function reviewItem(
   })
   const result = await provider.complete({
     system: SYSTEM_PROMPT,
-    prompt: reviewPrompt(unit, concept, draft, keyProblems),
+    prompt: reviewPrompt(unit, concept, draft, keyProblems, answerProblem),
     schemaName: 'item_review',
     schema: toLlmSchema(schema),
     signal,
@@ -451,10 +461,9 @@ export async function reviewItem(
     validate: (value) => {
       const record = value as { issues?: unknown; revised?: unknown }
       const issues = z.array(z.string()).max(8).safeParse(record?.issues)
-      return {
-        issues: issues.success ? cleanReviewNotes(issues.data, draft) : [],
-        draft: parseDraft(draft.item_type, repairDraft(draft.item_type, keepComputation(draft, record?.revised)), allowed),
-      }
+      const revised = parseDraft(draft.item_type, repairDraft(draft.item_type, keepComputation(draft, record?.revised)), allowed)
+      checkModelDraft(revised)
+      return { issues: issues.success ? cleanReviewNotes(issues.data, draft) : [], draft: revised }
     },
   })
   return result.value
@@ -706,20 +715,44 @@ export function controlsToBackslashes(text: string): string {
   return text.replace(CONTROL_BEFORE_BRACKET, '\\$1').replace(CONTROL_BEFORE_BACKSLASH, '')
 }
 
-// Formulas, variable names, ids and units are not prose.
-const NOT_PROSE = new Set(['answer_formula', 'constraints', 'variables', 'units', 'id'])
+// Gemma 4 writes subscripted symbols as plain text ("F_net", "F_{net}"), which
+// ADAPT shows as typed. In 715 saved drafts (2026-10-08) all 71 one-letter
+// names with a subscript outside math were a symbol or a figure's force label
+// (F_floor). As a check that sent them back, Gemma could not write "F_net" as
+// math in 9 attempts on 2 of 30 questions, so the app does it.
+const PLAIN_SYMBOL = /(?<![\p{L}\p{N}\\])([A-Za-z])_(?:\{([^{}]*)\}|([A-Za-z0-9]+))/gu
+const MATH_OR_PLACEHOLDER = /(\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|\{\{[\s\S]*?\}\})/
 
-function proseMath(value: unknown): unknown {
-  if (typeof value === 'string') return dollarsToDelimiters(controlsToBackslashes(value))
+// Math drops spaces: F_{wall on feet} would read "wallonfeet".
+const subscript = (text: string) => (/\s/.test(text) ? `\\text{${text}}` : text)
+
+export function symbolsToMath(text: string): string {
+  if (!text.includes('_')) return text
+  return text
+    .split(MATH_OR_PLACEHOLDER)
+    .map((part, i) => (i % 2 ? part : part.replace(PLAIN_SYMBOL, (_, name, braced, bare) => `\\(${name}_{${subscript(braced ?? bare)}}\\)`)))
+    .join('')
+}
+
+// Formulas, variable names, ids and units are not prose.
+const NOT_PROSE = new Set(['answer_formula', 'constraints', 'variables', 'units', 'id', 'name'])
+// ADAPT lists titles as text, so they keep a symbol as written.
+const PLAIN_TEXT = new Set(['title', 'concept_label'])
+
+function proseMath(value: unknown, plain = false): unknown {
+  if (typeof value === 'string') {
+    const text = dollarsToDelimiters(controlsToBackslashes(value))
+    return plain ? text : symbolsToMath(text)
+  }
   if (Array.isArray(value)) {
-    const next = value.map(proseMath)
+    const next = value.map((item) => proseMath(item, plain))
     return next.every((item, i) => item === value[i]) ? value : next
   }
   if (!value || typeof value !== 'object') return value
   let changed = false
   const next: Record<string, unknown> = {}
   for (const [key, item] of Object.entries(value)) {
-    next[key] = NOT_PROSE.has(key) ? item : proseMath(item)
+    next[key] = NOT_PROSE.has(key) ? item : proseMath(item, plain || PLAIN_TEXT.has(key))
     changed ||= next[key] !== item
   }
   return changed ? next : value

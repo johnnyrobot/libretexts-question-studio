@@ -94,6 +94,15 @@ The exporter (`src/lib/qti/canvas.ts`) follows all of these. The schemas
   new one.
 - The author and source URL entered on the import form are not saved on imported
   questions (an ADAPT bug: the controller reads columns the job never writes).
+- Fill-in-the-blank is graded by exact match after trimming, ignoring case
+  (`QtiImport.php` stores `matchingType: exact`, `caseSensitive: no`). "w=mg"
+  does not match "w = mg", nor "9.8N" "9.8 N". When a model answer is a number,
+  symbol or equation, the review pass is asked to blank a word instead, and the
+  instructor gets a note if it does not (`typedAnswerProblem`).
+- Essays (`technology=text`) take the assignment's **Default Open-ended
+  Submission Type** (`AssignmentSyncQuestion.php`). An assignment template
+  where it is None gives students nothing to submit ("Nothing to submit" in the
+  assignment's question list); choose Rich Text, or change it per question.
 
 ## Live import check
 
@@ -107,6 +116,24 @@ Spot checks in the question preview:
 - **Math version:** the numbers were filled in and MathJax rendered the feedback. The answer key read exactly 0.375. ADAPT shows the accepted range to 4 decimals (0.3713 to 0.3787).
 - **Multiple choice:** both stem paragraphs, `&`, quotes and `x < y` came through. A `<b>Helium</b>` choice showed as literal text, ADAPT shuffled the choices, and per-choice feedback was kept.
 - **Matching and dropdowns:** the answer keys were correct.
+
+On 2026-10-08, three exports from the public site (qtistudio.libretexts.dev,
+build 5c08334) went into the hidden test course with an assignment template:
+a Gemma 4 E4B set (10 questions: multiple choice, true/false, select all,
+fill in the blank, math), that set's math question as 5 randomized versions,
+and a GPT-6 Luna set with one question of each of the 9 types. All passed the
+PHP parser first, and ADAPT imported 10/10, 5/5 and 10/10 with no errors.
+
+- **Order:** each assignment listed the questions in the set's order (the
+  `q001_` identifiers).
+- **Names:** the set name "Newton's Laws & Systems — live site, Gemma" became
+  the assignment name with the apostrophe, ampersand and dash intact.
+- **Model-written math:** the numbers were filled in and the keys were right
+  (6.1, accepted 6.039 to 6.161; and 33 with 0% tolerance). Units showed as
+  typed ("m/s^2"); the export now writes powers as superscripts.
+- **Math in choices:** `\(3.0\,\text{m/s}^2\)` choices and their per-choice
+  feedback rendered with MathJax.
+- **Essay:** imported, but "Nothing to submit" under that template (see above).
 
 ## Checking a package against ADAPT's parser
 

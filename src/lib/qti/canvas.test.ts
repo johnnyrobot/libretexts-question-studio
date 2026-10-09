@@ -1,7 +1,8 @@
 import { unzipSync, strFromU8 } from 'fflate'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { parseDraft, type DraftOf } from '../generation/schema'
+import { checkModelDraft, parseDraft, typedAnswerProblem, type DraftOf, type ItemType } from '../generation/schema'
+import { formatUnits } from '../math/format'
 import { compileMath } from '../math/spec'
 import {
   buildItemXml,
@@ -163,6 +164,16 @@ describe('helpers', () => {
     expect(formatNumber(42)).toBe('42')
   })
 
+  it('writes unit powers as superscripts, since ADAPT shows units as typed', () => {
+    expect(formatUnits('m/s^2')).toBe('m/s²')
+    expect(formatUnits('kg·m^{2}/s^-1')).toBe('kg·m²/s⁻¹')
+    expect(formatUnits('m/s²')).toBe('m/s²')
+    expect(formatUnits('N')).toBe('N')
+    const numerical = items.find((i) => i.draft.item_type === 'numerical')!
+    const draft = { ...numerical.draft, units: 'm/s^2' } as DraftOf<'numerical'>
+    expect(buildItemXml({ ...numerical, draft })).toContain('(Answer in m/s².)')
+  })
+
   it('renders paragraphs without raw newlines', () => {
     expect(paragraphsHtml('a\nb\n\nc')).toBe('<div><p>a<br>b</p><p>c</p></div>')
   })
@@ -250,17 +261,37 @@ describe('answer-leak and wording checks', () => {
     ).toThrow(/gives the answer away/)
   })
 
+  // What the pipeline applies to model output: parse, then the model-only rules.
+  const fromModel = (itemType: ItemType, value: unknown) => checkModelDraft(parseDraft(itemType, value))
+
   it('rejects paragraph numbers in student-facing text', () => {
-    expect(() => parseDraft('fill_in_blank', { ...payload, explanation: 'This is stated in paragraph 26.' })).toThrow(
+    expect(() => fromModel('fill_in_blank', { ...payload, explanation: 'This is stated in paragraph 26.' })).toThrow(
       /paragraph numbers/,
     )
   })
 
   it('rejects references to figures, tables and examples students cannot see', () => {
     for (const stem of ['As shown in Figure 4.3.1, the cart speeds up because ____.', 'Using the values in Table 2, the force is ____.', 'In Example 4.4 the cart moves because ____.']) {
-      expect(() => parseDraft('fill_in_blank', { ...payload, stem })).toThrow(/students never see/)
+      expect(() => fromModel('fill_in_blank', { ...payload, stem })).toThrow(/students never see/)
     }
-    expect(() => parseDraft('fill_in_blank', { ...payload, stem: 'A figure skater spins faster when she pulls in her ____.' })).not.toThrow()
+    expect(() => fromModel('fill_in_blank', { ...payload, stem: 'A figure skater spins faster when she pulls in her ____.' })).not.toThrow()
+  })
+
+  it('leaves those rules out of parseDraft, which the editor and backup restore use', () => {
+    expect(() => parseDraft('fill_in_blank', { ...payload, stem: 'As shown in Figure 4.3.1, the cart speeds up because ____.' })).not.toThrow()
+    expect(() => parseDraft('fill_in_blank', { ...payload, answer: '9.8 N', stem: 'The weight of a 1.0 kg object is ____.' })).not.toThrow()
+  })
+
+  it('names fill-in-the-blank answers students cannot type to an exact match, without rejecting them', () => {
+    const stem = 'The weight of a 1.0 kg object on Earth is ____.'
+    for (const answer of ['9.8 N', '53 N', '9.8 m/s^2', 'w = mg', '\\(ma\\)', '-3']) {
+      const draft = parseDraft('fill_in_blank', { ...payload, stem, answer, alternates: [] })
+      expect(() => checkModelDraft(draft), answer).not.toThrow()
+      expect(typedAnswerProblem(draft), answer).toContain(`"${answer}" is a number, symbol or equation`)
+    }
+    for (const answer of ['chlorophyll', 'H2O', 'g', 'net force']) {
+      expect(typedAnswerProblem(parseDraft('fill_in_blank', { ...payload, stem, answer, alternates: [] })), answer).toBeNull()
+    }
   })
 
   it('rejects control characters, which JSON.stringify would hide as escapes', () => {

@@ -4,7 +4,16 @@ import { SAMPLE_DRAFTS } from '../qti/fixtures'
 import { completeWithRetries, LLMError, type CompletionRequest, type Embedder, type LLMProvider } from '../llm/types'
 import { db, type StoredSource } from '../storage/db'
 import { checkWorkedExample } from '../math/spec'
-import { cleanReviewNotes, controlsToBackslashes, dollarsToDelimiters, planUnits, repairDraft, runGeneration, stripSourceReferences } from './pipeline'
+import {
+  cleanReviewNotes,
+  controlsToBackslashes,
+  dollarsToDelimiters,
+  planUnits,
+  repairDraft,
+  runGeneration,
+  stripSourceReferences,
+  symbolsToMath,
+} from './pipeline'
 import { parseDraft, type DraftOf, type ItemType } from './schema'
 
 const source: StoredSource = {
@@ -327,6 +336,48 @@ describe('runGeneration', () => {
     ])
   })
 
+  it('asks the reviewer to fix a fill-in-the-blank answer students cannot type exactly, and notes it if it stays', async () => {
+    const run = async (reviewPass: boolean) => {
+      await db.items.clear()
+      const provider = new FakeProvider('local')
+      const original = provider.complete.bind(provider)
+      const reviews: string[] = []
+      provider.complete = (request) => {
+        if (request.schemaName === 'item_review') {
+          reviews.push(request.prompt)
+          // A reviewer that lists the problem without fixing it.
+          return completeWithRetries(request, async (prompt) => {
+            const draft = JSON.parse(prompt.slice(prompt.indexOf('<draft>') + 7, prompt.indexOf('</draft>')))
+            const issues = ['The answer 680 nm is a number, not a word.', 'The stem could name the pigment.']
+            return { text: JSON.stringify({ issues, revised: draft }), usage: null }
+          })
+        }
+        if (request.schemaName !== 'fill_in_blank_item') return original(request)
+        return completeWithRetries(request, async (prompt) => {
+          const { item_type: _, ...fixture } = SAMPLE_DRAFTS.find((d) => d.item_type === 'fill_in_blank')!
+          void _
+          const citation_paragraphs = [...prompt.matchAll(/\[paragraph (\d+)\]/g)].map((m) => Number(m[1]))
+          const draft = { ...fixture, stem: 'Chlorophyll absorbs red light of about ____.', answer: '680 nm', alternates: [], citation_paragraphs }
+          return { text: JSON.stringify(draft), usage: null }
+        })
+      }
+      const plan = { itemTypes: ['fill_in_blank'] as ItemType[], perPage: 1, reviewPass }
+      const result = await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+      const [item] = await db.items.where('setId').equals('set-1').toArray()
+      return { result, reviews, critique: item.critique }
+    }
+    const note = 'Students must type the answer exactly, and "680 nm" is a number, symbol or equation that many will type differently, so they would be marked wrong.'
+    // The reviewer changes nothing, so the answer stays and the instructor is told
+    // once: its own note about the same answer is dropped.
+    const reviewed = await run(true)
+    expect(reviewed.result.created).toBe(1)
+    expect(reviewed.reviews[0]).toContain(`${note} Fix this without listing it`)
+    expect(reviewed.critique).toEqual(['The stem could name the pigment.', note])
+    const unreviewed = await run(false)
+    expect(unreviewed.reviews).toEqual([])
+    expect(unreviewed.critique).toEqual([note])
+  })
+
   it('keeps the question as it is when the answer check cannot run', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const provider = new FakeProvider('local')
@@ -580,6 +631,32 @@ describe('dollarsToDelimiters', () => {
   it('applies to prose fields but not formulas, names or units', () => {
     const draft = { stem: 'Find $v$.', answer_formula: 'd / t', units: '$', choices: [{ text: '$2t$', feedback: null }] }
     expect(repairDraft('multiple_choice', draft)).toEqual({ ...draft, stem: 'Find \\(v\\).', choices: [{ text: '\\(2t\\)', feedback: null }] })
+  })
+})
+
+describe('symbolsToMath', () => {
+  it('writes one-letter symbols with a subscript as math, as Gemma 4 E4B wrote them in plain text', () => {
+    expect(symbolsToMath('The forces F_prof and F_{cart} are internal.')).toBe('The forces \\(F_{prof}\\) and \\(F_{cart}\\) are internal.')
+    expect(symbolsToMath('a = F_net/m')).toBe('a = \\(F_{net}\\)/m')
+    expect(symbolsToMath('F_{wall on feet}')).toBe('\\(F_{\\text{wall on feet}}\\)')
+  })
+
+  it('leaves math, placeholders, longer names and plain words alone', () => {
+    for (const text of ['so \\(F_{net} = ma\\).', 'A force of {{f_net}} N', 'the max_speed setting', 'snake_case', 'no symbols']) {
+      expect(symbolsToMath(text)).toBe(text)
+    }
+  })
+
+  it('applies to what students read, but not to titles, names, formulas or units', () => {
+    const { item_type: _, ...fib } = SAMPLE_DRAFTS.find((d) => d.item_type === 'fill_in_blank')!
+    void _
+    const repaired = repairDraft('fill_in_blank', { ...fib, title: 'Finding F_net', stem: 'F_net acts on the ____.', answer: 'F_floor' }) as typeof fib
+    expect(repaired.title).toBe('Finding F_net')
+    expect(repaired.stem).toBe('\\(F_{net}\\) acts on the ____.')
+    expect(repaired.answer).toBe('\\(F_{floor}\\)')
+    const math = repairDraft('math', mathPayload({ answer_formula: 'v / t', units: 'mL_min' })) as ReturnType<typeof mathPayload>
+    expect(math.units).toBe('mL_min')
+    expect(math.worked_example.values.map((v) => v.name)).toEqual(['v', 't'])
   })
 })
 

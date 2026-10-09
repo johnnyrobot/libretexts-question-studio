@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Icon } from './components/Icon'
 import { localModel, useLoadedLocalModel } from './lib/llm/local-models'
 import { db } from './lib/storage/db'
-import { getSessionKey } from './lib/storage/secrets'
+import { useSessionKey } from './lib/storage/secrets'
 import { useRoute } from './router'
 import { localModelId, useEngineSettings } from './state/engine'
 import { useGeneration } from './state/generation'
@@ -255,9 +255,10 @@ function RunStatus() {
 function EngineStatus() {
   const engine = useEngineSettings()
   const loaded = useLoadedLocalModel() === localModelId(engine)
+  const key = useSessionKey()
   const [ready, label] =
     engine.provider === 'openai'
-      ? [!!getSessionKey(), `OpenAI · ${getSessionKey() ? engine.openaiModel : 'no key'}`]
+      ? [!!key, `OpenAI · ${key ? engine.openaiModel : 'no key'}`]
       : [loaded, `${localModel(engine.localModel).label} · ${loaded ? 'ready' : 'not loaded'}`]
   return (
     <a href="#/settings" className="engine-status">
