@@ -58,7 +58,7 @@ All are Apache-2.0 and prebuilt for WebLLM. GPU memory is WebLLM's estimate at a
 **What changed as a result:**
 - These checks now reject the item, so the model must retry:
   - an answer that appears in its stem;
-  - "paragraph N" in student-facing text;
+  - "paragraph N" in student-facing text (since 2026-10-08 rewritten first, see "Paragraph numbers" below);
   - true/false, fill-in-the-blank and dropdown stems written as questions;
   - matching with fewer than 3 pairs;
   - a matching prompt reused as a match.
@@ -283,7 +283,7 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
 
 - **Rejecting worked but cost too much:** no bad keys, but twice the time and 3 questions left out, all on calculation concepts ("Weight Calculation"), where Gemma kept offering "9.8 N" or "g". Told not to use numbers, it blanked words already in the sentence, so "the stem gives the answer away" rejections went from 7 to 31.
 - **Blind read:** good questions 14 of 30 before, 15 of 27 after. The rule removes the bad keys, not Gemma's other weak blanks.
-- **The 2 questions left out in the last run** failed on the older paragraph-number rule: Gemma wrote "paragraph 3" into the explanation in all 9 attempts. That rule rejected 16 to 29 attempts per run of 30. Stripping such mentions, as `stripSourceReferences` does for "the text", would be cheaper than rejecting them; not tried.
+- **The 2 questions left out in the last run** failed on the older paragraph-number rule: Gemma wrote "paragraph 3" into the explanation in all 9 attempts. That rule rejected 16 to 29 attempts per run of 30. Such mentions are now rewritten instead; see the next section.
 - **What the app does now:** `typedAnswerProblem` sends such a key to the review pass that already runs, asking for a word to blank instead. If the key is still a number, symbol or equation, the instructor gets a note. Over two runs Gemma's reviewer fixed 1 of the 8 keys it was sent. It usually recognized the problem and listed it, so its own note on that answer is dropped in favour of the app's. In practice this is a note. Single letters such as "g" in "w = m____" are allowed: they match exactly.
 - **Plain-text symbols are repaired, not rejected:** as a check that sent them back, Gemma could not write "F_net" as math in 9 attempts, and 2 of 30 questions failed on it. `symbolsToMath` now wraps a one-letter name with a subscript, outside math and placeholders, in `\( \)`, except in titles. On the 823 saved drafts, it changed 139 of 5,595 texts. Every change was F_net or a professor-example force label, and all rendered in KaTeX.
 - **Figure labels remain:** wrapping makes `\(F_{prof}\)` render, but students still don't know what it is. In 13 multiple-choice and select-all questions on the professor example, 4 used the figure's labels ("System 1", F_prof), only 1 of them as plain text. No code check can tell a label from a symbol the question defines.
@@ -292,6 +292,44 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
 - Ambiguous blanks copied from the textbook: "do not cancel if they act on different ____" ("systems", but "objects" is also right), "experiencing a force ____" ("itself"), "defined differently for each ____" ("problem").
 - Multi-word keys few students would type exactly: "elements of the system", or "proportional to" before the word "to".
 - **Possible next step:** an answer check like the one for multiple choice. The model fills the blank without seeing the key, and a different answer is sent back or noted.
+
+### Paragraph numbers: rewritten, not rejected (2026-10-08)
+
+**The problem:** the model is shown the source as `[paragraph N]` blocks and cites them in explanations students read. Since 2026-10-05 that was rejected and sent back. It was the most common rejection for Gemma 4 E4B: 29 of 41 in the last fill-in-the-blank run, and 18 of 25 in one select-all run. Gemma repeats it on retry, so 2 of 30 questions were left out.
+
+**Real examples first:** 30 fill-in-the-blank and 15 select-all drafts (same 15 concepts, every attempt saved; localStorage `qsParaBench.collect`). 31 of 39 rejected attempts were this rule, all in the explanation. One question failed all 9 attempts on it. The forms:
+- The paragraph as the subject: "Paragraph 21 explicitly states that …", "Paragraph 24 and 26 explicitly state the relationship as F = ma", "…, and paragraph 19 provides the formula: …"
+- After a reporting verb: "The source states in paragraph 21 that …", "… in paragraph 21: "…""
+- A trailing clause: "…, as shown in paragraphs 14 and 21."
+- A citation in brackets: "(Paragraph 10, 21)", "[paragraph 12]"
+
+**The repair:** `stripParagraphMentions` (pipeline.ts) runs in `repairDraft` on every text field of a draft or a reviewer revision, before the checks.
+- Bracketed citations and "as shown in paragraph N" clauses are dropped.
+- "in paragraph N" after "states" is dropped.
+- A paragraph used as the subject becomes "the textbook", with a singular verb: "The textbook explicitly states that …".
+- A sentence that opens with "According to paragraph 3," starts at the next word.
+- Dropping the subject outright breaks sentences such as "… state the relationship as F = ma", which is why it becomes "the textbook". `stripSourceReferences` already leaves "the textbook" alone.
+- The check stays as a fallback for forms the repair misses.
+
+**Re-scoring the saved attempts:** all 31 paragraph rejections pass with the repair. No other attempt's result changed. Attempts needed fell from 83 to 51, and the question that failed 9 times passes on its first attempt. All 25 distinct rewritten explanations read correctly.
+
+**End to end:** the same 30 fill-in-the-blank jobs as the earlier runs (review on, Gemma 4 E4B), compared with that section's final run.
+
+| | Before (reject) | After (rewrite) |
+|---|---|---|
+| Questions written | 28 of 30 | 30 of 30 |
+| Paragraph-number rejections | 29 | 0 |
+| All rejected attempts (draft + review) | 41 | 17 |
+| Fresh starts | 5 | 0 |
+| Time | 20.8 min | 14.0 min |
+| Keys that are numbers, symbols or equations (each with a note) | 4 | 6 |
+
+- 8 of the 30 drafts say "the textbook", against 2 in the earlier run. That is where the rewrite shows; the harness does not save raw attempts, so the exact count is unknown. All of those sentences read correctly.
+- The 2 extra number keys came from calculation concepts. One of them, "Newton's Second Law Equation", was left out entirely in the earlier run.
+- Review rejections rose from 3 to 8: five "the stem gives the answer away" and two concept labels that were too long. That is the reviewer varying between runs, not this change.
+- **Not fixed, seen while reading:**
+  - One attempt copied the textbook's display math without its backslashes ("[a = \dfrac{F_{net}}{m}. \nonumber ]"). The paragraph rule happened to reject it; no check looks for such math.
+  - One reviewer revision replaced `\(w\)` and `\(m\)` with "™" and "Å". This was the only case in all the saved runs.
 
 ### Fine-tuning Gemma (considered 2026-10-07, not started)
 

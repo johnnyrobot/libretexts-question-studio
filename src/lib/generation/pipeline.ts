@@ -629,7 +629,7 @@ function keepComputation(draft: QuestionDraft, revised: unknown): unknown {
 // largest round number both ends are multiples of that still gives ten or more
 // values.
 export function repairDraft(itemType: ItemType, value: unknown): unknown {
-  value = proseMath(value)
+  value = repairProse(value)
   if (itemType !== 'math' || !value || typeof value !== 'object') return value
   let record = lowercaseNames(value as Record<string, unknown>)
   if (Array.isArray(record.variables) && record.variables.some(hasZeroStep)) {
@@ -734,25 +734,76 @@ export function symbolsToMath(text: string): string {
     .join('')
 }
 
+// The model is shown the source as [paragraph N] blocks and cites them in
+// what students read: "Paragraph 21 explicitly states that …", "The source
+// states in paragraph 21 that …", "…, as shown in paragraphs 14 and 21",
+// "(Paragraph 10, 21)". As a check that sent them back, this was 27 of 34
+// rejections in 30 Gemma 4 E4B fill-in-the-blank drafts (2026-10-08), and one
+// question failed all 9 attempts on it. A citation in brackets or an "as shown
+// in" clause is dropped, "in paragraph N" after "states" is dropped, and a
+// paragraph that states something becomes the textbook. checkModelDraft still
+// rejects any form this misses.
+const PARAGRAPHS = String.raw`(?:the\s+)?paragraphs?\s+\d+(?:\s*(?:,\s*and|,|and|&|or|to|-|–)\s*\d+)*`
+const AS_SHOWN = String.raw`as\s+(?:\w+\s+)?(?:stated|shown|described|explained|mentioned|noted|seen|given|defined|discussed|presented|established|indicated|outlined)`
+const REPORTING_VERBS =
+  'state|show|confirm|provide|explain|say|describe|define|give|note|mention|present|introduce|list|indicate|discuss|emphasize|highlight|establish|clarif|express|support|demonstrate|illustrate|use|contain|relate|link|connect|tell'
+// "(paragraph 21)", "[see paragraphs 3 and 4]"
+const CITED_PARAGRAPHS = new RegExp(String.raw`\s*[([](?:see\s+|cf\.\s+)?${PARAGRAPHS}[)\]]`, 'gi')
+// "According to paragraph 3, the …", "As stated in paragraph 3, mass …"
+const PARAGRAPH_LEAD_IN = new RegExp(
+  String.raw`(^|[.!?]\s+)(?:according\s+to|in|from|per|based\s+on|${AS_SHOWN}\s+in)\s+${PARAGRAPHS}\s*,\s*(\p{Ll})?`,
+  'giu',
+)
+// ", as shown in paragraphs 14 and 21" and ", as noted in paragraph 3,"
+const AS_SHOWN_IN_PARAGRAPHS = new RegExp(String.raw`,?\s*\b${AS_SHOWN}\s+in\s+${PARAGRAPHS}\b,?`, 'gi')
+// "Paragraph 21 explicitly states", "paragraphs 24 and 26 both state"
+const PARAGRAPH_SAYS = new RegExp(
+  String.raw`\b${PARAGRAPHS}\s+((?:(?:also|explicitly|directly|clearly|both|further|specifically|then)\s+)*)(${REPORTING_VERBS})(?:e?s|ies|y)?\b`,
+  'gi',
+)
+// "states in paragraph 21 that", "states in paragraph 21:"
+const SAYS_IN_PARAGRAPH = new RegExp(String.raw`\s+(?:in|from)\s+${PARAGRAPHS}(?=\s*(?:that\b|[,:]))`, 'gi')
+// "is described in paragraph 21"
+const IN_PARAGRAPH = new RegExp(String.raw`\b(in|from)\s+${PARAGRAPHS}\b`, 'gi')
+
+export function stripParagraphMentions(text: string): string {
+  if (!/paragraph/i.test(text)) return text
+  return text
+    .replace(CITED_PARAGRAPHS, '')
+    .replace(PARAGRAPH_LEAD_IN, (_, before: string, letter?: string) => before + (letter ?? '').toUpperCase())
+    .replace(AS_SHOWN_IN_PARAGRAPHS, '')
+    .replace(PARAGRAPH_SAYS, (_, adverbs: string, verb: string, offset: number, whole: string) => {
+      const sentenceStart = /(?:^|[.!?]\s+)$/.test(whole.slice(0, offset))
+      return `${sentenceStart ? 'The' : 'the'} textbook ${adverbs.replace(/\bboth\s+/gi, '')}${thirdPerson(verb)}`
+    })
+    .replace(SAYS_IN_PARAGRAPH, '')
+    .replace(IN_PARAGRAPH, '$1 the textbook')
+}
+
+function thirdPerson(stem: string): string {
+  if (stem.toLowerCase() === 'clarif') return `${stem}ies`
+  return /(?:s|sh|ch|x)$/i.test(stem) ? `${stem}es` : `${stem}s`
+}
+
 // Formulas, variable names, ids and units are not prose.
 const NOT_PROSE = new Set(['answer_formula', 'constraints', 'variables', 'units', 'id', 'name'])
 // ADAPT lists titles as text, so they keep a symbol as written.
 const PLAIN_TEXT = new Set(['title', 'concept_label'])
 
-function proseMath(value: unknown, plain = false): unknown {
+function repairProse(value: unknown, plain = false): unknown {
   if (typeof value === 'string') {
-    const text = dollarsToDelimiters(controlsToBackslashes(value))
+    const text = stripParagraphMentions(dollarsToDelimiters(controlsToBackslashes(value)))
     return plain ? text : symbolsToMath(text)
   }
   if (Array.isArray(value)) {
-    const next = value.map((item) => proseMath(item, plain))
+    const next = value.map((item) => repairProse(item, plain))
     return next.every((item, i) => item === value[i]) ? value : next
   }
   if (!value || typeof value !== 'object') return value
   let changed = false
   const next: Record<string, unknown> = {}
   for (const [key, item] of Object.entries(value)) {
-    next[key] = NOT_PROSE.has(key) ? item : proseMath(item, plain || PLAIN_TEXT.has(key))
+    next[key] = NOT_PROSE.has(key) ? item : repairProse(item, plain || PLAIN_TEXT.has(key))
     changed ||= next[key] !== item
   }
   return changed ? next : value

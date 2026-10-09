@@ -11,10 +11,11 @@ import {
   planUnits,
   repairDraft,
   runGeneration,
+  stripParagraphMentions,
   stripSourceReferences,
   symbolsToMath,
 } from './pipeline'
-import { parseDraft, type DraftOf, type ItemType } from './schema'
+import { checkModelDraft, parseDraft, type DraftOf, type ItemType } from './schema'
 
 const source: StoredSource = {
   id: 'src-1',
@@ -486,6 +487,59 @@ describe('stripSourceReferences', () => {
     expect(stripSourceReferences('Match each term to its definition as found in the source text.')).toBe(
       'Match each term to its definition.',
     )
+  })
+})
+
+describe('stripParagraphMentions', () => {
+  it('rewrites the paragraph citations Gemma 4 E4B wrote into explanations', () => {
+    const cases: [string, string][] = [
+      [
+        'Paragraph 21 explicitly states that the acceleration of a system is inversely proportional to its mass.',
+        'The textbook explicitly states that the acceleration of a system is inversely proportional to its mass.',
+      ],
+      ['Paragraph 24 and 26 both state the equation F_net = ma.', 'The textbook states the equation F_net = ma.'],
+      [
+        'The question asks for the formula, and paragraph 19 provides the formula: a = F_net / m.',
+        'The question asks for the formula, and the textbook provides the formula: a = F_net / m.',
+      ],
+      ['The source states in paragraph 21 that acceleration is inversely proportional to mass.', 'The source states that acceleration is inversely proportional to mass.'],
+      ['The source states in paragraph 21: "The acceleration of a system is …"', 'The source states: "The acceleration of a system is …"'],
+      ['The source states in paragraph 19, "Newton’s second law is …"', 'The source states, "Newton’s second law is …"'],
+      [
+        'The text states that acceleration is inversely proportional to the mass of the system, as shown in paragraphs 14 and 21.',
+        'The text states that acceleration is inversely proportional to the mass of the system.',
+      ],
+      [
+        'acting on a system (Paragraph 10, 21), and that this is shown by \\(a \\propto F_{net}\\) (Paragraph 12).',
+        'acting on a system, and that this is shown by \\(a \\propto F_{net}\\).',
+      ],
+      ['using the proportionality [paragraph 12] and explicitly states, "the net external force" [paragraph 13].', 'using the proportionality and explicitly states, "the net external force".'],
+    ]
+    for (const [text, expected] of cases) expect(stripParagraphMentions(text)).toBe(expected)
+  })
+
+  it('keeps sentences whole when the citation leads or interrupts them', () => {
+    expect(stripParagraphMentions('As stated in paragraph 3, mass does not change with location.')).toBe('Mass does not change with location.')
+    expect(stripParagraphMentions('According to paragraph 7, the net force is zero.')).toBe('The net force is zero.')
+    expect(stripParagraphMentions('Mass stays the same; as noted in paragraph 3, weight does not.')).toBe('Mass stays the same; weight does not.')
+    expect(stripParagraphMentions('Acceleration, as stated in paragraph 21, is inversely proportional to mass.')).toBe(
+      'Acceleration is inversely proportional to mass.',
+    )
+    expect(stripParagraphMentions('This relationship is described in paragraph 21.')).toBe('This relationship is described in the textbook.')
+  })
+
+  it('leaves other text alone', () => {
+    for (const text of ['Each paragraph of a lab report has one idea.', 'Mass is constant.']) expect(stripParagraphMentions(text)).toBe(text)
+  })
+
+  it('lets a draft that cites paragraphs pass the checks through repairDraft', () => {
+    const { item_type: _, ...fib } = SAMPLE_DRAFTS.find((d) => d.item_type === 'fill_in_blank')!
+    void _
+    const explanation = 'Paragraph 21 explicitly states that the acceleration of a system is inversely proportional to its mass.'
+    expect(() => checkModelDraft(parseDraft('fill_in_blank', { ...fib, explanation }))).toThrow(/paragraph numbers/)
+    const repaired = parseDraft('fill_in_blank', repairDraft('fill_in_blank', { ...fib, explanation }))
+    expect(() => checkModelDraft(repaired)).not.toThrow()
+    expect(repaired.explanation).toBe('The textbook explicitly states that the acceleration of a system is inversely proportional to its mass.')
   })
 })
 
