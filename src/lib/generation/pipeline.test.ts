@@ -5,6 +5,7 @@ import { completeWithRetries, LLMError, type CompletionRequest, type Embedder, t
 import { db, type StoredSource } from '../storage/db'
 import { checkWorkedExample } from '../math/spec'
 import {
+  bracketsToDelimiters,
   cleanReviewNotes,
   controlsToBackslashes,
   dollarsToDelimiters,
@@ -711,6 +712,31 @@ describe('symbolsToMath', () => {
     const math = repairDraft('math', mathPayload({ answer_formula: 'v / t', units: 'mL_min' })) as ReturnType<typeof mathPayload>
     expect(math.units).toBe('mL_min')
     expect(math.worked_example.values.map((v) => v.name)).toEqual(['v', 't'])
+  })
+})
+
+describe('bracketsToDelimiters', () => {
+  it('restores the delimiters of display math copied without them', () => {
+    // As Gemma 4 E4B copied it from College Physics 4.3.
+    expect(bracketsToDelimiters('is given by [a = \\dfrac{F_{net}}{m}. \\nonumber ], which')).toBe(
+      'is given by \\[a = \\dfrac{F_{net}}{m}. \\nonumber \\], which',
+    )
+  })
+
+  it('leaves dropdown blanks, plain brackets and existing math alone', () => {
+    for (const text of [
+      'The cart [a1] because the force [b2].',
+      'Pick a value in [0, 1] [see the table].',
+      'So \\[ x \\in [0, 1] \\] and \\(y\\).',
+      'A force of [{{f}} N] acts.',
+    ]) {
+      expect(bracketsToDelimiters(text)).toBe(text)
+    }
+  })
+
+  it('runs before plain-text symbols are wrapped, through repairDraft', () => {
+    const draft = { stem: 'Use [a = \\dfrac{F_{net}}{m}] here.', choices: [] }
+    expect(repairDraft('multiple_choice', draft)).toEqual({ ...draft, stem: 'Use \\[a = \\dfrac{F_{net}}{m}\\] here.' })
   })
 })
 

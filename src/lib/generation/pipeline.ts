@@ -703,6 +703,22 @@ export function dollarsToDelimiters(text: string): string {
   return text.replace(DISPLAY_DOLLARS, '\\[$1\\]').replace(INLINE_DOLLARS, '\\($1\\)')
 }
 
+// The textbook writes display math as \[ … \]. Copying it, Gemma 4 kept the
+// backslash of \dfrac but not those of the delimiters: "[a = \dfrac{F_{net}}{m}.
+// \nonumber ]", which ADAPT shows as typed (1 of 3,844 saved texts,
+// 2026-10-09). Square brackets outside math that hold a LaTeX command are taken
+// as display math; dropdown blanks such as [a1] hold none.
+const BARE_DISPLAY = /(?<!\\)\[([^[\]]*\\[A-Za-z][^[\]]*)(?<!\\)\]/g
+const DELIMITED_MATH = /(\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/
+
+export function bracketsToDelimiters(text: string): string {
+  if (!text.includes('[')) return text
+  return text
+    .split(DELIMITED_MATH)
+    .map((part, i) => (i % 2 ? part : part.replace(BARE_DISPLAY, '\\[$1\\]')))
+    .join('')
+}
+
 // OpenAI's strict JSON output lets a backslash start only a valid JSON escape,
 // so where gpt-6-luna meant \( it sometimes wrote a control character: \f( and
 // \f), \u0005( and \u0005), or \u0002 before a correct \(. 3 of 18 Luna
@@ -792,7 +808,7 @@ const PLAIN_TEXT = new Set(['title', 'concept_label'])
 
 function repairProse(value: unknown, plain = false): unknown {
   if (typeof value === 'string') {
-    const text = stripParagraphMentions(dollarsToDelimiters(controlsToBackslashes(value)))
+    const text = stripParagraphMentions(bracketsToDelimiters(dollarsToDelimiters(controlsToBackslashes(value))))
     return plain ? text : symbolsToMath(text)
   }
   if (Array.isArray(value)) {

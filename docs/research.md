@@ -328,7 +328,7 @@ tokens/s on a base M1/M2 and 5–12 on Intel Iris Xe. The 2B model is about twic
 - The 2 extra number keys came from calculation concepts. One of them, "Newton's Second Law Equation", was left out entirely in the earlier run.
 - Review rejections rose from 3 to 8: five "the stem gives the answer away" and two concept labels that were too long. That is the reviewer varying between runs, not this change.
 - **Not fixed, seen while reading:**
-  - One attempt copied the textbook's display math without its backslashes ("[a = \dfrac{F_{net}}{m}. \nonumber ]"). The paragraph rule happened to reject it; no check looks for such math.
+  - One attempt copied the textbook's display math without its backslashes ("[a = \dfrac{F_{net}}{m}. \nonumber ]"). The paragraph rule happened to reject it. **Fixed 2026-10-09:** `bracketsToDelimiters` turns square brackets outside math that hold a LaTeX command back into `\[ \]`. On all 3,892 saved texts it changed only that one, which then rendered in KaTeX. 3 texts still have LaTeX with no delimiters at all, such as a choice "x = x_0 + \bar{v} t"; that is not fixed.
   - One reviewer revision replaced `\(w\)` and `\(m\)` with "™" and "Å". This was the only case in all the saved runs.
 
 ### Fine-tuning Gemma (considered 2026-10-07, not started)
