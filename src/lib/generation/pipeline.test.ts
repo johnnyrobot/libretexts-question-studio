@@ -5,6 +5,7 @@ import { completeWithRetries, LLMError, type CompletionRequest, type Embedder, t
 import { db, type StoredSource } from '../storage/db'
 import { checkWorkedExample } from '../math/spec'
 import {
+  bareLatexToMath,
   bracketsToDelimiters,
   cleanReviewNotes,
   controlsToBackslashes,
@@ -737,6 +738,41 @@ describe('bracketsToDelimiters', () => {
   it('runs before plain-text symbols are wrapped, through repairDraft', () => {
     const draft = { stem: 'Use [a = \\dfrac{F_{net}}{m}] here.', choices: [] }
     expect(repairDraft('multiple_choice', draft)).toEqual({ ...draft, stem: 'Use \\[a = \\dfrac{F_{net}}{m}\\] here.' })
+  })
+})
+
+describe('bareLatexToMath', () => {
+  it('wraps a text that is only a formula', () => {
+    expect(bareLatexToMath('x = x_0 + \\bar{v} t')).toBe('\\(x = x_0 + \\bar{v} t\\)')
+    expect(bareLatexToMath('a \\propto F_{net}')).toBe('\\(a \\propto F_{net}\\)')
+    expect(bareLatexToMath('{{m}} \\times {{a}} = {{answer}}.')).toBe('\\({{m}} \\times {{a}} = {{answer}}\\).')
+    expect(bareLatexToMath('9.8 \\text{ m/s}^2')).toBe('\\(9.8 \\text{ m/s}^2\\)')
+  })
+
+  it('writes the commands as characters inside a sentence', () => {
+    // As Gemma 4 E4B wrote it in an explanation.
+    expect(bareLatexToMath('Plugging in the values: w = (1.0 kg) \\times (9.8 m/s^2) = 9.8 N.')).toBe(
+      'Plugging in the values: w = (1.0 kg) × (9.8 m/s^2) = 9.8 N.',
+    )
+    expect(bareLatexToMath('An \\alpha particle has speed \\bar{v} and \\dfrac{1}{2} m v^2 \\text{ J}.')).toBe(
+      'An α particle has speed v̄ and 1/2 m v^2 J.',
+    )
+    expect(bareLatexToMath('So \\(a \\propto F\\) and a \\propto 1/m here.')).toBe('So \\(a \\propto F\\) and a ∝ 1/m here.')
+    expect(bareLatexToMath('Use \\unknowncommand here.')).toBe('Use \\unknowncommand here.')
+  })
+
+  it('never wraps titles, and leaves text without commands alone', () => {
+    expect(bareLatexToMath('a \\propto F', true)).toBe('a ∝ F')
+    for (const text of ['F_{net} = ma', 'Mass is constant.', 'Already \\(x \\times y\\).']) expect(bareLatexToMath(text)).toBe(text)
+  })
+
+  it('runs before plain-text symbols are wrapped, through repairDraft', () => {
+    const draft = { title: 'Using \\Delta x', stem: 'Pick one.', choices: [{ text: 'x = x_0 + \\bar{v} t', feedback: null }] }
+    expect(repairDraft('multiple_choice', draft)).toEqual({
+      ...draft,
+      title: 'Using Δ x',
+      choices: [{ text: '\\(x = x_0 + \\bar{v} t\\)', feedback: null }],
+    })
   })
 })
 

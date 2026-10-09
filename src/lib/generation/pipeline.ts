@@ -719,6 +719,47 @@ export function bracketsToDelimiters(text: string): string {
     .join('')
 }
 
+// Gemma 4 also writes LaTeX with no delimiters at all: a choice "x = x_0 +
+// \bar{v} t", a key "a \propto F_{net}", and "w = (1.0 kg) \times (9.8 m/s^2)
+// = 9.8 N" at the end of a sentence (3 of 3,892 saved texts, 2026-10-09).
+// ADAPT shows the commands as typed. A text that is nothing but a formula, with
+// no word of two letters or more, is wrapped in \( \). In a sentence the ends
+// of the formula cannot be told from the words around it, so common commands
+// become the characters they stand for, and unknown ones are left.
+const BARE_COMMAND = /\\[A-Za-z]+/
+const NOT_WORDS = /\\(?:text|mathrm|textrm|mbox)\s*\{[^{}]*\}|\\[A-Za-z]+|[_^](?:\{[^{}]*\}|[A-Za-z0-9])|\{\{[^{}]*\}\}/g
+const COMMAND_CHARACTERS: Record<string, string> = {
+  times: '×', cdot: '·', div: '÷', pm: '±', propto: '∝', approx: '≈', sim: '∼', neq: '≠', ne: '≠',
+  leq: '≤', le: '≤', geq: '≥', ge: '≥', ll: '≪', gg: '≫', infty: '∞', to: '→', rightarrow: '→',
+  leftarrow: '←', Rightarrow: '⇒', degree: '°', ldots: '…', cdots: '⋯',
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', Delta: 'Δ', epsilon: 'ε', varepsilon: 'ε', theta: 'θ',
+  lambda: 'λ', mu: 'μ', pi: 'π', rho: 'ρ', sigma: 'σ', Sigma: 'Σ', tau: 'τ', phi: 'φ', omega: 'ω', Omega: 'Ω',
+}
+const ACCENTS: Record<string, string> = { bar: '̄', vec: '⃗', hat: '̂', dot: '̇', tilde: '̃' }
+const asGroup = (text: string) => (/^[\w.]+$/.test(text.trim()) ? text.trim() : `(${text.trim()})`)
+
+export function bareLatexToMath(text: string, plain = false): string {
+  if (!BARE_COMMAND.test(text)) return text
+  const parts = text.split(DELIMITED_MATH)
+  if (!plain && parts.length === 1 && !/\p{L}{2,}/u.test(text.replace(NOT_WORDS, ' '))) {
+    const [, lead, formula, trail] = text.match(/^(\s*)([\s\S]*?)([.,;:]?\s*)$/)!
+    return `${lead}\\(${formula}\\)${trail}`
+  }
+  return parts.map((part, i) => (i % 2 ? part : latexToCharacters(part))).join('')
+}
+
+function latexToCharacters(text: string): string {
+  return text
+    .replace(/\\(?:left|right)(?![A-Za-z])\s*/g, '')
+    .replace(/\\(?:text|mathrm|textrm|mbox)\s*\{([^{}]*)\}/g, '$1')
+    .replace(/\\d?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_, top: string, bottom: string) => `${asGroup(top)}/${asGroup(bottom)}`)
+    .replace(/\\sqrt\s*\{([^{}]*)\}/g, (_, radicand: string) => `√${asGroup(radicand)}`)
+    .replace(/\\(bar|vec|hat|dot|tilde)\s*\{([A-Za-z])\}/g, (_, accent: string, letter: string) => letter + ACCENTS[accent])
+    .replace(/\\([A-Za-z]+)(?![A-Za-z])/g, (command, name: string) => COMMAND_CHARACTERS[name] ?? command)
+    .replace(/\\[,;: ]/g, ' ')
+    .replace(/ {2,}/g, ' ')
+}
+
 // OpenAI's strict JSON output lets a backslash start only a valid JSON escape,
 // so where gpt-6-luna meant \( it sometimes wrote a control character: \f( and
 // \f), \u0005( and \u0005), or \u0002 before a correct \(. 3 of 18 Luna
@@ -808,7 +849,8 @@ const PLAIN_TEXT = new Set(['title', 'concept_label'])
 
 function repairProse(value: unknown, plain = false): unknown {
   if (typeof value === 'string') {
-    const text = stripParagraphMentions(bracketsToDelimiters(dollarsToDelimiters(controlsToBackslashes(value))))
+    const delimited = bracketsToDelimiters(dollarsToDelimiters(controlsToBackslashes(value)))
+    const text = stripParagraphMentions(bareLatexToMath(delimited, plain))
     return plain ? text : symbolsToMath(text)
   }
   if (Array.isArray(value)) {
