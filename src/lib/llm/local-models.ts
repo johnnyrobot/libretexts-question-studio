@@ -4,7 +4,7 @@ import type { LLMProvider } from './types'
 // The lightweight half of the in-browser model support. The runtimes live in
 // ./transformers.ts (Transformers.js, for Gemma 4 and EmbeddingGemma 2) and
 // ./local.ts (WebLLM, for Qwen3.5) and are only imported when an instructor
-// uses them. Gemma 4 E4B is the default (see docs/research.md).
+// uses them. Gemma 4 E4B is the default.
 
 export type LocalModelKey = 'gemma-4-e4b' | 'qwen3.5-4b'
 
