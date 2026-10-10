@@ -1159,7 +1159,13 @@ const COMMAND_CHARACTERS: Record<string, string> = {
   lambda: 'λ', mu: 'μ', pi: 'π', rho: 'ρ', sigma: 'σ', Sigma: 'Σ', tau: 'τ', phi: 'φ', omega: 'ω', Omega: 'Ω',
 }
 const ACCENTS: Record<string, string> = { bar: '̄', vec: '⃗', hat: '̂', dot: '̇', tilde: '̃' }
+// Text-mode spellings of characters: "F\textsubscript{net}" is F_net, which
+// symbolsToMath then writes as math; "m/s\textasciicircum{}2" is m/s^2. As in
+// LaTeX, the empty braces or the space that ends the command are dropped
+// ("F\textunderscore net" is F_net).
+const TEXT_CHARACTERS: Record<string, string> = { textasciicircum: '^', textasciitilde: '~', textunderscore: '_' }
 const asGroup = (text: string) => (/^[\w.]+$/.test(text.trim()) ? text.trim() : `(${text.trim()})`)
+const asIndex = (text: string) => (/^\w+$/.test(text.trim()) ? text.trim() : `{${text.trim()}}`)
 
 export function bareLatexToMath(text: string, plain = false): string {
   if (!BARE_COMMAND.test(text)) return text
@@ -1174,7 +1180,10 @@ export function bareLatexToMath(text: string, plain = false): string {
 function latexToCharacters(text: string): string {
   return text
     .replace(/\\(?:left|right)(?![A-Za-z])\s*/g, '')
-    .replace(/\\(?:text|mathrm|textrm|mbox)\s*\{([^{}]*)\}/g, '$1')
+    .replace(/\\(?:text|textrm|textbf|textit|mathrm|mbox)\s*\{([^{}]*)\}/g, '$1')
+    .replace(/\\textsubscript\s*\{([^{}]*)\}/g, (_, inner: string) => `_${asIndex(inner)}`)
+    .replace(/\\textsuperscript\s*\{([^{}]*)\}/g, (_, inner: string) => `^${asIndex(inner)}`)
+    .replace(/\\(textasciicircum|textasciitilde|textunderscore)(?![A-Za-z])(?:\{\}|[^\S\n]+)?/g, (_, name: string) => TEXT_CHARACTERS[name])
     .replace(/\\d?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_, top: string, bottom: string) => `${asGroup(top)}/${asGroup(bottom)}`)
     .replace(/\\sqrt\s*\{([^{}]*)\}/g, (_, radicand: string) => `√${asGroup(radicand)}`)
     .replace(/\\(bar|vec|hat|dot|tilde)\s*\{([A-Za-z])\}/g, (_, accent: string, letter: string) => letter + ACCENTS[accent])
@@ -1188,11 +1197,28 @@ function latexToCharacters(text: string): string {
 // \f), \u0005( and \u0005), or \u0002 before a correct \(. 3 of 18 Luna
 // questions had one (2026-10-07), and their math did not render. Tab, newline
 // and carriage return can be real text and are left alone.
+//
+// A command whose backslash and first letter make a JSON escape (\frac,
+// \textsubscript) gets its backslash back before the JSON is parsed
+// (repairLatexEscapes in llm/types.ts). That leaves \to, \ne and \nu, which
+// after a line break or tab read as the words "o", "e" and "u": "The
+// constants are:\ne = 2.718" is a real line break. Inside math they can only
+// be commands, so there they are restored: Gemma 4 E4B wrote "$F_{A \to B}$"
+// 6 times in the saved runs (2026-10-09), and the tab came through.
 const CONTROL_BEFORE_BRACKET = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]([()[\]])/g
 const CONTROL_BEFORE_BACKSLASH = /[\u0000-\u0008\u000b\u000c\u000e-\u001f](?=\\)/g
+const ESCAPED_IN_MATH = /[\t\n]([oeu])(?![A-Za-z])/g
+const ESCAPE_LETTER: Record<string, string> = { '\t': 't', '\n': 'n' }
+// Math at this point still has the $ delimiters the model wrote.
+const MATH_SPAN = /(\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|\$\$(?!\s)[^$]+?(?<!\s)\$\$|(?<![\\$])\$(?![\s$])[^$\n]*?[^\s\\$]\$(?![\d$]))/
 
 export function controlsToBackslashes(text: string): string {
-  return text.replace(CONTROL_BEFORE_BRACKET, '\\$1').replace(CONTROL_BEFORE_BACKSLASH, '')
+  return text
+    .split(MATH_SPAN)
+    .map((part, i) => (i % 2 ? part.replace(ESCAPED_IN_MATH, (match, letter: string) => `\\${ESCAPE_LETTER[match[0]]}${letter}`) : part))
+    .join('')
+    .replace(CONTROL_BEFORE_BRACKET, '\\$1')
+    .replace(CONTROL_BEFORE_BACKSLASH, '')
 }
 
 // Gemma 4 writes subscripted symbols as plain text ("F_net", "F_{net}"), which

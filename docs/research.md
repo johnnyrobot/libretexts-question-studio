@@ -399,7 +399,7 @@ The sentence and explanation stay as they were, so the question's facts do not c
   - 10 got a new blank. Four were "9.8 N", "9.8 m/s^2" or "force of gravity" becoming "weight" or "mass". Others included "itself" becoming "pairs" and "internal forces" becoming "internal".
   - 4 kept their blank with a note: "differently" twice, "motion" and "reaction force".
 - **Given away:** both new weak blanks were "given away". "An ____ force acts from outside the system …, while an internal force acts between elements" replaced the hard-to-type key "elements of the system", and "net external ____ … `\(F_{net}\)`" replaced "`\(F_{net}\)`/m". Both are still gradable, which the old keys were not.
-- **Broken:** the broken question had the key "is" in "The weight ____ of an object…". Its new blank kept the stray word, giving "The ____ is of an object".
+- **Broken:** the broken question had the key "is" in "The weight ____ of an object…". Its new blank kept the stray word, giving "The ____ is of an object". **Fixed 2026-10-09:** a key that is only function words is sent back with the draft (`checkModelDraft`), so the sentence is never built around it; see "A second pass" under "Given-away words" below.
 - **Time:** the check and the new blanks took 2.2 s a question, 67 s in all. The other 6 minutes came from drafting and review. They had 26 rejected attempts against 17 and 2 fresh starts, which is the variation between runs seen before.
 - **Limits:** one pair of pages, one model and one judge, who also wrote the check.
 
@@ -491,6 +491,23 @@ The rule's thresholds were chosen on these questions, so this table flatters it.
   - "outside the ____ of interest" (system), the 1 good blank it flags.
   - It looks at two words on each side, so "Two equal and opposite ____" (forces) gets through. "Equal and opposite" is always followed by force or forces, but "and opposite" is followed by them only 3 times in 9; the other 6 are "… magnitude and opposite in direction".
 - **Speed:** the index is built when a question first needs it, so OpenAI runs and runs without fill-in-the-blank questions skip it. For a 1M-word book it takes about 0.3 s once, and then about 1 ms per candidate, against 60 ms per candidate before.
+
+**A second pass at the known limits (2026-10-09):** the same judged candidates (108 on the two pages, 27 on the fresh chapter), replayed through the real module with each candidate's 1–3-word contexts counted once and the rules then varied offline. Selection is over the 79 sent-back questions, as in the tables above (now 29 good / 20 given away / 3 ambiguous / 4 broken / 22 kept).
+
+| Variant | Good flagged (of 31) | Given away flagged (of 54) | Selection: good / given away / ambiguous / kept | Verdict |
+|---|---|---|---|---|
+| The rule as it is | 1 | 25 | 29 / 20 / 3 / 22 | — |
+| Skip function words as new blanks ("each", "outside") | 1 | 28 | 29 / 18 / 3 / 24 | **Adopted** |
+| Also count three-word contexts (any threshold tried) | 3 | 29 | 27 / 16 / 6 / 25 | Rejected |
+| Count the right side only after a function word (noun blanks) | 1 | 24 | 29 / 20 / 3 / 22 | Rejected |
+| Prefer candidates named in the concept label or the title | — | — | unchanged, or 28 / 18 / 4 / 24 | Rejected |
+
+- **Function words:** a candidate that is only function words never passes as a key. Of the judged candidates, 3 were ("each", "outside" twice), all given away; no good one. The same check rejects a draft whose key is a function word ("is", "between": 2 of 287 saved keys), which is what broke "The ____ is of an object" above. The list leaves out words that are also science terms ("second", "like", "up" and "down", "out", "over", "under"), and a word written as a symbol or acronym is never one: He, Be, As and In are elements, AND and NOT are gates, and a single letter ("a" in "F = m ____") is a symbol, which the number-and-symbol rule covers. A Codex review found the first version rejecting "down" and "He": the draft was retried nine times and then left out, with no word to the instructor.
+- **Three-word contexts** do catch "Two equal and opposite ____" (forces, 4 more given-away flags: "equal and opposite" is followed by force or forces 3 times in 3), but they also flag "in the same ____ as the net external force" (direction), judged good three times, so the selection loses 2 good blanks and gains 3 ambiguous ones. Every threshold tried (at least 1, 2 or 3 other uses; half or all of them) gave the same trade.
+- **Noun blanks only:** the idea was that a word predicted by what *follows* it is a modifier whose question is legitimate ("A ____ diagram", free-body; "Newton's ____ law", second), while a word predicted by what precedes it is a filler. Counting the right side only after a function word ("the ____ of interest", "a ____ in motion") does unflag "free-body", but it also lets "____ second law" (Newton's) through, and loses one flag on the two pages. No gain.
+- **A higher ratio** (0.6 or 0.75 instead of 0.5) was already rejected above: it would unflag "Newton's ____ law" (second: 29 of 49) at the cost of 3 given-away flags.
+- **Why the model's own judgement would not do better:** the plain-English giveaways the rule misses ("twice as ____", far) are exactly what a language model's probabilities would catch, but the same probabilities are just as high for "Forces always occur in ____" (pairs), "in the same ____ as the net force" (direction) and "mass is the quantity of ____" (matter), all judged good: the blank is the point of the question and the student is expected to know the phrase. Shown only the words around the blank, Gemma hallucinated (above); asked whether a blank is guessable, it could not tell the two kinds apart (above). The rule's remaining misses and false flags are of this kind, and no count or score over the words distinguishes them.
+- **So the limits stand:** "Newton's ____ law" (second), "A ____ diagram" (free-body) and "the ____ of interest" (system) are skipped as candidates though good; "Two equal and opposite ____" (forces) and "twice as ____" (far) get through when the model offers them first. A skipped good candidate costs at most that candidate; the next one is tried, or the old blank is kept with a note.
 
 ### Figure labels (2026-10-09)
 
@@ -584,6 +601,13 @@ That concept's explanations quote the textbook's "a larger acceleration \((al>a)
 
 **Fix 2, a check:** `checkSymbols` sends back a draft or a reviewer's revision whose own text has an escape code such as `\u03b1`, or a symbol from the arrows, letterlike, mathematical and technical blocks. It keeps symbols that the source section uses, and − and ∝, which Gemma wrote correctly. It reads the model's text before the repairs, which write `\leftarrow` as ←. Over the 1,991 distinct saved drafts it flags 75, and I read all 75: every one was a stray symbol. It covers OpenAI's strict JSON too, which made the same kind of slip with control characters (see "Luna" below). It cannot catch a slip that leaves no symbol, such as "(al>a)" for \((al>a)\).
 
+**JSON escapes that are letters (2026-10-09):**
+- The live math run (see "Math questions on one formula") had a stem with "9.80 m/s" followed by a tab and "extasciicircum{}2". The model wrote `\textasciicircum{}`, and `\t` is a JSON escape, so the grammar accepted it as a tab. The decoder cannot mask `\t`, `\n`, `\f`, `\b` and `\r` as it masks `\u` (above): a tab or a line break is also real text.
+- Since 2026-10-05, `parseJsonResponse` (`repairLatexEscapes`, both providers) already reads such an escape as LaTeX when the letters after it spell one of about 40 known commands (`\frac`, `\bar`, `\theta`, `\text`…), and leaves `\to`, `\ne` and `\nu`, which after a line break or tab read as the words "o", "e" and "u". What it lacked was the text-mode family: `\textsubscript`, `\textsuperscript`, `\textunderscore`, `\textasciicircum`, `\textasciitilde`, `\textbackslash`.
+- In the 9,374 distinct strings of the saved runs, 52 tabs were followed by letters, every one of them such a command: `\textsubscript` 30 ("F\textsubscript{net}"), `\textunderscore` 10, `\textsuperscript` 6, `\to` 6 (inside math, "$F_{A \to B}$"). Of the 820 newlines, none was: commands are lowercase, and the prose after a line break starts with a capital letter ("Choice 1", "Therefore").
+- **The fix:** `repairLatexEscapes` now knows the text-mode family. `\to`, `\ne` and `\nu` are restored by `controlsToBackslashes` only inside math (`$…$`, `\(…\)`, `\[…\]`), where they can only be commands; in prose, "The constants are:⏎e = 2.718" stays a line break. (A first version restored them anywhere a command was spelled; a Codex review showed that stem turning into "The constants are:≠ = 2.718" and passing every check, since `checkSymbols` reads the raw value.) `latexToCharacters`, which runs on prose outside math, then writes the text-mode spellings as characters: `\textsubscript{net}` becomes `_net`, which `symbolsToMath` wraps as math, `\textsuperscript{2}` becomes `^2`, `\textasciicircum{}`, `\textasciitilde{}` and `\textunderscore` become `^`, `~` and `_`, and `\textbf{x}` and `\textit{x}` become x. So "9.80 m/s\textasciicircum{}2" reads "9.80 m/s^2", and "F\textsubscript{net} = ma" reads "\(F_{net}\) = ma".
+- Replayed on all 9,374 strings, from the JSON the model wrote through to the repaired prose: the 52 commands in 30 strings are restored (46 by the JSON repair, the 6 `\to` inside math by the prose repair), no string keeps a tab before letters, and no string's line breaks change.
+
 ### Notes left from the old blank (2026-10-09)
 
 **The problem:** the reviewer reads a question before the fill-in-the-blank check. When the check then gives it a new blank, the reviewer's notes describe a question that no longer exists. In the saved check run, 10 of 30 questions got a new blank, and 8 of the 9 notes on them were about the old blank. One example is "The correct answer '9.8 N' contains a number and unit…" on a question whose answer is now "weight". The one still true said the stem was "slightly wordy".
@@ -591,6 +615,34 @@ That concept's explanations quote the textbook's "a larger acceleration \((al>a)
 **The fix:**
 - When the check replaces the blank, the reviewer's notes on the question are dropped. Notes from the app (a requested calculation written as another type, the duplicate check) stay. The new blank has passed the check.
 - Sent back with a problem, the reviewer sometimes listed that problem as a note after fixing it, word for word: "the stem gives the answer away: "displacement" already appears in it". This happened in 4 of 895 saved notes. A note that repeats a problem the reviewer was sent back with is now dropped.
+
+### Math questions on one formula (2026-10-09)
+
+**The problem:** math questions on a page cluster on one calculation. In the "Automatic retry test" set (2026-10-07, Gemma 4 E4B, *College Physics* 4.3 and 4.4, 9 math questions), 7 of the 9 find the acceleration from the net force and the mass (`f_net / m`), 5 of them on one page under the label "Calculating Acceleration", and 3 of those word for word: "If the net external force acting on a system is {{f_net}} N and the total mass of the system is {{m}} kg, what is the acceleration produced?" The duplicate check noted 5 of them, and they were still written. The 6-question math set on 2.3 and 2.5 (2026-10-06) had 6 different calculations: the clustering is a property of the page, not of the model alone.
+
+**Why:**
+- Each section's concept extractor returns at most one quantitative concept. In the saved concept runs (8 sections of 4.3 and 4.4, 3 times each), a section asked for 2 calculations still returned 1 quantitative concept every time. Section 4.3 has two relationships, w = mg and a = F_net/m, and most sections only one.
+- A math question takes the least-used quantitative concept on its page (`findQuantitative`), but "Calculating Acceleration", "Calculation of Acceleration" and "Newton's Second Law Equation" from different sections are the same relationship with different labels, so spreading questions across them changes nothing.
+- The draft prompt lists the set's last 12 stems under "Do not repeat or closely paraphrase". Gemma paraphrased them anyway: the same givens, the same unknown.
+
+**What was tried and reverted (2026-10-09):** two prompt-side changes, measured in one live run and then taken out again.
+- A math draft on a concept that already had calculations in the set was shown them with their known values ("… (known values: f_net, m)") and told to ask for a different quantity: give the one they ask for as a known value and ask for one of theirs, or compute another relationship the source gives.
+- With the duplicate check on, a math draft whose stem was very close to one already in the set (the same 0.94 cosine as the note) was drafted once more before review, told what the repeated question gives and asks; if the second draft failed, the first was kept.
+- **The run:** the set "Math variety test (2026-10-09)", Gemma 4 E4B, 4.3 and 4.4, math only, 5 per page, duplicate check on. 10 of 10 written in 37 min (page 1 in 7.6 min, page 2 in 29 min, with 3 fresh starts on capitalised variable names such as `F_floor`).
+
+| | Baseline, 9 questions (2026-10-07) | With the two changes, 10 questions |
+|---|---|---|
+| Distinct unknowns | 3 (weight, net force, acceleration ×7) | 3 (weight, mass, acceleration ×8) |
+| Acceleration from force over mass | 7 of 9 | 8 of 10 |
+| Word-for-word repeats | 3 | 0 (no pair over 0.8 word overlap) |
+| "Very similar" notes | 5 | 6 |
+| Redrafts | — | 6, each 50–180 s; all 6 still noted as repeats |
+
+- **What happened:** page 2's only quantitative concept is the worked example (the professor, cart and equipment), and all 5 of its questions compute that example's acceleration, told each time what the earlier ones ask. The redrafts changed wording, not the unknown: one fixed the force at 150 N, one merged the masses into `m_total`. On page 1 the one real change was a mass from a weight, which the baseline also had once (a net force from m and a) with no hint. The hint has no measurable effect, and the redraft costs about 10 minutes for none.
+- **Why the first rule could not see page 1's repeat:** it matched calculations by concept label, and "Newton's Second Law" and "Calculating acceleration from net force" are two labels for one relationship. The duplicate check sees across labels, but the redraft it triggered did not help either.
+- **Also seen:** a stem with `\textasciicircum{}2` arrived as a tab followed by "extasciicircum{}2". Fixed the same day; see "JSON escapes that are letters" under "Stray symbols".
+
+**Where this leaves it:** on a page with one formula, the model writes that formula's calculation for every math slot, and telling it otherwise does not change that. Each repeat does carry a "Very similar" note. The untried option is structural rather than prompted: when a math draft repeats one in the set, write the next requested non-quantitative type on the concept instead, with a note like the one for pages without numbers ("A math question was requested, but it repeated one already in the set, so a multiple choice question was written instead"). That trades a copy for a usable question of another type, which changes what an instructor who asked for math gets.
 
 ### Fine-tuning Gemma (considered 2026-10-07, not started)
 

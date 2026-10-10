@@ -9,6 +9,14 @@ describe('parseJsonResponse', () => {
     expect(parseJsonResponse(raw)).toEqual({ stem: String.raw`Find $\bar{v}=\frac{\Delta x}{t}$ for ($\text{30 m}$) at $\theta$ and $\rho \neq 0$.` })
   })
 
+  it('reads the text-mode spellings Gemma 4 E4B writes as LaTeX too', () => {
+    // These arrived as a tab and "extsubscript{net}" in the saved runs.
+    const raw = String.raw`{"stem": "F\textsubscript{net} = ma, 9.80 m/s\textasciicircum{}2, 10\textsuperscript{3}, F\textunderscore net, \textbf{x}"}`
+    expect(parseJsonResponse(raw)).toEqual({ stem: String.raw`F\textsubscript{net} = ma, 9.80 m/s\textasciicircum{}2, 10\textsuperscript{3}, F\textunderscore net, \textbf{x}` })
+    // \to, \ne and \nu read as text here; inside math, controlsToBackslashes restores them.
+    expect(parseJsonResponse(String.raw`{"a": "$F_{A \to B}$ \ne \nu"}`)).toEqual({ a: '$F_{A \to B}$ \ne \nu' })
+  })
+
   it('keeps real escapes and already doubled backslashes', () => {
     const raw = String.raw`{"a": "line\nbreak\ttab \\frac{1}{2} \"q\" \nu \to"}`
     expect(parseJsonResponse(raw)).toEqual({ a: 'line\nbreak\ttab \\frac{1}{2} "q" \nu \to' })

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SAMPLE_DRAFTS } from '../qti/fixtures'
-import { completeWithRetries, LLMError, type CompletionRequest, type Embedder, type LLMProvider } from '../llm/types'
+import { completeWithRetries, LLMError, repairLatexEscapes, type CompletionRequest, type Embedder, type LLMProvider } from '../llm/types'
 import { db, type StoredSource } from '../storage/db'
 import { checkWorkedExample } from '../math/spec'
 import {
@@ -514,6 +514,30 @@ describe('runGeneration', () => {
     expect(typed.calls).toEqual(['blank_check', 'blank_choice', 'blank_check'])
     expect(typed.draft.stem).toBe('The green ____ absorbs light of about 680 nm.')
     expect(typed.draft.answer).toBe('pigment')
+    // A function word is skipped without a check.
+    const filler = await run({ stem: 'Each green pigment that ____ light is called chlorophyll.', answer: 'captures', alternates: [] }, ['absorbs', 'chlorophyll'], [['Each', 'chlorophyll']])
+    expect(filler.calls).toEqual(['blank_check', 'blank_choice', 'blank_check'])
+    expect(filler.draft.stem).toBe('Each green pigment that captures light is called ____.')
+  })
+
+  it('sends back a fill-in-the-blank key that is only a function word', async () => {
+    const provider = new FakeProvider()
+    const original = provider.complete.bind(provider)
+    const prompts: string[] = []
+    provider.complete = (request) =>
+      request.schemaName === 'fill_in_blank_item'
+        ? completeWithRetries(request, async (prompt) => {
+            prompts.push(prompt)
+            const { item_type: _, ...fixture } = SAMPLE_DRAFTS.find((d) => d.item_type === 'fill_in_blank')!
+            void _
+            const broken = { stem: 'The green pigment ____ called chlorophyll.', answer: 'is', alternates: [] }
+            return { text: JSON.stringify({ ...fixture, ...(prompts.length === 1 ? broken : {}), citation_paragraphs: [0] }), usage: null }
+          })
+        : original(request)
+    const result = await runGeneration('set-1', source, { itemTypes: ['fill_in_blank'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(result.created).toBe(1)
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain('"is" is a function word, not a term')
   })
 
   it('takes up to five new blanks, dropping an empty or overlong one', async () => {
@@ -689,8 +713,10 @@ describe('fill-in-the-blank checks', () => {
     const ok = blankedDraft(draft, 'The Green pigment that captures light is called chlorophyll.', 'green')
     expect(ok?.stem).toBe('The ____ pigment that captures light is called chlorophyll.')
     expect(ok?.answer).toBe('Green')
-    // Not in the sentence, the old key, a number, or too long.
+    // Not in the sentence, the old key, a number, too long, or a function word.
     expect(blankedDraft(draft, 'The pigment is called chlorophyll.', 'leaf')).toBeNull()
+    expect(blankedDraft(draft, 'Each pigment captures light.', 'Each')).toBeNull()
+    expect(blankedDraft(draft, 'The down quark is the lighter one.', 'down')?.answer).toBe('down')
     expect(blankedDraft(draft, 'The pigment is called chlorophyll.', 'chlorophyll')).toBeNull()
     expect(blankedDraft(draft, 'The pigment absorbs 680 nm light.', '680 nm')).toBeNull()
     expect(blankedDraft(draft, 'Its weight is 9.8 N.', 'N')).toBeNull()
@@ -1127,6 +1153,10 @@ describe('bareLatexToMath', () => {
     )
     expect(bareLatexToMath('So \\(a \\propto F\\) and a \\propto 1/m here.')).toBe('So \\(a \\propto F\\) and a ∝ 1/m here.')
     expect(bareLatexToMath('Use \\unknowncommand here.')).toBe('Use \\unknowncommand here.')
+    // Text-mode spellings of characters, as Gemma 4 E4B wrote them.
+    expect(bareLatexToMath('So 9.80 m/s\\textasciicircum{}2, F\\textsubscript{net}, 10\\textsuperscript{3}, a\\textunderscore b, \\textbf{net} and \\textsuperscript{n+1}.')).toBe(
+      'So 9.80 m/s^2, F_net, 10^3, a_b, net and ^{n+1}.',
+    )
   })
 
   it('never wraps titles, and leaves text without commands alone', () => {
@@ -1145,6 +1175,23 @@ describe('bareLatexToMath', () => {
 })
 
 describe('controlsToBackslashes', () => {
+  it('restores \\to, \\ne and \\nu read as JSON escapes, but only inside math', () => {
+    // The model wrote "$F_{A \to B}$"; \t is a tab in JSON.
+    expect(controlsToBackslashes(`If A exerts $F_{A ${'\t'}o B}$ on B, then B exerts $F_{B ${'\t'}o A}$ on A.`)).toBe(
+      'If A exerts $F_{A \\to B}$ on B, then B exerts $F_{B \\to A}$ on A.',
+    )
+    expect(controlsToBackslashes(`so \\(x ${'\n'}e y\\) and \\[${'\n'}u = 5\\] and $$a ${'\t'}o b$$`)).toBe('so \\(x \\ne y\\) and \\[\\nu = 5\\] and $$a \\to b$$')
+    // In prose the same characters are a line break or a tab before a word.
+    for (const text of ['The constants are:\ne = 2.718 and\nu = 3.', 'Choice 1 is right.\nChoice 2 is wrong.', 'F_net = m * a\nF_net = 50', 'from a\to b', '\n\nThe end.']) {
+      expect(controlsToBackslashes(text)).toBe(text)
+    }
+    // Unambiguous commands get their backslash back before the JSON is parsed
+    // (repairLatexEscapes), and then read as characters.
+    const parsed = JSON.parse(repairLatexEscapes('{"stem": "The weight is 9.80 m/s\\textasciicircum{}2 and F\\textsubscript{net} = ma, so \\frac{F}{m}."}'))
+    expect(parsed.stem).toContain('\\textsubscript{net}')
+    expect(repairDraft('multiple_choice', parsed)).toEqual({ stem: 'The weight is 9.80 m/s^2 and \\(F_{net}\\) = ma, so F/m.' })
+  })
+
   it('restores the backslash of math delimiters that came out as control characters', () => {
     // As gpt-6-luna wrote them under OpenAI's strict JSON output.
     expect(controlsToBackslashes('gives \f(\\frac{ {{f}} }{ {{m}} } = {{answer}}\f).')).toBe('gives \\(\\frac{ {{f}} }{ {{m}} } = {{answer}}\\).')

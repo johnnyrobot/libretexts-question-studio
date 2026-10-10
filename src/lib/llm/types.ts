@@ -132,9 +132,14 @@ export function parseJsonResponse(text: string): unknown {
 
 // LaTeX commands whose backslash and first letter make a JSON escape: a model
 // that writes "\frac" in JSON means \frac, not a form feed and "rac". Escaped
-// strings that read as text ("\nu" after a line break, "\ne", "\to") are left.
+// strings that read as text ("\nu" after a line break, "\ne", "\to") are left;
+// inside math, controlsToBackslashes (generation/pipeline.ts) restores them.
+// Gemma 4 E4B also writes the text-mode spellings \textsubscript{net},
+// \textsuperscript{2}, \textunderscore and \textasciicircum{}, which arrived
+// as a tab and "extsubscript{net}" (46 of the 52 lost commands in the saved
+// runs, 2026-10-09).
 const LATEX_AFTER_ESCAPE =
-  /^(?:b(?:ar|eta|inom|oldsymbol|ullet|egin|igg?|f)|f(?:rac|orall|lat)|n(?:abla|eq|ot|eg|ewline|onumber|mid)|r(?:ho|ight(?:arrow)?|angle|floor|ceil|m)|t(?:heta|au|imes|ext(?:bf|it|rm)?|anh?|riangle|ilde|frac|herefore|op))(?![a-zA-Z])/
+  /^(?:b(?:ar|eta|inom|oldsymbol|ullet|egin|igg?|f)|f(?:rac|orall|lat)|n(?:abla|eq|ot|eg|ewline|onumber|mid)|r(?:ho|ight(?:arrow)?|angle|floor|ceil|m)|t(?:heta|au|imes|ext(?:bf|it|rm|subscript|superscript|underscore|asciicircum|asciitilde|backslash)?|anh?|riangle|ilde|frac|herefore|op))(?![a-zA-Z])/
 
 // Doubles the backslash of each such escape inside JSON strings.
 export function repairLatexEscapes(json: string): string {

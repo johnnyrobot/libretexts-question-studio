@@ -362,6 +362,39 @@ export function checkModelDraft(draft: QuestionDraft): void {
       `students never see "${reference[0]}"; describe in the question whatever it needs from it, and do not mention it`,
     )
   }
+  if (draft.item_type === 'fill_in_blank' && isFunctionWords(draft.answer)) {
+    throw new Error(
+      `"${draft.answer}" is a function word, not a term: keep it in the sentence and blank a word that carries the idea the sentence teaches`,
+    )
+  }
+}
+
+// A blank on a function word tests nothing, and the sentence it leaves is
+// often broken: Gemma 4 E4B blanked "is" in "The weight ____ of an object is
+// calculated…" and "between" in "an internal force acts ____ elements of the
+// system" (2 of 287 saved keys, 2026-10-09). The check that moves a blank
+// skips such words too ("each", "outside": 3 of the 54 given-away blanks in
+// the judged pool). Words that are also science terms are not here: "second",
+// "first", "like", "up" and "down" (quarks), "out", "off", "over", "under".
+// Nor is a word written as a symbol or an acronym: He, Be, As and In are
+// elements, AND, OR and NOT are logic gates, and a single letter is a symbol.
+const FUNCTION_WORDS = new Set(
+  `an the this that these those it its they them their there here
+   of to in on at by for with from into onto upon about between among within without through during before after
+   above below against toward towards across along around behind beside beyond inside outside near
+   than as due per via
+   and or but nor so yet because although though while whereas if unless when where whether which who whom whose what how why
+   is are was were be been being has have had having do does did done can could will would shall should may might must
+   isn't aren't wasn't weren't don't doesn't didn't can't won't hasn't haven't hadn't it's that's there's
+   not no also only very too then thus hence
+   each both all any some such one other another same own more most less least many much few several
+   you he she we me him her us my your his our mine yours hers ours`.split(/\s+/),
+)
+const SYMBOL_OR_ACRONYM = /^(?:\p{L}|\p{Lu}\p{Ll}|\p{Lu}{2,})$/u
+
+function isFunctionWords(answer: string): boolean {
+  const words = answer.replace(/[‘’]/g, "'").match(/[\p{L}\p{N}]+(?:'\p{L}+)?/gu) ?? []
+  return words.length > 0 && words.every((word) => !SYMBOL_OR_ACRONYM.test(word) && FUNCTION_WORDS.has(word.toLowerCase()))
 }
 
 // "Figure 4.3.1", "Table 2", "Example 4.4": students see the question, not

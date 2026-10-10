@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SAMPLE_DRAFTS } from '../qti/fixtures'
 import { evaluate, parse } from '../math/expr'
-import { checkSymbols, ITEM_TYPES, llmSchemaFor, parseDraft, repairFormula, type DraftOf } from './schema'
+import { checkModelDraft, checkSymbols, ITEM_TYPES, llmSchemaFor, parseDraft, repairFormula, type DraftOf } from './schema'
 
 describe('LLM schemas', () => {
   it('can be built for every item type, closed to extra properties', () => {
@@ -48,6 +48,30 @@ describe('LLM schemas', () => {
     expect(value('{xf - x0} / t')).toBe(10)
     expect(value('( {{xf} - {{x0}} ) / ( {{tf} - {{t0}} } )')).toBeCloseTo(40 / 6)
     expect(repairFormula('(xf - x0) / t')).toBe('(xf - x0) / t')
+  })
+})
+
+describe('checkModelDraft', () => {
+  it('sends back a fill-in-the-blank key that is only function words', () => {
+    const fib = SAMPLE_DRAFTS.find((d): d is DraftOf<'fill_in_blank'> => d.item_type === 'fill_in_blank')!
+    const key = (stem: string, answer: string) => () => checkModelDraft({ ...fib, stem, answer })
+    expect(key('The weight ____ of an object is calculated from its mass.', 'is')).toThrow('"is" is a function word, not a term')
+    expect(key('An internal force acts ____ elements of the system.', 'between')).toThrow('function word')
+    expect(key('The acceleration ____ gravity is 9.8 m/s².', 'due to')).toThrow('function word')
+    expect(key('A force that ____ real.', "isn't")).toThrow('function word')
+    expect(key('____ the net force is zero, the velocity is constant.', 'When')).toThrow('function word')
+    // Terms, including ones that are also function-like words, and symbols
+    // and acronyms written as such.
+    expect(key("Newton's ____ law relates force and acceleration.", 'second')).not.toThrow()
+    expect(key('Acceleration is ____ to the net force.', 'proportional to')).not.toThrow()
+    expect(key('The ____ of interest is chosen first.', 'system')).not.toThrow()
+    expect(key('____ poles repel.', 'Like')).not.toThrow()
+    expect(key('The lightest quark is the ____ quark.', 'down')).not.toThrow()
+    expect(key('The symbol for helium is ____.', 'He')).not.toThrow()
+    expect(key('Indium has the symbol ____.', 'In')).not.toThrow()
+    expect(key('A gate whose output is 1 only when both inputs are 1 is an ____ gate.', 'AND')).not.toThrow()
+    expect(key('The square root of −1 is written ____.', 'i')).not.toThrow()
+    expect(key('F = m ____', 'a')).not.toThrow()
   })
 })
 
