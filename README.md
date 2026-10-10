@@ -68,13 +68,13 @@ tests/adapt-parser/  harness that runs ADAPT's QtiImport.php on our packages
 **Pipeline.**
 1. Each page is split into sections that fit the model. For the in-browser model's 8K context that is about 5,500 characters.
 2. Concepts are extracted per section, each citing paragraph numbers. The extractor is told how many of the section's questions are calculations.
-3. One question is drafted per concept, rotating through the chosen types, and validated against the type's schema.
+3. One question is drafted per concept, rotating through the chosen types, and validated against the type's schema. A draft with a stray symbol where math was meant ("The weight (Å)") is sent back; on the in-browser model the decoder also stops the JSON escape that causes most of them.
    - A math or numerical question whose section has no numbers takes a quantitative concept from another section of the same page. Only if the page has none is another type written instead.
 4. Validation failures are sent back to the model to fix, up to 3 attempts. If all 3 fail, the question starts over in a new conversation, up to twice more. A question that still fails is left out without a notice; only engine errors (such as a model that is not loaded) are shown.
-5. The reviewer pass (on by default) critiques and rewrites each question. Its notes are kept and shown with the question. On the in-browser model, math questions skip it.
+5. The reviewer pass (on by default) critiques and rewrites each question. Its notes are kept and shown with the question, unless the answer check below gives a fill-in-the-blank question a new blank. On the in-browser model, math questions skip it.
 6. On the in-browser model, an answer check answers each question without seeing its key (see [docs/research.md](docs/research.md), "Wrong answer keys" and "The fill-in-the-blank check"):
    - **Multiple choice and select-all:** if the check disagrees, the question goes back once to be fixed, naming the choices. If the check still disagrees, the question gets a note.
-   - **Fill in the blank:** the check fills the blank without the key or the textbook. If its answer differs from the key, or the key is a number or symbol, the model names other words of the completed sentence. The app blanks each in turn and keeps the first that the check fills in as the key. The sentence and explanation stay the same. If none passes, a question the check disagreed with gets a note.
+   - **Fill in the blank:** the check fills the blank without the key or the textbook. If its answer differs from the key, or the key is a number or symbol, the model names up to five other words of the completed sentence. The app skips words the textbook makes predictable ("net external ____"), blanks the others in turn, and keeps the first that the check fills in as the key. A number or symbol key is replaced even by a predictable word. The sentence and explanation stay the same. If none passes, a question the check disagreed with gets a note.
    - **True/false:** a key the check disagrees with gets a note. It is not sent back, because the reviewer then flipped a correct key.
 7. With the duplicate check on, a question whose stem is very close to one already in the set (cosine ≥ 0.94 between EmbeddingGemma 2 embeddings) gets a note.
 8. Every question is saved as soon as it validates.

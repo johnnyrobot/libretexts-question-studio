@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SAMPLE_DRAFTS } from '../qti/fixtures'
 import { evaluate, parse } from '../math/expr'
-import { ITEM_TYPES, llmSchemaFor, parseDraft, repairFormula, type DraftOf } from './schema'
+import { checkSymbols, ITEM_TYPES, llmSchemaFor, parseDraft, repairFormula, type DraftOf } from './schema'
 
 describe('LLM schemas', () => {
   it('can be built for every item type, closed to extra properties', () => {
@@ -48,5 +48,23 @@ describe('LLM schemas', () => {
     expect(value('{xf - x0} / t')).toBe(10)
     expect(value('( {{xf} - {{x0}} ) / ( {{tf} - {{t0}} } )')).toBeCloseTo(40 / 6)
     expect(repairFormula('(xf - x0) / t')).toBe('(xf - x0) / t')
+  })
+})
+
+describe('checkSymbols', () => {
+  it('sends back a stray symbol where the model meant LaTeX, and an escape code written as text', () => {
+    // The angstrom sign; the letter Å (U+00C5) is text.
+    expect(() => checkSymbols({ stem: 'The weight (\u212B) of an object' }, '')).toThrow('"\u212B" stands where a symbol or formula should be')
+    expect(() => checkSymbols({ stem: 'Ångström' }, '')).not.toThrow()
+    expect(() => checkSymbols({ explanation: 'a larger acceleration ≈ a) when' }, '')).toThrow('"≈"')
+    expect(() => checkSymbols({ choices: [{ text: 'x = x_0 + ← v t' }] }, '')).toThrow('"←"')
+    expect(() => checkSymbols({ stem: 'x = x_0 + v_{\\u03b1}t' }, '')).toThrow('"\\u03b1" is an escape code')
+  })
+
+  it('keeps LaTeX, plain text, − and ∝, and the symbols of the source', () => {
+    const text = 'Find \\(a \\propto F_{net}\\): 2 kg × 9.8 m/s² = 19.6 N — Newton’s “second” law, a ∝ 1/m, −3 °C, θ, v̄ …'
+    expect(() => checkSymbols({ stem: text, alternates: [] }, '')).not.toThrow()
+    expect(() => checkSymbols({ stem: 'Δt = t_f ≡ t' }, 'the textbook writes Δt=t_f≡t')).not.toThrow()
+    expect(() => checkSymbols({ stem: 'a ≡ F_net' }, 'a textbook without that symbol')).toThrow('"≡"')
   })
 })

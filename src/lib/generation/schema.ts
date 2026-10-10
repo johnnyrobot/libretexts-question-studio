@@ -368,6 +368,31 @@ export function checkModelDraft(draft: QuestionDraft): void {
 // the page it was written from.
 const SOURCE_LABEL = /\b(?:Figures?|Fig\.|Tables?|Examples?)\s+\d+(?:\.\d+)*/i
 
+// Where it meant LaTeX, Gemma 4 E4B sometimes wrote a stray symbol instead:
+// "The weight (Å) of an object … its mass (ℕ)", "a ∈ F_net" for a ∝ F_net, "x
+// = x_0 + ← v t", "larger acceleration ≈ a)" for (al>a); once an escape code
+// as text, "v_{\u03b1}". This check flags 75 of 1,991 saved drafts
+// (2026-10-09), every one of them such a slip; json-escapes.ts has the cause.
+// What was meant cannot be told, so the draft goes back. The check reads the
+// model's own text, before repairs write \leftarrow as ←, and keeps the
+// symbols of the source it was shown and the two the model wrote for
+// themselves (− and ∝).
+const SYMBOL = /[\u203C-\u205E\u2100-\u2BFF]/gu
+const OWN_SYMBOLS = '−∝'
+const ESCAPE_CODE = /\\u[\da-fA-F]{4}/
+
+export function checkSymbols(value: unknown, source: string): void {
+  for (const text of stringsIn(value)) {
+    const code = text.match(ESCAPE_CODE)
+    if (code) throw new Error(`"${code[0]}" is an escape code, not text: write the character itself, or LaTeX inside \\( \\)`)
+    for (const [symbol] of text.matchAll(SYMBOL)) {
+      if (!OWN_SYMBOLS.includes(symbol) && !source.includes(symbol)) {
+        throw new Error(`"${symbol}" stands where a symbol or formula should be: write it in LaTeX inside \\( \\), such as \\(a \\propto F_{net}\\)`)
+      }
+    }
+  }
+}
+
 // ADAPT marks a fill-in-the-blank right only on an exact match, ignoring case,
 // and uses only the first answer. 5 of 30 Gemma 4 E4B answers (2026-10-08)
 // were numbers, symbols or equations: "9.8 N", "9.8 m/s^2", "F_{net}/m".

@@ -12,6 +12,7 @@ import {
   controlsToBackslashes,
   dollarsToDelimiters,
   fillIn,
+  givenAway,
   planUnits,
   repairDraft,
   runGeneration,
@@ -21,6 +22,7 @@ import {
   stripSourceReferences,
   symbolsToMath,
   withFinalValue,
+  WordIndex,
 } from './pipeline'
 import { checkModelDraft, parseDraft, type DraftOf, type ItemType } from './schema'
 
@@ -252,6 +254,26 @@ describe('runGeneration', () => {
     expect(item.draft.item_type).toBe('math')
   })
 
+  it('sends back a draft with a stray symbol where the model meant LaTeX', async () => {
+    const provider = new FakeProvider()
+    const original = provider.complete.bind(provider)
+    const prompts: string[] = []
+    provider.complete = (request) =>
+      request.schemaName === 'fill_in_blank_item'
+        ? completeWithRetries(request, async (prompt) => {
+            prompts.push(prompt)
+            const { item_type: _, ...fixture } = SAMPLE_DRAFTS.find((d) => d.item_type === 'fill_in_blank')!
+            void _
+            const explanation = prompts.length === 1 ? 'It captures light energy (ℰ).' : 'It captures light energy \\(E\\).'
+            return { text: JSON.stringify({ ...fixture, explanation, citation_paragraphs: [0] }), usage: null }
+          })
+        : original(request)
+    const result = await runGeneration('set-1', source, { itemTypes: ['fill_in_blank'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(result.created).toBe(1)
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toContain('"ℰ" stands where a symbol or formula should be')
+  })
+
   it('writes another type when math is requested for a section without numbers', async () => {
     const provider = new FakeProvider()
     const original = provider.complete.bind(provider)
@@ -382,6 +404,56 @@ describe('runGeneration', () => {
     ])
   })
 
+  it('drops the reviewer’s notes on a blank that is replaced', async () => {
+    const run = async (blankAnswers: string[]) => {
+      await db.items.clear()
+      const provider = new FakeProvider('local')
+      provider.blankAnswers = blankAnswers
+      provider.blankWords = [['green']]
+      const original = provider.complete.bind(provider)
+      provider.complete = (request) =>
+        request.schemaName === 'item_review'
+          ? completeWithRetries(request, async (prompt) => {
+              const draft = JSON.parse(prompt.slice(prompt.indexOf('<draft>') + 7, prompt.indexOf('</draft>')))
+              return { text: JSON.stringify({ issues: ['Chloroplast fits the blank too.'], revised: draft }), usage: null }
+            })
+          : original(request)
+      const plan = { itemTypes: ['fill_in_blank'] as ItemType[], perPage: 1, reviewPass: true }
+      await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+      const [item] = await db.items.where('setId').equals('set-1').toArray()
+      return item
+    }
+    // The check fills in "chloroplast", so "green" is blanked instead.
+    const moved = await run(['chloroplast', 'green'])
+    expect((moved.draft as DraftOf<'fill_in_blank'>).answer).toBe('green')
+    expect(moved.critique).toEqual([])
+    const kept = await run([])
+    expect((kept.draft as DraftOf<'fill_in_blank'>).answer).toBe('chlorophyll')
+    expect(kept.critique).toEqual(['Chloroplast fits the blank too.'])
+  })
+
+  it('drops a reviewer note that repeats the problem it was sent back with', async () => {
+    const provider = new FakeProvider()
+    const original = provider.complete.bind(provider)
+    let attempts = 0
+    provider.complete = (request) =>
+      request.schemaName === 'item_review'
+        ? completeWithRetries(request, async (prompt) => {
+            const draft = JSON.parse(prompt.slice(prompt.indexOf('<draft>') + 7, prompt.indexOf('</draft>')))
+            attempts++
+            // First a revision that gives the answer away, then the draft as
+            // it was, listing that problem.
+            const revised = attempts === 1 ? { ...draft, stem: `${draft.stem} (${draft.answer})` } : draft
+            const issues = attempts === 1 ? [] : [`The stem gives the answer away: "${draft.answer}" already appears in it.`, 'The stem could name the pigment.']
+            return { text: JSON.stringify({ issues, revised }), usage: null }
+          })
+        : original(request)
+    await runGeneration('set-1', source, { itemTypes: ['fill_in_blank'], perPage: 1, reviewPass: true }, provider, new AbortController().signal, callbacks)
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(attempts).toBe(2)
+    expect(item.critique).toEqual(['The stem could name the pigment.'])
+  })
+
   it('blanks a word instead of a number key on the in-browser model', async () => {
     const provider = new FakeProvider('local')
     provider.blankAnswers = ['680 nm', 'red']
@@ -402,6 +474,56 @@ describe('runGeneration', () => {
     expect(draft.stem).toBe('Chlorophyll absorbs ____ light of about 680 nm.')
     expect(draft.answer).toBe('red')
     expect(item.critique).toEqual([])
+  })
+
+  it('skips a new blank the textbook gives away, unless the key is one students cannot type', async () => {
+    // This textbook nearly always writes "green" before "pigment".
+    const texts = ['Chlorophyll is a green pigment.', 'A green pigment absorbs red light.', 'The green pigment reflects green light.', 'Leaves hold a green pigment.']
+    let start = 0
+    const paragraphs = texts.map((text, index) => {
+      const paragraph = { index, text, start, end: start + text.length }
+      start += text.length + 2
+      return paragraph
+    })
+    const pigments: StoredSource = { ...source, pages: [{ ...source.pages[0], paragraphs }] }
+    const run = async (draft: Partial<DraftOf<'fill_in_blank'>>, blankAnswers: string[], blankWords: string[][]) => {
+      await db.items.clear()
+      const provider = new FakeProvider('local')
+      provider.blankAnswers = blankAnswers
+      provider.blankWords = blankWords
+      const original = provider.complete.bind(provider)
+      provider.complete = (request) =>
+        request.schemaName === 'fill_in_blank_item'
+          ? completeWithRetries(request, async () => {
+              const { item_type: _, ...fixture } = SAMPLE_DRAFTS.find((d) => d.item_type === 'fill_in_blank')!
+              void _
+              return { text: JSON.stringify({ ...fixture, ...draft, citation_paragraphs: [0] }), usage: null }
+            })
+          : original(request)
+      await runGeneration('set-1', pigments, { itemTypes: ['fill_in_blank'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+      const [item] = await db.items.where('setId').equals('set-1').toArray()
+      // The draft call is replaced above, so only the checks are counted.
+      return { calls: provider.calls.filter((c) => c !== 'concept_batch'), draft: item.draft as DraftOf<'fill_in_blank'> }
+    }
+    // "The green ____" is not checked; the next word is.
+    const skipped = await run({}, ['chloroplast', 'captures'], [['pigment', 'captures']])
+    expect(skipped.calls).toEqual(['blank_check', 'blank_choice', 'blank_check'])
+    expect(skipped.draft.stem).toBe('The green pigment that ____ light is called chlorophyll.')
+    // An easy blank still replaces a number key.
+    const typed = await run({ stem: 'The green pigment absorbs light of about ____.', answer: '680 nm', alternates: [] }, ['680 nm', 'pigment'], [['pigment']])
+    expect(typed.calls).toEqual(['blank_check', 'blank_choice', 'blank_check'])
+    expect(typed.draft.stem).toBe('The green ____ absorbs light of about 680 nm.')
+    expect(typed.draft.answer).toBe('pigment')
+  })
+
+  it('takes up to five new blanks, dropping an empty or overlong one', async () => {
+    const provider = new FakeProvider('local')
+    provider.blankAnswers = ['chloroplast', 'captures']
+    provider.blankWords = [[' ', 'x'.repeat(90), 'leaf', 'photosynthesis', 'captures']]
+    await runGeneration('set-1', source, { itemTypes: ['fill_in_blank'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['fill_in_blank_item', 'blank_check', 'blank_choice', 'blank_check'])
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect((item.draft as DraftOf<'fill_in_blank'>).answer).toBe('captures')
   })
 
   it('notes a true/false key the check disagrees with, without sending it back', async () => {
@@ -547,6 +669,8 @@ describe('fill-in-the-blank checks', () => {
 
   it('treats case, articles, punctuation and plurals as the same answer', () => {
     expect(sameAnswer('Systems', 'the system.')).toBe(true)
+    expect(sameAnswer('forces', 'force')).toBe(true)
+    expect(sameAnswer('masses', 'mass')).toBe(true)
     expect(sameAnswer('\\(F_{net}\\)', 'F_{net}')).toBe(true)
     expect(sameAnswer('objects', 'systems')).toBe(false)
     expect(sameAnswer("Newton's third law of motion", "Newton's Third Law")).toBe(false)
@@ -571,6 +695,58 @@ describe('fill-in-the-blank checks', () => {
     expect(blankedDraft(draft, 'The pigment absorbs 680 nm light.', '680 nm')).toBeNull()
     expect(blankedDraft(draft, 'Its weight is 9.8 N.', 'N')).toBeNull()
     expect(blankedDraft(draft, 'The pigment that captures light in plants is green.', 'captures light in plants')).toBeNull()
+  })
+})
+
+describe('givenAway', () => {
+  const textbook = new WordIndex([
+    'The net external force is the sum of all external forces. A net external force causes acceleration.',
+    'When the net external force is zero, the acceleration is zero. Forces always occur in pairs.',
+  ])
+  const none = new WordIndex([])
+
+  it('flags a word the textbook nearly always writes next to the blank', () => {
+    expect(textbook.count(['net', 'external'])).toBe(3)
+    expect(givenAway('A larger net external ____ gives a larger acceleration.', 'force', textbook)).toBe(true)
+    expect(givenAway('Forces always occur in ____.', 'pairs', textbook)).toBe(false)
+  })
+
+  it('leaves out the copy of the sentence the question comes from', () => {
+    const page = ['Friction opposes motion between surfaces.', 'In summary, friction opposes motion.', 'Friction: a force that opposes motion.']
+    expect(givenAway('Friction opposes ____ between surfaces.', 'motion', new WordIndex(page))).toBe(false)
+    expect(givenAway('Friction opposes ____ between surfaces.', 'motion', new WordIndex([...page, 'Static friction opposes motion too.']))).toBe(true)
+  })
+
+  it('reads the question and the textbook the same way', () => {
+    // Curly and straight apostrophes, and a blank before "'s".
+    const newton = new WordIndex(Array(4).fill('Newton’s second law relates force and acceleration.'))
+    expect(givenAway('____ second law of motion relates force, mass and acceleration.', "Newton's", newton)).toBe(true)
+    expect(givenAway("By ____'s second law, the acceleration depends on the net force.", 'Newton', newton)).toBe(true)
+    // Math is not counted as words.
+    const net = new WordIndex([
+      'The net external force on a system is written \\(F_{\\text{net}}\\).',
+      'A net external force causes acceleration, so \\(F_{\\text{net}} = ma\\).',
+      'If the net external force is zero, \\(F_{\\text{net}} = 0\\).',
+      'The net external force and \\(F_{\\text{net}}\\) are the same.',
+    ])
+    expect(givenAway('If there is no net ____ on the system, its velocity stays constant.', 'external force', net)).toBe(true)
+    // A plural is the same word.
+    expect(givenAway('Both walls exert normal ____ on the block.', 'forces', new WordIndex(Array(4).fill('The normal force acts on the block.')))).toBe(true)
+    // A phrase does not run on across math or from one paragraph to the next.
+    expect(new WordIndex(['the net', 'force']).count(['net', 'force'])).toBe(0)
+    expect(new WordIndex(['the net \\(x\\) force']).count(['net', 'force'])).toBe(0)
+  })
+
+  it('flags a word whose opposite the sentence contrasts with it', () => {
+    expect(givenAway('An ____ force acts from outside the system, while an internal force acts within it.', 'external', none)).toBe(true)
+    expect(givenAway('An ____ acts from outside the system, while an internal force acts within it.', 'external force', none)).toBe(true)
+    expect(givenAway('____ forces act between molecules, while intramolecular forces act within one.', 'intermolecular', none)).toBe(true)
+    expect(givenAway('A uniform field is the same everywhere, but a ____ field varies.', 'nonuniform', none)).toBe(true)
+    expect(givenAway('Kinetic energy is conserved in an ____ collision but not in an inelastic one.', 'elastic', none)).toBe(true)
+    // Not opposites, or not contrasted.
+    expect(givenAway('The ____ of a spring is proportional to the tension in it, not to its length.', 'extension', none)).toBe(false)
+    expect(givenAway('Heat ____ between two bodies causes a change in temperature.', 'exchange', none)).toBe(false)
+    expect(givenAway('An ____ force and an internal force act on the cart.', 'external', none)).toBe(false)
   })
 })
 

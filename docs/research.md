@@ -360,7 +360,7 @@ ADAPT marks only the exact key right, so a student who writes "objects" is marke
 3. The app blanks each in turn, if it appears once outside math and is a word of at least three letters, not a number or symbol.
 4. It keeps the first one the check fills in as the key.
 
-The sentence and explanation stay as they were, so the question's facts do not change. If no word passes, the question keeps its blank, with a note if the check disagreed.
+The sentence and explanation stay as they were, so the question's facts do not change. If no word passes, the question keeps its blank, with a note if the check disagreed. **Since 2026-10-09** the model names up to five words and the app skips those the textbook gives away; see "Given-away words in new blanks" below.
 
 - **On the 115 saved questions:**
   - 51 passed the check, 49 got a new blank, and 15 kept theirs with a note, at 1.7 s a question on average.
@@ -368,7 +368,7 @@ The sentence and explanation stay as they were, so the question's facts do not c
   - Hard-to-type keys: 7 of 8 got a new blank, and 1 was missed.
   - Good blanks: 23 of 29 were left alone, 4 got a new blank and 2 a note.
 - **Typical new blanks:** "the ____ of a 1.0 kg object on Earth is 9.8 N" (weight) in place of "9.8 N", and "Forces always occur in ____" (pairs) in place of "itself".
-- **Obvious words:** Gemma also offers words the rest of the sentence gives away, such as "Two equal and opposite ____ exerted during an interaction" (forces).
+- **Obvious words:** Gemma also offers words the rest of the sentence gives away, such as "Two equal and opposite ____ exerted during an interaction" (forces). See "Given-away words in new blanks" below.
   - It offered that word first even when the prompt named this very example.
   - Asking it first to say what the sentence teaches did not change the words it picked, and took 60% longer (4.1 s against 2.6 s per fix).
 - **Repeated words:** a two-word key put back into its sentence repeated a word ("an internal force force", "proportional to to"). `fillIn` writes it once.
@@ -402,6 +402,95 @@ The sentence and explanation stay as they were, so the question's facts do not c
 - **Broken:** the broken question had the key "is" in "The weight ____ of an object…". Its new blank kept the stray word, giving "The ____ is of an object".
 - **Time:** the check and the new blanks took 2.2 s a question, 67 s in all. The other 6 minutes came from drafting and review. They had 26 rejected attempts against 17 and 2 fresh starts, which is the variation between runs seen before.
 - **Limits:** one pair of pages, one model and one judge, who also wrote the check.
+
+### Given-away words in new blanks (2026-10-09)
+
+**The problem:** asked for the word that carries the idea, Gemma also offers words the rest of the sentence gives away, and the check fills those in easily. Examples:
+- "Two equal and opposite ____" (forces)
+- "net external ____" (force)
+- "acceleration due to ____" (gravity)
+- "An ____ force acts from outside the system, while an internal force acts between its elements" (external)
+
+In the end-to-end run above, 2 of the 10 new blanks were like this.
+
+**Collecting the candidates:**
+- **Questions:** the 79 of the 145 saved fill-in-the-blank questions (*College Physics* 4.3 and 4.4) that the check sends back.
+- **Candidates:** every word Gemma offered, asked once for 3 and once for 5, was blanked and checked.
+- **Judging:** the 108 distinct blanks the check passed were judged blind. 31 were good, 54 given away (or a filler word such as "object" or "each"), 11 ambiguous and 12 broken.
+
+**What did not work:**
+- **Asking whether it is guessable:** asked for each blank whether a student who never studied the subject could fill it in, Gemma said yes for 22 of the 31 good blanks and 40 of the 54 given-away ones.
+- **Letting Gemma choose:** asked to pick the best of the blanks the check passed, it gave 26 good new blanks instead of 22, but 8 ambiguous ones instead of 2.
+- **Showing only nearby words:** shown only the two or three words on each side of the blank, the check filled in 6 of the 54 given-away words, and 0 of 9 on the second chapter below. Without the sentence it wrote things like "classical conditioning is the most basic form of learning".
+
+**What works: the textbook itself.**
+- A word is given away when the textbook nearly always writes it next to the blank's neighbouring words. In these two pages, "net external" is followed by "force" all 22 times, and "due to" by "gravity" 9 times in 10.
+- `givenAway` skips a candidate when its one or two neighbouring words on either side occur at least 3 times in the source and come next to the candidate at least half the time. It also skips a candidate whose opposite is in the sentence (internal for external).
+- Gemma is also asked for up to five candidates instead of three.
+
+| Of the 108 judged blanks | Flagged as given away |
+|---|---|
+| Good (31) | 1 |
+| Given away (54) | 25 |
+| Ambiguous (11) | 2 |
+| Broken (12) | 6 |
+
+- **Whole source, not one section:** counted over one section instead of all the source's pages, the rule flagged 6 of 40 good candidates instead of 1, so it counts over every page. (The review below found that a one-page or pasted source still had this problem, and fixed it.)
+- **What it misses:** plain-English giveaways that the textbook does not repeat, such as "twice as fast … twice as ____" (far). (The review below corrected the "equal and opposite" example given here at first.)
+
+**Selection on the 79 questions** (the same judged candidates, chosen as each rule would):
+
+| | First of 3 that passes (before) | First of 5 that passes and is not given away (now) |
+|---|---|---|
+| New blank, good | 22 | 29 |
+| New blank, given away | 30 | 20 |
+| New blank, ambiguous | 2 | 3 |
+| New blank, broken | 6 | 4 |
+| Kept the old blank (with a note when the check disagreed) | 19 | 23 |
+
+The rule's thresholds were chosen on these questions, so this table flatters it.
+
+**A fresh chapter:**
+- **Setup:** *College Physics* 2.3 and 2.5. Concepts were extracted, and 30 fill-in-the-blank questions were written and reviewed as in the app.
+- **Comparison:** each question went through the old and the new fix, and all the resulting blanks were judged blind together.
+
+| Of the 18 questions sent back | Before | Now |
+|---|---|---|
+| New blank, good | 2 | 4 |
+| New blank, ambiguous | 6 | 1 |
+| New blank, given away | 3 | 3 |
+| Kept the old blank | 7, all with a note | 10, 9 with a note |
+
+- **Given away:** the count did not fall, because "twice as ____" (far) and "small time ____" (interval) are plain English.
+- **Ambiguous:** the rule did skip "The final ____ depends on how large the acceleration is…" (velocity, but speed fits too), so "acceleration" was blanked instead.
+- **Time:** the check and fix took about 2.5 s a question either way.
+
+**After a code review (2026-10-09):** a review of the rule found that it read the textbook and the question differently, and that its counts depended on the size of the source. The fixes, replayed on the same judged blanks with no new model calls:
+- **The question's own sentence:** the textbook nearly always contains the sentence the question was written from. On a one-page or pasted source, that one copy was often all the rule counted, so it flagged good blanks. The rule now leaves one copy of the phrase out of its counts.
+- **Reading both the same way:**
+  - Math no longer counts as words. `\(F_{\text{net}}\)` had added "net" 32 times to the two pages' 35 in prose, so "If there is no net ____ on the system" (external force) got through.
+  - Curly and straight apostrophes are now the same. The textbook writes "Newton’s" 42 times and "Newton's" once, while Gemma writes the straight one, so no possessive ever matched.
+  - "Newton's" now counts as "newton" plus "'s". Before, "By ____'s second law" (Newton) could never match.
+  - A plural now counts as its singular ("normal ____", forces).
+  - A phrase no longer runs from one paragraph into the next.
+- **Opposites:** the old prefix list caught internal/external only by luck. It missed intermolecular/intramolecular, nonuniform/uniform, elastic/inelastic and keys of two words, and it flagged extension next to "tension" and exchange next to "change". The rule now checks real pairs: a word with and without un-, non-, in-, im-, ir-, il- or dis-, or the two halves of in/ex, im/ex, inter/intra, endo/exo, in/out and in/de. It also needs a contrast word in the sentence ("while", "but", "unlike", "not"…), so "____ until no charge remains" (discharge) is not flagged.
+- **A number key:** if every word the check fills in is given away, an easy blank still replaces a number or symbol key students would type differently. On one page, this had kept "`\(F_{net}\)`" once.
+- **`sameAnswer`:** "force" and "forces" were different answers, because "-es" was stripped before "-s".
+
+| Good blanks flagged (of 31) / given away flagged (of 54) | Before | After |
+|---|---|---|
+| Both pages (the app) | 1 / 25 | 1 / 25 |
+| One page | 3 / 23 | 1 / 24 |
+| The question's cited paragraphs (like a pasted paragraph) | 5 / 7 | 1 / 7 |
+
+- **Selection on the 79 questions:** unchanged on both pages: 29 good, 20 given away, 3 ambiguous, 4 broken and 23 kept. On one page, good new blanks rose from 27 to 29.
+- **The fresh chapter (2.3 and 2.5):** of its 27 judged blanks, the rule still flags none of the 5 good ones. On the cited paragraphs alone it used to flag 2 of the 4 good blanks that could be traced to their paragraphs, and now 0. On both pages it now flags fewer: 0 of 9 given away instead of 2 ("twice as ____", far), and 4 of 9 ambiguous instead of 7. Those blanks' only evidence was their own sentence plus one or two more uses.
+- **Known limits:** the rule cannot tell a fixed term that is the point of the question from one that gives the blank away:
+  - "Newton's ____ law states that …" (second): "second" comes before "law" 29 times in 49.
+  - "A ____ diagram shows …" (free-body).
+  - "outside the ____ of interest" (system), the 1 good blank it flags.
+  - It looks at two words on each side, so "Two equal and opposite ____" (forces) gets through. "Equal and opposite" is always followed by force or forces, but "and opposite" is followed by them only 3 times in 9; the other 6 are "… magnitude and opposite in direction".
+- **Speed:** the index is built when a question first needs it, so OpenAI runs and runs without fill-in-the-blank questions skip it. For a 1M-word book it takes about 0.3 s once, and then about 1 ms per candidate, against 60 ms per candidate before.
 
 ### Figure labels (2026-10-09)
 
@@ -468,6 +557,40 @@ Gemma copied these labels into questions, where students have no figure to look 
   - once kept, with a note;
   - once with its correct key flipped to false, which the recheck then agreed with.
 - So a true/false disagreement only adds a note for the instructor. No wrong true/false key has been seen in these runs, so the check mainly guards against one.
+
+### Stray symbols where LaTeX was meant (2026-10-09)
+
+**The problem:** a live run had "The equation ∻ v≒=v≒_0+2a(x-─x_0) relates velocities, ____, …" in a stem students would read. Across the saved runs, Gemma wrote a stray symbol where it meant math in many drafts:
+- "The weight (Å) of an object is calculated by multiplying its mass (ℕ) by the acceleration due to gravity (ℝ)"
+- "a ∈ F_net" or "a ≡ F_net" for a ∝ F_net
+- "the final position (←) is given by the initial position (←)"
+- "a larger acceleration ≈ a)" for the textbook's \((al>a)\)
+- once an escape code as text: "v_{\u03b1}"
+
+**The cause:** Gemma's JSON is forced token by token (Transformers.js structured output). Inside a JSON string, a backslash may only start `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t` or `\uXXXX`. Gemma writes LaTeX with one backslash, so where it meant `\(` the escape had to be something else, and it often chose `\u` and four hex digits: `\u212B` is Å. The letter escapes were already read back as LaTeX (`\frac` arrives as a form feed and "rac"); the `\u` ones cannot be, because what was meant is lost.
+
+**Fix 1, in the decoder:** inside a JSON string the `\u` escape is masked out (`json-escapes.ts`, `NoUnicodeEscapes` in the worker). JSON strings may hold any character as it is, so nothing is lost. After a backslash, Gemma now has to write `\\` or a letter escape. Building the token table adds about 0.2 s to loading the model.
+
+| 50 fill-in-the-blank drafts, *College Physics* 4.3/4.4 | Before | After |
+|---|---|---|
+| "Net force and acceleration" (30 drafts): math garbled | 25 | 0 |
+| … of which `checkSymbols` (below) flags | 24 | 0 |
+| Two other concepts (20 drafts): math garbled | 0 | 0 |
+| Drafts with `\( \)` math | 1 | 29 |
+| Valid on the first attempt | 46 | 47 |
+| Seconds per draft | 12.2 | 13.1 |
+
+That concept's explanations quote the textbook's "a larger acceleration \((al>a)\) when an adult pushes the child". Before, the quote came out as "≈ a)" (9), "(⊲ > a)" (7), "≺ a)" (4), "(⊥ > a)" (2) or another symbol (3), or without its math (5). After, 26 of 30 wrote it as LaTeX, such as `(\(a_l>a\))`. The other 4 dropped the math or the quote. No draft had a control character instead.
+
+**Fix 2, a check:** `checkSymbols` sends back a draft or a reviewer's revision whose own text has an escape code such as `\u03b1`, or a symbol from the arrows, letterlike, mathematical and technical blocks. It keeps symbols that the source section uses, and − and ∝, which Gemma wrote correctly. It reads the model's text before the repairs, which write `\leftarrow` as ←. Over the 1,991 distinct saved drafts it flags 75, and I read all 75: every one was a stray symbol. It covers OpenAI's strict JSON too, which made the same kind of slip with control characters (see "Luna" below). It cannot catch a slip that leaves no symbol, such as "(al>a)" for \((al>a)\).
+
+### Notes left from the old blank (2026-10-09)
+
+**The problem:** the reviewer reads a question before the fill-in-the-blank check. When the check then gives it a new blank, the reviewer's notes describe a question that no longer exists. In the saved check run, 10 of 30 questions got a new blank, and 8 of the 9 notes on them were about the old blank. One example is "The correct answer '9.8 N' contains a number and unit…" on a question whose answer is now "weight". The one still true said the stem was "slightly wordy".
+
+**The fix:**
+- When the check replaces the blank, the reviewer's notes on the question are dropped. Notes from the app (a requested calculation written as another type, the duplicate check) stay. The new blank has passed the check.
+- Sent back with a problem, the reviewer sometimes listed that problem as a note after fixing it, word for word: "the stem gives the answer away: "displacement" already appears in it". This happened in 4 of 895 saved notes. A note that repeats a problem the reviewer was sent back with is now dropped.
 
 ### Fine-tuning Gemma (considered 2026-10-07, not started)
 

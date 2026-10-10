@@ -155,7 +155,7 @@ ${untrusted(stem)}
 export function reblankPrompt(pageTitle: string, concept: Concept, sentence: string, avoid: string[]): string {
   const not = avoid.length ? ` Never choose ${avoid.map((word) => `"${untrusted(word)}"`).join(' or ')}.` : ''
   return `This sentence will become a fill-in-the-blank question on "${untrusted(pageTitle)}": one word or term in it is replaced by a blank, and students must type exactly that word or term.
-List in words up to three candidates, best first, each copied exactly from the sentence. The best candidate carries the idea of the concept below: a student must understand that idea to fill it in, and the rest of the sentence does not make it obvious (as "forces" would be after "two equal and opposite"). It must also be the only word that fits: a student who knows the subject would fill in exactly that word, and any other word would make the sentence wrong. Each candidate is ordinary words, one to three of them: never a number, unit, symbol, equation or variable name, and never a word that appears twice in the sentence.${not}
+List in words up to five candidates, best first, each copied exactly from the sentence. The best candidate carries the idea of the concept below: a student must understand that idea to fill it in, and the rest of the sentence does not make it obvious (as "forces" would be after "two equal and opposite"). It must also be the only word that fits: a student who knows the subject would fill in exactly that word, and any other word would make the sentence wrong. Each candidate is ordinary words, one to three of them: never a number, unit, symbol, equation or variable name, and never a word that appears twice in the sentence.${not}
 
 <concept>
 ${untrusted(`${concept.label}: ${concept.description}`)}

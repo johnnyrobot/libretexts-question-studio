@@ -4,6 +4,7 @@ import {
   AutoModelForCausalLM,
   AutoTokenizer,
   env,
+  LogitsProcessor,
   ModelRegistry,
   StoppingCriteria,
   StoppingCriteriaList,
@@ -15,6 +16,7 @@ import {
 import { StructuredOutputProcessor, type ResponseFormat } from '@huggingface/transformers-structured-output'
 import ortMjs from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url'
 import ortWasm from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url'
+import { escapeTokens, JsonStringState, type EscapeTokens } from './json-escapes'
 import type { GenerateRequest, GenerateResult, ModelTarget, WorkerReply, WorkerRequest } from './transformers'
 
 // Transformers.js runs here so the UI thread stays responsive. It hosts the
@@ -32,7 +34,13 @@ interface Loaded {
   tokenizer: PreTrainedTokenizer
 }
 
-let llm: Loaded | null = null
+// Each token's text, for following the JSON the question writer generates.
+interface TokenTable {
+  texts: string[]
+  escapes: EscapeTokens
+}
+
+let llm: (Loaded & { tokens: TokenTable }) | null = null
 let embedder: Loaded | null = null
 let abortRequested = false
 let queue: Promise<unknown> = Promise.resolve()
@@ -162,7 +170,9 @@ async function loadLlm(id: number, target: ModelTarget): Promise<null> {
   // Builds the structured-output tables for this vocabulary now (about half a
   // second for Gemma's 262k tokens) instead of in the first question.
   StructuredOutputProcessor.warmup(tokenizer)
-  llm = { key: keyOf(target), model, tokenizer }
+  // About 0.2 s more for Gemma's vocabulary.
+  const texts = Array.from({ length: tokenizer.get_vocab().size }, (_, id) => tokenizer.decode([id]))
+  llm = { key: keyOf(target), model, tokenizer, tokens: { texts, escapes: escapeTokens(texts) } }
   return null
 }
 
@@ -211,6 +221,28 @@ class StepWatcher extends StoppingCriteria {
   }
 }
 
+// Masks the \u escape inside JSON strings (see json-escapes.ts). It reads the
+// tokens generated since the prompt.
+class NoUnicodeEscapes extends LogitsProcessor {
+  private readonly tokens: TokenTable
+  private readonly state = new JsonStringState()
+  private read: number
+
+  constructor(tokens: TokenTable, promptLength: number) {
+    super()
+    this.tokens = tokens
+    this.read = promptLength
+  }
+
+  _call(inputIds: bigint[][], logits: Tensor): Tensor {
+    const input = inputIds[0]
+    for (; this.read < input.length; this.read++) this.state.feed(this.tokens.texts[Number(input[this.read])] ?? '')
+    const data = logits.data as Float32Array
+    for (const id of this.state.blocked(this.tokens.escapes)) data[id] = -Infinity
+    return logits
+  }
+}
+
 // The structured-output package cannot enforce a string `pattern` while
 // generating and refuses schemas that have one; zod checks them afterwards,
 // like the length limits.
@@ -223,7 +255,7 @@ function withoutPatterns(node: unknown): unknown {
 async function generate(id: number, request: GenerateRequest): Promise<GenerateResult> {
   if (!llm) throw new Error('The in-browser model is not loaded.')
   abortRequested = false
-  const { model, tokenizer } = llm
+  const { model, tokenizer, tokens } = llm
   const prompt = tokenizer.apply_chat_template(
     [
       { role: 'system', content: request.system },
@@ -236,6 +268,11 @@ async function generate(id: number, request: GenerateRequest): Promise<GenerateR
   const watcher = new StepWatcher(id)
   const stopping = new StoppingCriteriaList()
   stopping.push(watcher)
+  const processors = new StructuredOutputProcessor(tokenizer, {
+    type: 'json_schema',
+    json_schema: withoutPatterns(request.schema) as Extract<ResponseFormat, { type: 'json_schema' }>['json_schema'],
+  })
+  processors.push(new NoUnicodeEscapes(tokens, inputTokens))
   const output = (await model.generate({
     ...inputs,
     max_new_tokens: request.maxNewTokens,
@@ -243,10 +280,7 @@ async function generate(id: number, request: GenerateRequest): Promise<GenerateR
     temperature: request.temperature,
     top_p: request.topP,
     top_k: request.topK,
-    logits_processor: new StructuredOutputProcessor(tokenizer, {
-      type: 'json_schema',
-      json_schema: withoutPatterns(request.schema) as Extract<ResponseFormat, { type: 'json_schema' }>['json_schema'],
-    }),
+    logits_processor: processors,
     stopping_criteria: stopping,
   } as never)) as Tensor
   const generated = output.slice(null, [inputTokens, output.dims[1]])

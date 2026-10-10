@@ -21,6 +21,7 @@ import {
 import {
   BLANK_RUN,
   checkModelDraft,
+  checkSymbols,
   formatIssues,
   ITEM_SCHEMAS,
   ITEM_TYPE_LABELS,
@@ -187,6 +188,7 @@ export async function runGeneration(
   embedder: Embedder | null = null,
 ): Promise<GenerationResult> {
   const units = planUnits(source, plan.perPage, SOURCE_BUDGET[provider.id])
+  const textbook = new WordIndex(source.pages.flatMap((page) => page.paragraphs.map((p) => p.text)))
   const total = units.reduce((sum, u) => sum + u.count, 0)
   const existing = await db.items.where('setId').equals(setId).sortBy('position')
   const stems = existing.map((item) => item.draft.stem)
@@ -318,6 +320,7 @@ export async function runGeneration(
           return draftItem(provider, unit, concept, itemType, stems.slice(-12), allowed, signal, callbacks)
         })
         let critique: string[] = notes
+        let reviewNotes: string[] = []
         // On the in-browser model the reviewer may only reword a math question
         // (see keepComputation), and its notes on them were mostly false claims
         // about placeholder format, so the ~20 s review is skipped.
@@ -327,6 +330,7 @@ export async function runGeneration(
           try {
             const reviewed = await reviewItem(provider, unit, concept, draft, allowed, signal, callbacks, [], typedAnswerProblem(draft))
             draft = reviewed.draft
+            reviewNotes = reviewed.issues
             critique = [...notes, ...reviewed.issues]
           } catch (error) {
             if (signal.aborted) throw error
@@ -334,7 +338,15 @@ export async function runGeneration(
           }
         }
         if (provider.id === 'local') {
-          const checked = await verifyAnswerKey(provider, unit, concept, draft, allowed, signal, callbacks)
+          const checked = await verifyAnswerKey(provider, unit, concept, draft, allowed, signal, callbacks, textbook)
+          // A new blank makes it another question than the one the reviewer
+          // read, and its notes were nearly all about the old blank, such as
+          // "The correct answer '9.8 N' contains a number and unit…" on a key
+          // that is now "weight": 8 of the 9 notes on the 10 of 30 questions
+          // given a new blank (2026-10-09). The new blank has passed the check.
+          if (draft.item_type === 'fill_in_blank' && checked.draft !== draft) {
+            critique = critique.filter((note) => !reviewNotes.includes(note))
+          }
           draft = checked.draft
           critique = [...critique, ...checked.notes]
         }
@@ -438,6 +450,7 @@ export async function draftItem(
     signal,
     onProgress: callbacks.onModelEvent,
     validate: (value) => {
+      checkSymbols(value, sourceText(unit))
       const repaired = repairDraft(itemType, value)
       const draft = parseDraft(itemType, repaired, allowed)
       checkModelDraft(draft)
@@ -467,6 +480,7 @@ export async function reviewItem(
     issues: z.array(z.string().trim().min(1).max(400)).max(8),
     revised: draft.item_type === 'math' ? MATH_WORDING_SCHEMA : ITEM_SCHEMAS[draft.item_type],
   })
+  const sentBack: string[] = []
   const result = await provider.complete({
     system: SYSTEM_PROMPT,
     prompt: reviewPrompt(unit, concept, draft, keyProblems, answerProblem),
@@ -475,14 +489,30 @@ export async function reviewItem(
     signal,
     onProgress: callbacks.onModelEvent,
     validate: (value) => {
-      const record = value as { issues?: unknown; revised?: unknown }
-      const issues = z.array(z.string()).max(8).safeParse(record?.issues)
-      const revised = parseDraft(draft.item_type, repairDraft(draft.item_type, keepComputation(draft, record?.revised)), allowed)
-      checkModelDraft(revised)
-      return { issues: issues.success ? cleanReviewNotes(issues.data, draft) : [], draft: revised }
+      try {
+        const record = value as { issues?: unknown; revised?: unknown }
+        const issues = z.array(z.string()).max(8).safeParse(record?.issues)
+        checkSymbols(record?.revised, sourceText(unit))
+        const revised = parseDraft(draft.item_type, repairDraft(draft.item_type, keepComputation(draft, record?.revised)), allowed)
+        checkModelDraft(revised)
+        return { issues: issues.success ? cleanReviewNotes(issues.data, draft) : [], draft: revised }
+      } catch (error) {
+        sentBack.push(message(error).toLowerCase())
+        throw error
+      }
     },
   })
-  return result.value
+  // Sent back with a problem, the reviewer sometimes listed the problem itself
+  // as a note once it had fixed it, word for word: "the stem gives the answer
+  // away: "displacement" already appears in it" (4 of 895 saved notes,
+  // 2026-10-09).
+  const repeats = (note: string) => sentBack.some((problem) => problem.includes(note.toLowerCase().replace(/[.\s]+$/, '')))
+  return { ...result.value, issues: result.value.issues.filter((note) => !repeats(note)) }
+}
+
+// The text of the source section, whose symbols a question may use.
+function sourceText(unit: SourceUnit): string {
+  return unit.paragraphs.map(([, text]) => text).join('\n')
 }
 
 // Gemma 4 E4B wrote a true statement as a wrong choice in 18 of 120
@@ -539,6 +569,7 @@ export async function verifyAnswerKey(
   allowed: Set<number>,
   signal: AbortSignal,
   callbacks: GenerationCallbacks,
+  textbook: WordIndex,
 ): Promise<{ draft: QuestionDraft; notes: string[] }> {
   switch (draft.item_type) {
     case 'multiple_choice':
@@ -547,7 +578,7 @@ export async function verifyAnswerKey(
     case 'true_false':
       return verifyTrueFalse(provider, unit, draft, signal, callbacks)
     case 'fill_in_blank':
-      return verifyBlank(provider, unit, concept, draft, signal, callbacks)
+      return verifyBlank(provider, unit, concept, draft, signal, callbacks, textbook)
     default:
       return { draft, notes: [] }
   }
@@ -643,9 +674,10 @@ export async function checkTrueFalse(
 // Sent back to the reviewer, a number key was replaced 1 time in 8, so the fix
 // is narrower: the blank goes back into the sentence, the model names other
 // words of it to blank, and the first one the check fills in as the key is
-// kept. The sentence and the explanation stay as they were, so the question's
-// facts do not change. If none passes, the question keeps its blank, with a
-// note if the check disagreed.
+// kept, skipping words the textbook gives away (givenAway). The sentence and
+// the explanation stay as they were, so the question's facts do not change. If
+// none passes, the question keeps its blank, with a note if the check
+// disagreed.
 export async function checkBlank(
   provider: LLMProvider,
   unit: SourceUnit,
@@ -678,8 +710,13 @@ async function verifyBlank(
   draft: DraftOf<'fill_in_blank'>,
   signal: AbortSignal,
   callbacks: GenerationCallbacks,
+  textbook: WordIndex,
 ): Promise<{ draft: QuestionDraft; notes: string[] }> {
   const fill = (stem: string) => checkBlank(provider, unit, stem, signal, callbacks).catch(unlessAborted<string>(signal))
+  const passes = async (candidate: DraftOf<'fill_in_blank'>) => {
+    const answer = await fill(candidate.stem)
+    return answer !== null && sameAnswer(answer, candidate.answer)
+  }
   callbacks.onStatus(`Checking the answer of “${draft.title}”…`)
   const filled = await fill(draft.stem)
   if (filled === null) return { draft, notes: [] }
@@ -689,11 +726,16 @@ async function verifyBlank(
   callbacks.onStatus(`Choosing a better blank for “${draft.title}”…`)
   const sentence = repairProse(fillIn(draft.stem, draft.answer)) as string
   const words = await reblank(provider, unit, concept, sentence, [draft.answer], signal, callbacks).catch(unlessAborted<string[]>(signal))
+  const givenAwayBlanks: DraftOf<'fill_in_blank'>[] = []
   for (const word of words ?? []) {
     const candidate = blankedDraft(draft, sentence, word)
     if (!candidate) continue
-    const answer = await fill(candidate.stem)
-    if (answer !== null && sameAnswer(answer, candidate.answer)) return { draft: candidate, notes: [] }
+    if (givenAway(candidate.stem, candidate.answer, textbook)) givenAwayBlanks.push(candidate)
+    else if (await passes(candidate)) return { draft: candidate, notes: [] }
+  }
+  // An easy blank still beats a number or symbol students type differently.
+  if (typedAnswerProblem(draft)) {
+    for (const candidate of givenAwayBlanks) if (await passes(candidate)) return { draft: candidate, notes: [] }
   }
   return { draft, notes: agrees ? [] : [blankNote(filled, draft.answer)] }
 }
@@ -707,7 +749,9 @@ export async function reblank(
   signal: AbortSignal,
   callbacks: GenerationCallbacks,
 ): Promise<string[]> {
-  const schema = z.object({ words: z.array(z.string().trim().min(1).max(80)).min(1).max(3) })
+  // No length limits on a word: blankedDraft skips an empty or overlong one,
+  // rather than one such word failing the whole list.
+  const schema = z.object({ words: z.array(z.string()).min(1).max(5) })
   const result = await provider.complete({
     system: KEY_CHECK_SYSTEM,
     prompt: reblankPrompt(unit.pageTitle, concept, sentence, avoid),
@@ -773,6 +817,131 @@ export function blankedDraft(draft: DraftOf<'fill_in_blank'>, sentence: string, 
   }
 }
 
+// Asked for the word that carries the idea, Gemma 4 E4B also offers words the
+// rest of the sentence gives away: "net external ____" (force), "acceleration
+// due to ____" (gravity), "An ____ force acts from outside the system, while an
+// internal force …" (external). Of 108 new blanks the check passed (2026-10-09),
+// 54 were given away like this and 31 were good. Skipping a word that the
+// textbook writes next to the blank's neighbouring word or two at least half
+// the time, where that neighbour occurs at least 3 times, or whose opposite
+// the sentence contrasts with it, flagged 25 of the 54 and 1 of the 31. It
+// counts over every page of the source, leaving out the question's own
+// sentence; counted over one page or the cited paragraphs, it still flags 1
+// of the 31. Gemma's own judgement of whether a blank is guessable told the
+// two apart no better than chance.
+export class WordIndex {
+  private readonly texts: string[]
+  private readonly vocabulary = new Map<string, number>()
+  private readonly positions: number[][] = []
+  private ids: Int32Array | null = null
+
+  // The words are read on first use: only a fill-in-the-blank question sent
+  // back for a new blank needs them, and a whole book has about a million.
+  constructor(texts: string[]) {
+    this.texts = texts
+  }
+
+  count(sequence: string[]): number {
+    const ids = this.build()
+    const wanted = sequence.map((word) => this.vocabulary.get(word) ?? -1)
+    if (!wanted.length || wanted.includes(-1)) return 0
+    let count = 0
+    for (const start of this.positions[wanted[0]]) {
+      let k = 1
+      while (k < wanted.length && ids[start + k] === wanted[k]) k++
+      if (k === wanted.length) count++
+    }
+    return count
+  }
+
+  private build(): Int32Array {
+    if (this.ids) return this.ids
+    const words = this.texts.flatMap((text) => [...wordsOf(text), BREAK])
+    const ids = new Int32Array(words.length)
+    words.forEach((word, i) => {
+      let id = word === BREAK ? -1 : this.vocabulary.get(word)
+      if (id === undefined) {
+        id = this.positions.length
+        this.vocabulary.set(word, id)
+        this.positions.push([])
+      }
+      ids[i] = id
+      if (id >= 0) this.positions[id].push(i)
+    })
+    this.ids = ids
+    return ids
+  }
+}
+
+const MIN_CONTEXT = 3
+const PREDICTABLE = 0.5
+
+export function givenAway(stem: string, answer: string, textbook: WordIndex): boolean {
+  const [before, after = ''] = stem.split(BLANK_RUN)
+  const head = wordsOf(before)
+  // The underscore keeps the "'s" of "____'s" attached, as in "Newton’s".
+  const tail = wordsOf(`_${after}`)
+  const key = wordsOf(answer)
+  // The words next to the blank, up to any math on either side.
+  const left = head.slice(head.lastIndexOf(BREAK) + 1)
+  const right = tail.includes(BREAK) ? tail.slice(0, tail.indexOf(BREAK)) : tail
+  for (const k of [1, 2]) {
+    if (left.length >= k && predicts(textbook, left.slice(-k), [...left.slice(-k), ...key])) return true
+    if (right.length >= k && predicts(textbook, right.slice(0, k), [...key, ...right.slice(0, k)])) return true
+  }
+  const others = [...head, ...tail].filter((word) => word !== BREAK)
+  return CONTRAST.test(stem) && key.some((word) => others.some((other) => opposite(word, other)))
+}
+
+// The question's sentence comes from the textbook, so one of the textbook's
+// uses of the phrase is usually that very sentence, which says nothing about
+// the rest of the book. On a one-page source it was often the only one.
+function predicts(textbook: WordIndex, context: string[], phrase: string[]): boolean {
+  const hit = textbook.count(phrase)
+  const own = hit > 0 ? 1 : 0
+  const seen = textbook.count(context) - own
+  return seen >= MIN_CONTEXT && (hit - own) / seen >= PREDICTABLE
+}
+
+// Opposites contrasted in one sentence give each other away: "An ____ force
+// acts from outside the system, while an internal force …" (external). They
+// are the same word with and without a negating prefix ("balanced",
+// "unbalanced"), or one stem behind the two halves of a pair ("internal",
+// "external"). Without a contrast, "the ____ of a spring … the tension"
+// (extension) or "____ until no charge remains" (discharge) is not one.
+const CONTRAST = /\b(?:while|whereas|but|unlike|not|rather than|instead|opposite|versus|compared)\b/i
+const NEGATIONS = ['un', 'non', 'in', 'im', 'ir', 'il', 'dis']
+const PAIRS = [['in', 'ex'], ['im', 'ex'], ['inter', 'intra'], ['endo', 'exo'], ['in', 'out'], ['in', 'de']]
+
+function opposite(a: string, b: string): boolean {
+  const negates = (x: string, y: string) => y.length >= 4 && NEGATIONS.some((prefix) => x === prefix + y)
+  const paired = (x: string, y: string) =>
+    PAIRS.some(([p, q]) => x.startsWith(p) && y.startsWith(q) && x.length - p.length >= 3 && x.slice(p.length) === y.slice(q.length))
+  return negates(a, b) || negates(b, a) || paired(a, b) || paired(b, a)
+}
+
+// Words as the index counts them. Math is not prose, so it ends a run of words
+// (BREAK) instead of adding "f", "text" and "net". Curly and straight
+// apostrophes are the same, and "Newton's" is "newton" and "'s", so the blank
+// in "____'s second law" lines up with the textbook's "Newton’s second law".
+// "Forces" counts as "force".
+const BREAK = '|'
+
+function wordsOf(text: string): string[] {
+  return text
+    .split(DELIMITED_MATH)
+    .flatMap((part, i) =>
+      i % 2 ? [BREAK] : (part.toLowerCase().replace(/[‘’]/g, "'").match(/[\p{L}\p{N}]+|(?<=[\p{L}\p{N}_])'\p{L}+/gu) ?? []).map(singular),
+    )
+}
+
+// "forces" and "force", "masses" and "mass", but "mass" and "this" as they are.
+function singular(word: string): string {
+  if (word.length <= 3 || /(?:ss|us|is)$/.test(word)) return word
+  if (/(?:sses|xes|zes|ches|shes)$/.test(word)) return word.slice(0, -2)
+  return word.endsWith('s') ? word.slice(0, -1) : word
+}
+
 // Case, a leading article, punctuation and a plural ending are not what the
 // check is after.
 export function sameAnswer(a: string, b: string): boolean {
@@ -784,7 +953,6 @@ export function sameAnswer(a: string, b: string): boolean {
       .replace(/^\s*(?:the|a|an)\s+/, '')
       .replace(/\s+/g, ' ')
       .trim()
-  const singular = (text: string) => text.replace(/(?:es|s)$/, '')
   const [x, y] = [plain(a), plain(b)]
   return x === y || singular(x) === singular(y)
 }
