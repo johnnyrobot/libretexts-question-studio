@@ -122,6 +122,7 @@ function check(item, expected) {
       const pairs = q.termsToMatch.map((t) => [t.termToMatch, byId[t.matchingTermIdentifier]])
       expect(JSON.stringify(pairs) === JSON.stringify(expected.pairsHtml), `pairs ${JSON.stringify(pairs)}`)
       expect(q.possibleMatches.length === expected.optionCount, 'distractors kept')
+      expect(item.score_hundredths === 10000, `shares add up to ${item.score_hundredths / 100}, not 100`)
       break
     }
     case 'fill_in_blank':
@@ -138,6 +139,7 @@ function check(item, expected) {
         expect(JSON.stringify(correct) === JSON.stringify([blank.correctHtml]), `[${blank.id}] correct ${correct}`)
         expect(options.length === blank.optionCount, `[${blank.id}] option count`)
       }
+      expect(item.score_hundredths === 10000, `shares add up to ${item.score_hundredths / 100}, not 100`)
       break
     }
     case 'essay':

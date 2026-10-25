@@ -111,6 +111,22 @@ describe('canvas QTI package', () => {
     expect(xml).toMatch(/<render_choice>\n/)
   })
 
+  it('gives the parts of a matching or dropdowns question shares that add up to exactly 100', () => {
+    const matching = items[4].draft as DraftOf<'matching'>
+    const dropdowns = items[6].draft as DraftOf<'dropdowns'>
+    const elements = ['Hydrogen', 'Helium', 'Lithium', 'Beryllium', 'Boron', 'Carbon', 'Nitrogen']
+    // Three pairs, seven pairs and three blanks.
+    const drafts = [matching, { ...matching, pairs: elements.map((name, i) => ({ prompt: `Element ${i + 1}`, match: name })), distractors: [] }, dropdowns]
+    for (const draft of drafts) {
+      const shares = [...buildItemXml({ id: items[4].id, draft }).matchAll(/<setvar varname="SCORE" action="Add">([\d.]+)<\/setvar>/g)].map((m) => m[1])
+      const parts = draft.item_type === 'matching' ? draft.pairs.length : draft.blanks.length
+      expect(shares).toHaveLength(parts)
+      // In hundredths, so that floating point cannot round a wrong total to 100.
+      expect(shares.every((share) => /^\d+(\.\d{1,2})?$/.test(share))).toBe(true)
+      expect(shares.reduce((sum, share) => sum + Math.round(Number(share) * 100), 0)).toBe(10000)
+    }
+  })
+
   it('encodes numerical answers as an inclusive range', () => {
     const xml = buildItemXml(items[3])
     expect(xml).toContain('<vargte respident="response1">5.9</vargte>')
@@ -303,7 +319,7 @@ describe('answer-leak and wording checks', () => {
     const dd = SAMPLE_DRAFTS.find((d) => d.item_type === 'dropdowns')!
     const { item_type: _d, ...rest } = dd
     void _d
-    expect(() => parseDraft('dropdowns', { ...rest, stem: 'Plants absorb [gasin], not oxygen, and release [gasout].' })).toThrow(
+    expect(() => parseDraft('dropdowns', { ...rest, stem: 'Plants absorb [gasin], not oxygen, and release [gasout], using energy from [energy].' })).toThrow(
       /gives \[gasout\] away/,
     )
   })

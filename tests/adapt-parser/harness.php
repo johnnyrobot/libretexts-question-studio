@@ -80,6 +80,11 @@ namespace {
         // ---- QtiImportController::store, once per item
         foreach ($items as $row) {
             $out = ['identifier' => $row['identifier']];
+            // ADAPT keeps only which answers are right, but Canvas adds up the
+            // SCORE of each matching term or dropdown blank, so the harness also
+            // totals the shares (in hundredths) of the item it imports.
+            $setvars = (new SimpleXMLElement($row['xml']))->xpath('.//*[local-name()="setvar"][@varname="SCORE"][@action="Add"]') ?: [];
+            $out['score_hundredths'] = array_sum(array_map(function ($setvar) { return (int) round(100 * (float) $setvar); }, $setvars));
             try {
                 $qtiImport = new App\QtiImport();
                 $qtiImport->xml = $row['xml'];

@@ -83,7 +83,7 @@ export function reviewPrompt(
 ): string {
   const { item_type, ...payload } = draft
   const fix = keyProblems.length
-    ? `\nA separate check answered the question without seeing the answer key and disagreed with it. Fix every one of these problems, by changing which choices are marked correct or by replacing the choice:\n${keyProblems.map((p) => `- ${untrusted(p)}`).join('\n')}`
+    ? `\nA separate check answered the question without seeing the answer key and disagreed with it. Fix every one of these problems, ${KEY_FIXES[item_type] ?? KEY_FIXES.default}:\n${keyProblems.map((p) => `- ${untrusted(p)}`).join('\n')}`
     : ''
   // From typedAnswerProblem in schema.ts.
   const typed = answerProblem
@@ -137,6 +137,46 @@ ${untrusted(`${draft.stem}\n${choices}`)}
 </question>`
 }
 
+// Matching and dropdowns questions get the same check, one answer per term or
+// blank. The options are lettered in alphabetical order (pipeline.ts orders
+// them): the question itself stores each match beside its term and a
+// dropdown's right option first.
+export function matchingCheckPrompt(unit: SourceUnit, stem: string, terms: string[], options: string[]): string {
+  const question = `${stem}\nTerms:\n${terms.map((term, i) => `${i + 1}. ${term}`).join('\n')}\nOptions:\n${lettered(options)}`
+  return `Answer this matching quiz question the way an expert in the subject would: match each numbered term to one lettered option. You are not told the answer key. Each option matches at most one term, and some options match no term.
+In working, write one line per term, in order, and nothing else: its number, the letter of its match, then a reason of at most 12 words, for example: "1 C: a larger mass gives a smaller acceleration."
+Then list in answers, for each term in order, the letter of its match.
+Judge by the facts of the subject. The textbook excerpt is a reference: a match is still right when the excerpt does not say it in those words.
+
+<source>
+${renderSource(unit)}
+</source>
+<question>
+${untrusted(question)}
+</question>`
+}
+
+export function dropdownsCheckPrompt(unit: SourceUnit, stem: string, blanks: { id: string; options: string[] }[]): string {
+  const lists = blanks.map(({ id, options }) => `[${id}]:\n${lettered(options)}`).join('\n\n')
+  return `Fill in each blank of this quiz question the way an expert in the subject would. Each blank is written as [name] in the text and has its own lettered options, listed below the text; exactly one option of each blank is right. You are not told the answer key.
+In working, write one line per blank, in the order of the lists, and nothing else: its name in brackets, the letter you choose, then a reason of at most 12 words, for example: "[force] B: a larger mass gives a smaller acceleration."
+Then list in answers, for each blank in the order of the lists, the letter you chose.
+Judge by the facts of the subject. The textbook excerpt is a reference: an option is still right when the excerpt does not say it in those words.
+
+<source>
+${renderSource(unit)}
+</source>
+<question>
+${untrusted(`${stem}\n\n${lists}`)}
+</question>`
+}
+
+export const OPTION_LETTERS = 'ABCDEFGHIJKL'.split('')
+
+function lettered(options: string[]): string {
+  return options.map((option, i) => `${OPTION_LETTERS[i]}. ${option}`).join('\n')
+}
+
 // The blank check (checkBlank in pipeline.ts): the model fills in a
 // fill-in-the-blank question the way a student would, without the key and
 // without the textbook. Shown the textbook, Gemma 4 E4B copied its word and
@@ -188,6 +228,13 @@ const PLACEHOLDERS_IN_MATH =`Every value is a placeholder with two braces, also 
 const REVIEW_FOCUS: Partial<Record<ItemType | 'default', string>> = {
   default: `factual errors, more than one defensible answer, answer leakage in the stem, implausible or "all/none of the above" distractors, grammatical cues, explanation errors, Bloom/difficulty mismatch, a question students cannot answer from its own text because it relies on numbers, an example, a figure or a situation from the source that it does not state (add what is missing to the stem), and a label from the source's figures or examples that students have not seen, such as "System 1" or \\(F_{prof}\\) (name the thing in words instead).`,
   math: `does the stem describe a sensible situation that matches answer_formula, states the units, and needs no example or figure from the source; are the variable ranges realistic; and does the explanation describe the same calculation as answer_formula. The variables, constraints, answer_formula, tolerance_percent and units were verified by the app and stay exactly as they are, so return only the reworded title, stem and explanation.`,
+}
+
+// How the reviewer may fix a key the answer check disagrees with.
+const KEY_FIXES: Partial<Record<ItemType | 'default', string>> = {
+  default: 'by changing which choices are marked correct or by replacing the choice',
+  matching: 'by changing which option a term is paired with, or by rewording a term or option so that only its match fits it',
+  dropdowns: 'by changing which option of a blank is the right one, or by replacing an option',
 }
 
 // Rules for the reviewer's revision where they differ from the drafting rules.

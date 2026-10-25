@@ -73,10 +73,11 @@ export const SAMPLE_DRAFTS: QuestionDraft[] = [
     ...base,
     item_type: 'dropdowns',
     title: 'Inputs and outputs',
-    stem: 'Plants absorb [gasin] and release [gasout].',
+    stem: 'Plants absorb [gasin] and release [gasout], using energy from [energy].',
     blanks: [
       { id: 'gasin', correct: 'carbon dioxide', distractors: ['oxygen', 'nitrogen'] },
       { id: 'gasout', correct: 'oxygen', distractors: ['carbon dioxide'] },
+      { id: 'energy', correct: 'sunlight', distractors: ['heat', 'soil'] },
     ],
   },
   {

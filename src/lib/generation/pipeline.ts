@@ -9,8 +9,11 @@ import {
   blankCheckPrompt,
   conceptPrompt,
   draftPrompt,
+  dropdownsCheckPrompt,
   KEY_CHECK_SYSTEM,
   keyCheckPrompt,
+  matchingCheckPrompt,
+  OPTION_LETTERS,
   reblankPrompt,
   reviewPrompt,
   SYSTEM_PROMPT,
@@ -524,10 +527,23 @@ function sourceText(unit: SourceUnit): string {
 // back once, naming the choices; if the check still disagrees, the instructor
 // gets a note. The check is a convenience: if it cannot run, the question is
 // kept as it is.
-export interface KeyDisagreement {
+// Matching and dropdowns questions get the same check and the same handling,
+// with one answer per term or blank. Unlike multiple choice, they were not
+// measured against known wrong keys.
+export type KeyDisagreement = ChoiceDisagreement | PartDisagreement
+
+export interface ChoiceDisagreement {
   choice: string
   // What the check makes of the choice; the key says the opposite.
   checkSaysCorrect: boolean
+}
+
+// A matching term (by its text) or a dropdown blank (by its id) that the check
+// answered with another option than the key.
+export interface PartDisagreement {
+  part: string
+  key: string
+  check: string
 }
 
 export async function checkAnswerKey(
@@ -537,7 +553,33 @@ export async function checkAnswerKey(
   signal: AbortSignal,
   callbacks: GenerationCallbacks,
 ): Promise<KeyDisagreement[]> {
-  if (draft.item_type !== 'multiple_choice' && draft.item_type !== 'multiple_answers') return []
+  switch (draft.item_type) {
+    case 'multiple_choice':
+    case 'multiple_answers':
+      return checkChoices(provider, unit, draft, signal, callbacks)
+    case 'matching': {
+      const options = alphabetical([...draft.pairs.map((pair) => pair.match), ...draft.distractors])
+      const prompt = matchingCheckPrompt(unit, draft.stem, draft.pairs.map((pair) => pair.prompt), options)
+      const parts = draft.pairs.map((pair) => ({ part: pair.prompt, key: pair.match, options }))
+      return checkParts(provider, prompt, 'matching_check', parts, signal, callbacks)
+    }
+    case 'dropdowns': {
+      const parts = draft.blanks.map((blank) => ({ part: blank.id, key: blank.correct, options: alphabetical([blank.correct, ...blank.distractors]) }))
+      const prompt = dropdownsCheckPrompt(unit, draft.stem, parts.map(({ part, options }) => ({ id: part, options })))
+      return checkParts(provider, prompt, 'dropdowns_check', parts, signal, callbacks)
+    }
+    default:
+      return []
+  }
+}
+
+async function checkChoices(
+  provider: LLMProvider,
+  unit: SourceUnit,
+  draft: DraftOf<'multiple_choice'> | DraftOf<'multiple_answers'>,
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<ChoiceDisagreement[]> {
   const { choices } = draft
   const schema = z.object({ working: z.string(), answers: z.array(z.int().min(1).max(choices.length)) })
   const result = await provider.complete({
@@ -559,8 +601,49 @@ export async function checkAnswerKey(
   )
 }
 
-// Checks the key of a multiple-choice, select-all, true/false or
-// fill-in-the-blank question, and fixes it or notes it.
+// The check answers each matching term or dropdown blank with the letter of
+// one of its options.
+async function checkParts(
+  provider: LLMProvider,
+  prompt: string,
+  schemaName: string,
+  parts: { part: string; key: string; options: string[] }[],
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<PartDisagreement[]> {
+  const letters = OPTION_LETTERS.slice(0, Math.max(...parts.map((p) => p.options.length))) as [string, ...string[]]
+  const schema = z.object({ working: z.string(), answers: z.array(z.enum(letters)).length(parts.length) })
+  const result = await provider.complete({
+    system: KEY_CHECK_SYSTEM,
+    prompt,
+    schemaName,
+    schema: toLlmSchema(schema),
+    signal,
+    onProgress: callbacks.onModelEvent,
+    validate: (value) => {
+      const parsed = schema.safeParse(value)
+      if (!parsed.success) throw new Error(formatIssues(parsed.error))
+      return parsed.data.answers.map((letter, i) => {
+        const index = letters.indexOf(letter)
+        if (index >= parts[i].options.length) {
+          throw new Error(`answers.${i}: ${letter} is not one of the options (A to ${letters[parts[i].options.length - 1]})`)
+        }
+        return index
+      })
+    },
+  })
+  return parts.flatMap(({ part, key, options }, i) => {
+    const check = options[result.value[i]]
+    return check === key ? [] : [{ part, key, check }]
+  })
+}
+
+function alphabetical(texts: string[]): string[] {
+  return [...texts].sort((a, b) => a.localeCompare(b))
+}
+
+// Checks the key of a multiple-choice, select-all, true/false,
+// fill-in-the-blank, matching or dropdowns question, and fixes it or notes it.
 export async function verifyAnswerKey(
   provider: LLMProvider,
   unit: SourceUnit,
@@ -574,6 +657,8 @@ export async function verifyAnswerKey(
   switch (draft.item_type) {
     case 'multiple_choice':
     case 'multiple_answers':
+    case 'matching':
+    case 'dropdowns':
       return verifyByReview(provider, unit, concept, draft, allowed, signal, callbacks)
     case 'true_false':
       return verifyTrueFalse(provider, unit, draft, signal, callbacks)
@@ -634,7 +719,7 @@ async function verifyTrueFalse(
   callbacks: GenerationCallbacks,
 ): Promise<{ draft: QuestionDraft; notes: string[] }> {
   callbacks.onStatus(`Checking the answer key of “${draft.title}”…`)
-  const disagreements = await checkTrueFalse(provider, unit, draft, signal, callbacks).catch(unlessAborted<KeyDisagreement[]>(signal))
+  const disagreements = await checkTrueFalse(provider, unit, draft, signal, callbacks).catch(unlessAborted<ChoiceDisagreement[]>(signal))
   return { draft, notes: disagreements?.length ? [keyNote(draft.item_type, disagreements)] : [] }
 }
 
@@ -644,7 +729,7 @@ export async function checkTrueFalse(
   draft: QuestionDraft,
   signal: AbortSignal,
   callbacks: GenerationCallbacks,
-): Promise<KeyDisagreement[]> {
+): Promise<ChoiceDisagreement[]> {
   if (draft.item_type !== 'true_false') return []
   const schema = z.object({ working: z.string(), answer: z.boolean() })
   const result = await provider.complete({
@@ -965,7 +1050,16 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function keyProblem(itemType: ItemType, { choice, checkSaysCorrect }: KeyDisagreement): string {
+function keyProblem(itemType: ItemType, disagreement: KeyDisagreement): string {
+  if ('part' in disagreement) {
+    const part = clip(disagreement.part, 160)
+    const key = clip(disagreement.key, 160)
+    const check = clip(disagreement.check, 160)
+    return itemType === 'matching'
+      ? `"${part}" is matched to "${key}", but an expert may match it to "${check}": make sure only its match fits it, or change the pair.`
+      : `The blank [${part}] has "${key}" as its right option, but an expert may choose "${check}": make sure only the right option fits the blank, or change the options.`
+  }
+  const { choice, checkSaysCorrect } = disagreement
   if (!checkSaysCorrect) {
     return `The choice "${clip(choice, 160)}" is marked correct, but it may not be: make sure it is true and answers the question, or mark it incorrect.`
   }
@@ -974,10 +1068,20 @@ function keyProblem(itemType: ItemType, { choice, checkSaysCorrect }: KeyDisagre
 }
 
 function keyNote(itemType: ItemType, disagreements: KeyDisagreement[]): string {
+  const choices = disagreements.flatMap((d) => ('part' in d ? [] : [d]))
+  const parts = disagreements.flatMap((d) => ('part' in d ? [d] : []))
   if (itemType === 'true_false') {
-    return `An automatic answer check disagrees with the answer key: it judged the statement ${disagreements[0].checkSaysCorrect ? 'true' : 'false'}.`
+    return `An automatic answer check disagrees with the answer key: it judged the statement ${choices[0].checkSaysCorrect ? 'true' : 'false'}.`
   }
-  const judged = disagreements.map(({ choice, checkSaysCorrect }) => `“${clip(choice, 100)}” is ${checkSaysCorrect ? 'also correct' : 'not correct'}`)
+  if (parts.length) {
+    const answered = parts.map(({ part, key, check }) =>
+      itemType === 'matching'
+        ? `“${clip(part, 100)}” to “${clip(check, 100)}”, not “${clip(key, 100)}”`
+        : `“${clip(check, 100)}” for [${part}], not “${clip(key, 100)}”`,
+    )
+    return `An automatic answer check disagrees with the answer key: it ${itemType === 'matching' ? 'matched' : 'chose'} ${answered.join('; ')}.`
+  }
+  const judged = choices.map(({ choice, checkSaysCorrect }) => `“${clip(choice, 100)}” is ${checkSaysCorrect ? 'also correct' : 'not correct'}`)
   return `An automatic answer check disagrees with the answer key: it judged that ${judged.join('; ')}.`
 }
 
