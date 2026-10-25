@@ -483,6 +483,7 @@ export function escapeHtml(value: string): string {
 
 // XML 1.0 forbids most control characters, and one of them makes the whole
 // quiz file unreadable, so ADAPT would import none of its questions.
+// eslint-disable-next-line no-control-regex -- removing these is the point
 const NOT_XML = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g
 
 function xml(value: string): string {

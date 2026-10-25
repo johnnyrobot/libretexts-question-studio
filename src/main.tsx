@@ -17,6 +17,7 @@ const updateServiceWorker = registerSW({
   },
 })
 
+// eslint-disable-next-line react/only-export-components -- the entry module is never hot-swapped
 function Root() {
   const updateReady = useSyncExternalStore(
     (listener) => {
