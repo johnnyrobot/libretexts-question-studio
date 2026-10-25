@@ -6,8 +6,8 @@
 // units and LaTeX are stripped (\frac, \times, \cdot, \div, ^, \sqrt, mixed
 // numbers like 2\frac{1}{2}, implicit products like 4(9.86) or 2\sqrt{3}) is
 // evaluated, and neighbouring sides must agree when either is a calculation.
-// The allowed gap is the rounding of the side written with fewer digits (half a
-// unit in its last digit) plus 0.5%, or 2% after \approx.
+// The allowed gap is the rounding of the written result (half a unit in its last
+// digit; a calculation side allows none) plus 0.5%, or 2% after \approx.
 //
 // The key must also appear as a result: some evaluated side, or a number the
 // explanation writes, within the question's tolerance (at least 0.5%, or the
@@ -58,9 +58,13 @@ function chainProblems(text: string): { problems: ArithmeticProblem[]; values: n
       }
       values.push(read.value)
       if (previous && (isCalculation(read.expression) || isCalculation(previous.expression))) {
+        // Only a written result is rounded; a calculation is exact.
+        const rounding = Math.max(
+          isCalculation(read.expression) ? 0 : halfUnit(side),
+          isCalculation(previous.expression) ? 0 : halfUnit(previous.text),
+        )
         const gap =
-          Math.max(halfUnit(side), halfUnit(previous.text)) +
-          (previous.approximate ? 0.02 : 0.005) * Math.max(Math.abs(read.value), Math.abs(previous.value))
+          rounding + (previous.approximate ? 0.02 : 0.005) * Math.max(Math.abs(read.value), Math.abs(previous.value))
         if (Math.abs(read.value - previous.value) > gap + 1e-12) {
           problems.push({ kind: 'step', written: previous.text.trim(), value: previous.value, nextValue: read.value })
         }

@@ -14,6 +14,11 @@ describe('arithmetic check of a numerical explanation', () => {
     // 9.81 × 1.37 is 13.44: 13.2 is within 2% but not 0.5%.
     expect(arithmeticProblems('\\(W = 9.81 \\times 1.37 \\approx 13.2\\) N.', 13.2, 0.1)).toEqual([])
     expect(arithmeticProblems('\\(W = 9.81 \\times 1.37 = 13.2\\) N.', 13.2, 0.1)).toHaveLength(1)
+    // Only a written result is rounded: the last operand of a calculation allows nothing.
+    expect(arithmeticProblems('\\(\\frac{10}{3} = 3.0\\)', 3, 0.5)).toEqual([
+      { kind: 'step', written: '\\frac{10}{3}', value: 10 / 3, nextValue: 3 },
+    ])
+    expect(arithmeticProblems('\\(3 \\times 4 = 12.4\\)', 12.4, 0)).toHaveLength(1)
   })
 
   it('reads LaTeX fractions, mixed numbers, roots, powers, products and units', () => {
