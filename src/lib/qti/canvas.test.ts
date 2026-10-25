@@ -7,7 +7,6 @@ import { compileMath } from '../math/spec'
 import {
   buildItemXml,
   buildQuizPackage,
-  escapeHtml,
   formatNumber,
   ident,
   itemIdent,
@@ -15,6 +14,7 @@ import {
   numericRange,
   paragraphsHtml,
 } from './canvas'
+import { adaptExpectation } from './adapt-expectations'
 import { SAMPLE_DRAFTS } from './fixtures'
 
 const items = SAMPLE_DRAFTS.map((draft, index) => ({
@@ -213,59 +213,6 @@ describe('helpers', () => {
     expect(itemIdent(uuid, 8, 1200)).toMatch(/^q0009_/)
   })
 })
-
-// What ADAPT should store for each fixture, checked by tests/adapt-parser/run.mjs.
-function adaptExpectation(draft: (typeof SAMPLE_DRAFTS)[number]) {
-  const base = { item_type: draft.item_type, explanationHtml: paragraphsHtml(draft.explanation) }
-  switch (draft.item_type) {
-    case 'multiple_choice':
-      return {
-        ...base,
-        choices: draft.choices,
-        correctHtml: escapeHtml(draft.choices.find((c) => c.correct)!.text),
-        choiceFeedback: Object.fromEntries(
-          draft.choices.flatMap((c, i) => (c.feedback ? [[String(1000 + i), paragraphsHtml(c.feedback)]] : [])),
-        ),
-      }
-    case 'true_false':
-      return { ...base, choices: [1, 2], correctHtml: draft.answer ? 'True' : 'False' }
-    case 'multiple_answers':
-      return { ...base, correctHtml: draft.choices.filter((c) => c.correct).map((c) => escapeHtml(c.text)) }
-    case 'numerical':
-      return numericalExpectation(draft)
-    case 'math':
-      return numericalExpectation(mathVersion(draft, compileMath(draft).variants[0]))
-    case 'matching':
-      return {
-        ...base,
-        pairsHtml: draft.pairs.map((p) => [escapeHtml(p.prompt), escapeHtml(p.match)]),
-        optionCount: draft.pairs.length + draft.distractors.length,
-      }
-    case 'fill_in_blank':
-      return { ...base, answer: draft.answer }
-    case 'dropdowns':
-      return {
-        ...base,
-        blanks: draft.blanks.map((b) => ({ id: b.id, correctHtml: escapeHtml(b.correct), optionCount: 1 + b.distractors.length })),
-      }
-    case 'essay':
-      return { ...base, stemHtml: paragraphsHtml(draft.stem) }
-  }
-}
-
-// ADAPT stores value = midpoint and margin = half-width (rounded to 5
-// decimals) of the exported range, in doubles just like JavaScript.
-function numericalExpectation(draft: DraftOf<'numerical'>) {
-  const low = Number(formatNumber(draft.answer - draft.tolerance))
-  const high = Number(formatNumber(draft.answer + draft.tolerance))
-  const value = (low + high) / 2
-  return {
-    item_type: 'numerical' as const,
-    explanationHtml: paragraphsHtml(draft.explanation),
-    answer: value,
-    tolerance: Math.round((high - value) * 1e5) / 1e5,
-  }
-}
 
 describe('answer-leak and wording checks', () => {
   const fib = SAMPLE_DRAFTS.find((d) => d.item_type === 'fill_in_blank')!
