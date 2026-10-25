@@ -581,16 +581,26 @@ describe('runGeneration', () => {
 
   it('sends back a matching pair the check matches differently, and notes it if the check still does', async () => {
     const provider = new FakeProvider('local')
-    // H2O matched to Oxygen, before and after the review.
+    // H2O matched to Nitrogen, before and after the review.
     provider.matchingAnswers = [
-      ['Carbon dioxide', 'Oxygen', 'Oxygen'],
-      ['Carbon dioxide', 'Oxygen', 'Oxygen'],
+      ['Carbon dioxide', 'Nitrogen', 'Oxygen'],
+      ['Carbon dioxide', 'Nitrogen', 'Oxygen'],
     ]
     await runGeneration('set-1', source, { itemTypes: ['matching'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
     expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['matching_item', 'matching_check', 'item_review', 'matching_check'])
-    expect(provider.reviews[0]).toContain('"H2O" is matched to "Water", but an expert may match it to "Oxygen"')
+    expect(provider.reviews[0]).toContain('"H2O" is matched to "Water", but an expert may match it to "Nitrogen"')
     const [item] = await db.items.where('setId').equals('set-1').toArray()
-    expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it matched “H2O” to “Oxygen”, not “Water”.'])
+    expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it matched “H2O” to “Nitrogen”, not “Water”.'])
+  })
+
+  it('asks the matching check again when it gives one option to two terms', async () => {
+    const provider = new FakeProvider('local')
+    // Oxygen for both H2O and O2, which the prompt rules out; then the key.
+    provider.matchingAnswers = [['Carbon dioxide', 'Oxygen', 'Oxygen']]
+    await runGeneration('set-1', source, { itemTypes: ['matching'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['matching_item', 'matching_check', 'matching_check'])
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.critique).toEqual([])
   })
 
   it('sends back a dropdown blank the check fills differently, with no note once the check agrees', async () => {

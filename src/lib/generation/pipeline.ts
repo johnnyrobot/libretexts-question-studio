@@ -623,6 +623,11 @@ async function checkParts(
     validate: (value) => {
       const parsed = schema.safeParse(value)
       if (!parsed.success) throw new Error(formatIssues(parsed.error))
+      // A matching option fits at most one term, as the prompt says; dropdown
+      // blanks each have their own options.
+      if (schemaName === 'matching_check' && new Set(parsed.data.answers).size < parts.length) {
+        throw new Error('answers must give each term a different option')
+      }
       return parsed.data.answers.map((letter, i) => {
         const index = letters.indexOf(letter)
         if (index >= parts[i].options.length) {
