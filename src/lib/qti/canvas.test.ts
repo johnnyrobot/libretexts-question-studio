@@ -7,15 +7,14 @@ import { compileMath } from '../math/spec'
 import {
   buildItemXml,
   buildQuizPackage,
-  escapeHtml,
   formatNumber,
   ident,
   itemIdent,
   mathVersion,
-  mathVersionsQuiz,
   numericRange,
   paragraphsHtml,
 } from './canvas'
+import { adaptExpectation } from './adapt-expectations'
 import { SAMPLE_DRAFTS } from './fixtures'
 
 const items = SAMPLE_DRAFTS.map((draft, index) => ({
@@ -57,32 +56,6 @@ describe('canvas QTI package', () => {
       ])
       writeFileSync('tests/adapt-parser/out/sample.zip', sample)
       writeFileSync('tests/adapt-parser/out/expectations.json', JSON.stringify(SAMPLE_DRAFTS.map(adaptExpectation), null, 2))
-
-      // The randomized math export: one quiz per math question holding every
-      // version. The second question has an exact answer and no tolerance, so
-      // its margin is zero.
-      const [math] = items.filter((item): item is { id: string; draft: DraftOf<'math'> } => item.draft.item_type === 'math')
-      const exact = {
-        id: '00000000-0000-4000-8000-000000000100',
-        draft: {
-          ...math.draft,
-          title: 'Total oxygen released',
-          stem: 'A leaf releases {{v}} mL of oxygen per minute for {{t}} minutes. How much oxygen does it release?',
-          explanation: 'Volume is rate times time: \\(V = {{v}} \\times {{t}}\\) = {{answer}} mL.',
-          answer_formula: 'v * t',
-          tolerance_percent: 0,
-          units: 'mL',
-        },
-      }
-      const versions = [math, exact].map((item) => ({ item, variants: compileMath(item.draft, 5).variants }))
-      const mathSample = buildQuizPackage(
-        versions.map(({ item, variants }) => mathVersionsQuiz(`question-studio-import-test:${item.id}`, item, variants)),
-      )
-      writeFileSync('tests/adapt-parser/out/math-versions.zip', mathSample)
-      writeFileSync(
-        'tests/adapt-parser/out/math-versions-expectations.json',
-        JSON.stringify(versions.flatMap(({ item, variants }) => variants.map((v) => numericalExpectation(mathVersion(item.draft, v)))), null, 2),
-      )
     }
   })
 
@@ -240,57 +213,6 @@ describe('helpers', () => {
     expect(itemIdent(uuid, 8, 1200)).toMatch(/^q0009_/)
   })
 })
-
-// What ADAPT should store for each fixture, checked by tests/adapt-parser/run.mjs.
-function adaptExpectation(draft: (typeof SAMPLE_DRAFTS)[number]) {
-  const base = { item_type: draft.item_type, explanationHtml: paragraphsHtml(draft.explanation) }
-  switch (draft.item_type) {
-    case 'multiple_choice':
-      return {
-        ...base,
-        choices: draft.choices,
-        correctHtml: escapeHtml(draft.choices.find((c) => c.correct)!.text),
-        choiceFeedback: Object.fromEntries(
-          draft.choices.flatMap((c, i) => (c.feedback ? [[String(1000 + i), paragraphsHtml(c.feedback)]] : [])),
-        ),
-      }
-    case 'true_false':
-      return { ...base, choices: [1, 2], correctHtml: draft.answer ? 'True' : 'False' }
-    case 'multiple_answers':
-      return { ...base, correctHtml: draft.choices.filter((c) => c.correct).map((c) => escapeHtml(c.text)) }
-    case 'numerical':
-      return numericalExpectation(draft)
-    case 'math':
-      return numericalExpectation(mathVersion(draft, compileMath(draft).variants[0]))
-    case 'matching':
-      return {
-        ...base,
-        pairsHtml: draft.pairs.map((p) => [escapeHtml(p.prompt), escapeHtml(p.match)]),
-        optionCount: draft.pairs.length + draft.distractors.length,
-      }
-    case 'fill_in_blank':
-      return { ...base, answer: draft.answer }
-    case 'dropdowns':
-      return {
-        ...base,
-        blanks: draft.blanks.map((b) => ({ id: b.id, correctHtml: escapeHtml(b.correct), optionCount: 1 + b.distractors.length })),
-      }
-    case 'essay':
-      return { ...base, stemHtml: paragraphsHtml(draft.stem) }
-  }
-}
-
-// ADAPT stores value = midpoint and margin = half-width (rounded to 5
-// decimals) of the exported range. numericRange picks the range so that the
-// midpoint is the answer itself, even when a plain decimal range would not be.
-function numericalExpectation(draft: DraftOf<'numerical'>) {
-  return {
-    item_type: 'numerical' as const,
-    explanationHtml: paragraphsHtml(draft.explanation),
-    answer: Number(formatNumber(draft.answer)),
-    tolerance: Math.round(draft.tolerance * 1e5) / 1e5,
-  }
-}
 
 describe('answer-leak and wording checks', () => {
   const fib = SAMPLE_DRAFTS.find((d) => d.item_type === 'fill_in_blank')!

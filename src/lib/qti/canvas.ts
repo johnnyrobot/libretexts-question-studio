@@ -159,25 +159,6 @@ export function mathVersion(draft: DraftOf<'math'>, variant: MathVariant, title 
   }
 }
 
-// One quiz holding every version of a math question. Version 1 keeps the
-// question's own id, so its identifier still sorts by the question's position.
-export function mathVersionsQuiz(
-  id: string,
-  item: { id: string; draft: DraftOf<'math'> },
-  variants: MathVariant[],
-  description?: string,
-): QuizPackageInput {
-  return {
-    id,
-    title: item.draft.title,
-    description,
-    items: variants.map((variant, index) => ({
-      id: index === 0 ? item.id : `${item.id}:v${index + 1}`,
-      draft: mathVersion(item.draft, variant, `${item.draft.title} (version ${index + 1})`),
-    })),
-  }
-}
-
 // ---------------------------------------------------------------- item types
 
 interface ChoiceLike {

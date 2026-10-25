@@ -1,7 +1,7 @@
 import type { DraftOf } from '../generation/schema'
 import { compileMath, MathSpecError } from '../math/spec'
 import { db, newId, type StoredExport, type StoredItem } from '../storage/db'
-import { buildQuizPackage, mathVersionsQuiz, type QuizPackageInput } from './canvas'
+import { buildQuizPackage, mathVersion, type QuizPackageInput } from './canvas'
 
 // Builds the ADAPT-importable QTI zips for a set and keeps a copy in IndexedDB
 // so earlier exports can be downloaded again without regenerating anything.
@@ -41,7 +41,15 @@ export async function exportMathVersions(setId: string, includeDrafts: boolean, 
       if (error instanceof MathSpecError) throw new Error(`“${item.draft.title}”: ${error.message}`)
       throw error
     }
-    return mathVersionsQuiz(`${set.id}:${item.id}`, item, variants, description)
+    return {
+      id: `${set.id}:${item.id}`,
+      title: item.draft.title,
+      description,
+      items: variants.map((variant, index) => ({
+        id: index === 0 ? item.id : `${item.id}:v${index + 1}`,
+        draft: mathVersion(item.draft, variant, `${item.draft.title} (version ${index + 1})`),
+      })),
+    }
   })
   return save(setId, `${slug(set.title)}-math-versions-adapt-qti.zip`, math, buildQuizPackage(quizzes))
 }

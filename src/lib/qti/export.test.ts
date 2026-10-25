@@ -1,12 +1,26 @@
 import 'fake-indexeddb/auto'
 import { strFromU8, unzipSync } from 'fflate'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { DraftOf } from '../generation/schema'
+import { compileMath } from '../math/spec'
 import { db } from '../storage/db'
-import { itemIdent } from './canvas'
+import { numericalExpectation } from './adapt-expectations'
+import { itemIdent, mathVersion } from './canvas'
 import { exportMathVersions, exportSet } from './export'
 import { SAMPLE_DRAFTS } from './fixtures'
 
-const MATH = SAMPLE_DRAFTS.find((d) => d.item_type === 'math')!
+const MATH = SAMPLE_DRAFTS.find((d): d is DraftOf<'math'> => d.item_type === 'math')!
+// An exact answer, so it can have no tolerance.
+const TOTAL: DraftOf<'math'> = {
+  ...MATH,
+  title: 'Total oxygen released',
+  stem: 'A leaf releases {{v}} mL of oxygen per minute for {{t}} minutes. How much oxygen does it release?',
+  explanation: 'Volume is rate times time: \\(V = {{v}} \\times {{t}}\\) = {{answer}} mL.',
+  answer_formula: 'v * t',
+  tolerance_percent: 0,
+  units: 'mL',
+}
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 
 async function seed(drafts = SAMPLE_DRAFTS) {
@@ -107,6 +121,31 @@ describe('exportMathVersions', () => {
   it('names the question that cannot make enough versions', async () => {
     await seed([{ ...MATH, variables: [{ name: 'v', min: 1, max: 3, step: 1 }, { name: 't', min: 4, max: 5, step: 1 }] }])
     await expect(exportMathVersions('set', false, 8)).rejects.toThrow(/“Rate of oxygen release”: only 6 different versions/)
+  })
+
+  it('writes a question with no tolerance as a single value', async () => {
+    await seed([MATH, TOTAL])
+    const record = await exportMathVersions('set', false, 5)
+    const ranges = Object.fromEntries(
+      (await quizzes(record.zip)).map((quiz) => [
+        quiz.title,
+        [...quiz.xml.matchAll(/<vargte [^>]*>([^<]+)<\/vargte>\n<varlte [^>]*>([^<]+)<\/varlte>/g)].map((m) => [Number(m[1]), Number(m[2])]),
+      ]),
+    )
+    expect(ranges[TOTAL.title]).toHaveLength(5)
+    expect(ranges[MATH.title]).toHaveLength(5)
+    for (const [low, high] of ranges[TOTAL.title]) expect(low).toBe(high)
+    for (const [low, high] of ranges[MATH.title]) expect(low).toBeLessThan(high)
+
+    // npm run verify:adapt runs ADAPT's importer on this export.
+    if (process.env.WRITE_QTI_SAMPLE) {
+      mkdirSync('tests/adapt-parser/out', { recursive: true })
+      writeFileSync('tests/adapt-parser/out/math-versions.zip', new Uint8Array(await record.zip.arrayBuffer()))
+      const expected = [MATH, TOTAL].flatMap((draft) =>
+        compileMath(draft, 5).variants.map((variant) => numericalExpectation(mathVersion(draft, variant))),
+      )
+      writeFileSync('tests/adapt-parser/out/math-versions-expectations.json', JSON.stringify(expected, null, 2))
+    }
   })
 
   it('is byte-identical when exported twice', async () => {
