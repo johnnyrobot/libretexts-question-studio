@@ -363,7 +363,7 @@ function PasteSource({ onSource }: { onSource: (source: StoredSource) => void })
 // ---------------------------------------------------------------- step 2
 
 const DEFAULT_TYPES: ItemType[] = ['multiple_choice', 'true_false', 'multiple_answers', 'fill_in_blank']
-const CHECKED_TYPES = new Set<ItemType>(['multiple_choice', 'multiple_answers', 'true_false', 'fill_in_blank'])
+const CHECKED_TYPES = new Set<ItemType>(['multiple_choice', 'multiple_answers', 'true_false', 'fill_in_blank', 'matching', 'dropdowns'])
 
 function ConfigureStep({ sourceId }: { sourceId: string }) {
   const source = useLiveQuery(async () => (await db.sources.get(sourceId)) ?? null, [sourceId])
@@ -396,10 +396,12 @@ function Configure({ source }: { source: StoredSource }) {
   // The in-browser model does not review math questions (see pipeline.ts).
   const skipsReview = engine.provider === 'local' && types.includes('math')
   const reviews = reviewPass ? Math.round(total * (skipsReview ? 1 - 1 / types.length : 1)) : 0
-  // It also checks every multiple-choice, select-all, true/false and
-  // fill-in-the-blank answer key.
+  // An answer check answers every multiple-choice, select-all, true/false,
+  // fill-in-the-blank, matching and dropdowns question again: always on the
+  // in-browser model, and on OpenAI unless it is turned off in Settings.
+  const answerCheck = engine.provider === 'local' || engine.answerCheck
   const keyChecks =
-    engine.provider === 'local' ? Math.round((total * types.filter((t) => CHECKED_TYPES.has(t)).length) / types.length) : 0
+    answerCheck && types.length ? Math.round((total * types.filter((t) => CHECKED_TYPES.has(t)).length) / types.length) : 0
   const calls = total + reviews + keyChecks + source.pages.length
 
   const start = async () => {
@@ -423,7 +425,7 @@ function Configure({ source }: { source: StoredSource }) {
       createdAt: now,
       updatedAt: now,
     })
-    void startGeneration(setId, source, { itemTypes: types, perPage, reviewPass }, provider, await createEmbedder(engine))
+    void startGeneration(setId, source, { itemTypes: types, perPage, reviewPass, answerCheck }, provider, await createEmbedder(engine))
     navigate(`/set/${setId}`)
   }
 

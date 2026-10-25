@@ -416,6 +416,16 @@ function OpenAISettings() {
           </select>
         </label>
       </div>
+      <label className="inline mt-lg">
+        <input type="checkbox" checked={engine.answerCheck} onChange={(e) => saveEngineSettings({ answerCheck: e.target.checked })} />
+        <span>
+          Check answer keys (uses extra API calls)
+          <small>
+            The model answers each multiple-choice, select-all, true/false, fill-in-the-blank, matching and dropdowns question
+            again without its key. A key it disagrees with is sent back to be fixed, or noted for you.
+          </small>
+        </span>
+      </label>
       <p className="fine mt-lg">
         Your key is sent only to api.openai.com, directly from this browser, with <code>store: false</code>. The textbook
         text and prompts go to OpenAI under your account’s data policy (OpenAI keeps abuse-monitoring logs for up to 30

@@ -48,6 +48,9 @@ export interface GenerationPlan {
   itemTypes: ItemType[]
   perPage: number
   reviewPass: boolean
+  // Whether OpenAI also checks answer keys (see verifyAnswerKey), at one or
+  // more extra calls per question. The in-browser model always does.
+  answerCheck?: boolean
 }
 
 export interface GenerationResult {
@@ -340,7 +343,7 @@ export async function runGeneration(
             critique = [...notes, `Automatic review could not complete (${message(error)}); the unreviewed draft was kept.`]
           }
         }
-        if (provider.id === 'local') {
+        if (provider.id === 'local' || plan.answerCheck) {
           const checked = await verifyAnswerKey(provider, unit, concept, draft, allowed, signal, callbacks, textbook)
           // A new blank makes it another question than the one the reviewer
           // read, and its notes were nearly all about the old blank, such as

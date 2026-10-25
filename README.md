@@ -24,7 +24,7 @@ browser.
 1. **Settings:** either download and load the in-browser model, or paste an OpenAI API key.
 2. **Create:**
    - Choose a source and tick the pages you want.
-   - Choose question types and how many questions per page. The second-pass review is on by default. With the in-browser model, an answer check also answers each multiple-choice, select-all, true/false, fill-in-the-blank, matching and dropdowns question without its key: it sends back multiple-choice, select-all, matching and dropdowns keys it disagrees with, gives a fill-in-the-blank question a new blank when its answer differs from the key, and notes true/false keys it disagrees with.
+   - Choose question types and how many questions per page. The second-pass review is on by default. An answer check also answers each multiple-choice, select-all, true/false, fill-in-the-blank, matching and dropdowns question without its key: it sends back multiple-choice, select-all, matching and dropdowns keys it disagrees with, gives a fill-in-the-blank question a new blank when its answer differs from the key, and notes true/false keys it disagrees with. It always runs on the in-browser model; with OpenAI it is on by default and can be turned off in Settings (**Check answer keys**), since each check is another API call.
    - Generate. Questions appear as they are written, and the run continues if you switch screens.
 3. **Review:** approve, edit, or reject each question. Each question can show the exact source paragraphs it cites.
 4. **Export to ADAPT** (from the set's page): download the QTI (.zip). In ADAPT, go to Dashboard → My Questions → Bulk Import tab → Canvas QTI, pick a folder and license, and upload the file. Earlier downloads stay listed and can be downloaded again.
@@ -45,8 +45,8 @@ npm run catalog        # refresh public/catalog.json from LibreTexts Commons
 `npm test` runs only the tests under `src/`: the per-type schemas, the
 generation pipeline and its answer checks (with a scripted model), model output
 parsing and its JSON-escape guard, math formulas and versions, the LibreTexts
-page normaliser, the QTI exporter and export history, backup and restore, and
-the question editor.
+page normaliser, the QTI exporter and export history, backup and restore, the
+question editor, and the OpenAI answer-check setting.
 
 To check exported packages against ADAPT's real importer (PHP 7.4 compiled to
 WebAssembly; needs the `../adapt` checkout):
@@ -79,7 +79,7 @@ tests/adapt-parser/  harness that runs ADAPT's QtiImport.php on our packages
    - A math or numerical question whose section has no numbers takes a quantitative concept from another section of the same page. Only if the page has none is another type written instead.
 4. Validation failures are sent back to the model to fix, up to 3 attempts. If all 3 fail, the question starts over in a new conversation, up to twice more. A question that still fails is left out without a notice; only engine errors (such as a model that is not loaded) are shown.
 5. The reviewer pass (on by default) critiques and rewrites each question. Its notes are kept and shown with the question, unless the answer check below gives a fill-in-the-blank question a new blank. On the in-browser model, math questions skip it.
-6. On the in-browser model, an answer check answers each question without seeing its key. In testing it found 16 of 18 wrong multiple-choice and select-all keys and flagged 4 of 93 right ones:
+6. An answer check answers each question without seeing its key: always on the in-browser model, and on OpenAI unless **Check answer keys** is turned off in Settings. In testing on the in-browser model (Gemma 4 E4B) it found 16 of 18 wrong multiple-choice and select-all keys and flagged 4 of 93 right ones; it has not been measured on OpenAI:
    - **Multiple choice and select-all:** if the check disagrees, the question goes back once to be fixed, naming the choices. If the check still disagrees, the question gets a note.
    - **Matching and dropdowns:** the check matches each term, or fills each blank, from options listed in alphabetical order. Terms and blanks it answers differently go back once to be fixed, and if the check still disagrees, the question gets a note. These two types were not measured against known wrong keys.
    - **Fill in the blank:** the check fills the blank without the key or the textbook. If its answer differs from the key, or the key is a number or symbol, the model names up to five other words of the completed sentence. The app skips function words and words the textbook makes predictable ("net external ____"), blanks the others in turn, and keeps the first that the check fills in as the key. A number or symbol key is replaced even by a predictable word. The sentence and explanation stay the same. If none passes, a question the check disagreed with gets a note.
@@ -121,5 +121,5 @@ also works from a sub-path.
 - The in-browser models need WebGPU: recent desktop Chrome or Edge, Safari 26, or Firefox on Windows / Apple Silicon. Phones are not supported. Gemma 4 E4B has only been tested in desktop Chrome on Apple Silicon; Qwen3.5 4B is the fallback.
 - Small local models write weaker distractors than GPT-6 Luna. Every question is a draft until an instructor approves it.
 - Images and figures are not used as question material. Image alt text is kept as text.
-- ADAPT grades fill-in-the-blank against a single answer by exact match, ignoring case (alternates are honoured by Canvas only). The app asks for answers in plain words. On the in-browser model, it also blanks another word when the check fills the blank differently. Questions where it cannot are noted. ADAPT ignores feedback on several types.
+- ADAPT grades fill-in-the-blank against a single answer by exact match, ignoring case (alternates are honoured by Canvas only). The app asks for answers in plain words. With the answer check, it also blanks another word when the check fills the blank differently. Questions where it cannot are noted. ADAPT ignores feedback on several types.
 - In ADAPT, essays take the assignment's Default Open-ended Submission Type; with None, students have nothing to submit.

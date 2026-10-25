@@ -104,8 +104,9 @@ checks the total.
   (`QtiImport.php` stores `matchingType: exact`, `caseSensitive: no`). "w=mg"
   does not match "w = mg", nor "9.8N" "9.8 N". When a model answer is a number,
   symbol or equation, the review pass is asked to blank a word instead
-  (`typedAnswerProblem`). On the in-browser model, the fill-in-the-blank check
-  then blanks another word of the sentence if the key is still one, or if the
+  (`typedAnswerProblem`). With the answer check (always on the in-browser
+  model, on OpenAI unless turned off), the fill-in-the-blank check then blanks
+  another word of the sentence if the key is still one, or if the
   check fills the blank differently (`verifyBlank`). The instructor gets a note
   if neither works.
 - Essays (`technology=text`) take the assignment's **Default Open-ended
