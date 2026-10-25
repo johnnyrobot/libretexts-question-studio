@@ -153,6 +153,6 @@ notices throw just as they do under Laravel:
 
 ```bash
 npm install --prefix /tmp/php-wasm @php-wasm/node      # once, ~470 MB
-PHP_WASM_DIR=/tmp/php-wasm npm run verify:adapt          # fixtures of every type
+PHP_WASM_DIR=/tmp/php-wasm npm run verify:adapt          # fixtures of every type, then randomized math versions
 PHP_WASM_DIR=/tmp/php-wasm node tests/adapt-parser/run.mjs some-export.zip --no-expectations
 ```

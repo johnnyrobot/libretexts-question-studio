@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "catalog": "node scripts/build-catalog.mjs",
-    "verify:adapt": "WRITE_QTI_SAMPLE=1 vitest run src/lib/qti && node tests/adapt-parser/run.mjs"
+    "verify:adapt": "WRITE_QTI_SAMPLE=1 vitest run src/lib/qti && node tests/adapt-parser/run.mjs && node tests/adapt-parser/run.mjs tests/adapt-parser/out/math-versions.zip tests/adapt-parser/out/math-versions-expectations.json"
   },
   "dependencies": {
     "@huggingface/transformers": "4.3.1",

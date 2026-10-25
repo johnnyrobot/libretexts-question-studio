@@ -12,6 +12,7 @@ import {
   ident,
   itemIdent,
   mathVersion,
+  mathVersionsQuiz,
   numericRange,
   paragraphsHtml,
 } from './canvas'
@@ -56,6 +57,32 @@ describe('canvas QTI package', () => {
       ])
       writeFileSync('tests/adapt-parser/out/sample.zip', sample)
       writeFileSync('tests/adapt-parser/out/expectations.json', JSON.stringify(SAMPLE_DRAFTS.map(adaptExpectation), null, 2))
+
+      // The randomized math export: one quiz per math question holding every
+      // version. The second question has an exact answer and no tolerance, so
+      // its margin is zero.
+      const [math] = items.filter((item): item is { id: string; draft: DraftOf<'math'> } => item.draft.item_type === 'math')
+      const exact = {
+        id: '00000000-0000-4000-8000-000000000100',
+        draft: {
+          ...math.draft,
+          title: 'Total oxygen released',
+          stem: 'A leaf releases {{v}} mL of oxygen per minute for {{t}} minutes. How much oxygen does it release?',
+          explanation: 'Volume is rate times time: \\(V = {{v}} \\times {{t}}\\) = {{answer}} mL.',
+          answer_formula: 'v * t',
+          tolerance_percent: 0,
+          units: 'mL',
+        },
+      }
+      const versions = [math, exact].map((item) => ({ item, variants: compileMath(item.draft, 5).variants }))
+      const mathSample = buildQuizPackage(
+        versions.map(({ item, variants }) => mathVersionsQuiz(`question-studio-import-test:${item.id}`, item, variants)),
+      )
+      writeFileSync('tests/adapt-parser/out/math-versions.zip', mathSample)
+      writeFileSync(
+        'tests/adapt-parser/out/math-versions-expectations.json',
+        JSON.stringify(versions.flatMap(({ item, variants }) => variants.map((v) => numericalExpectation(mathVersion(item.draft, v)))), null, 2),
+      )
     }
   })
 
@@ -254,16 +281,14 @@ function adaptExpectation(draft: (typeof SAMPLE_DRAFTS)[number]) {
 }
 
 // ADAPT stores value = midpoint and margin = half-width (rounded to 5
-// decimals) of the exported range, in doubles just like JavaScript.
+// decimals) of the exported range. numericRange picks the range so that the
+// midpoint is the answer itself, even when a plain decimal range would not be.
 function numericalExpectation(draft: DraftOf<'numerical'>) {
-  const low = Number(formatNumber(draft.answer - draft.tolerance))
-  const high = Number(formatNumber(draft.answer + draft.tolerance))
-  const value = (low + high) / 2
   return {
     item_type: 'numerical' as const,
     explanationHtml: paragraphsHtml(draft.explanation),
-    answer: value,
-    tolerance: Math.round((high - value) * 1e5) / 1e5,
+    answer: Number(formatNumber(draft.answer)),
+    tolerance: Math.round(draft.tolerance * 1e5) / 1e5,
   }
 }
 
