@@ -36,10 +36,17 @@ browser.
 ```bash
 npm install
 npm run dev            # http://localhost:5173
-npm test               # unit tests (schemas, math specs, normaliser, QTI exporter)
-npm run build          # type-check + production build in dist/
+npm run lint           # oxlint
+npm test               # unit tests under src/ (see below)
+npm run build          # type-check (tsc -b) + production build in dist/
 npm run catalog        # refresh public/catalog.json from LibreTexts Commons
 ```
+
+`npm test` runs only the tests under `src/`: the per-type schemas, the
+generation pipeline and its answer checks (with a scripted model), model output
+parsing and its JSON-escape guard, math formulas and versions, the LibreTexts
+page normaliser, the QTI exporter and export history, backup and restore, and
+the question editor.
 
 To check exported packages against ADAPT's real importer (PHP 7.4 compiled to
 WebAssembly; needs the `../adapt` checkout):
@@ -72,7 +79,7 @@ tests/adapt-parser/  harness that runs ADAPT's QtiImport.php on our packages
    - A math or numerical question whose section has no numbers takes a quantitative concept from another section of the same page. Only if the page has none is another type written instead.
 4. Validation failures are sent back to the model to fix, up to 3 attempts. If all 3 fail, the question starts over in a new conversation, up to twice more. A question that still fails is left out without a notice; only engine errors (such as a model that is not loaded) are shown.
 5. The reviewer pass (on by default) critiques and rewrites each question. Its notes are kept and shown with the question, unless the answer check below gives a fill-in-the-blank question a new blank. On the in-browser model, math questions skip it.
-6. On the in-browser model, an answer check answers each question without seeing its key. In testing it found 16 of 18 wrong multiple-choice keys and flagged 4 of 93 right ones:
+6. On the in-browser model, an answer check answers each question without seeing its key. In testing it found 16 of 18 wrong multiple-choice and select-all keys and flagged 4 of 93 right ones:
    - **Multiple choice and select-all:** if the check disagrees, the question goes back once to be fixed, naming the choices. If the check still disagrees, the question gets a note.
    - **Fill in the blank:** the check fills the blank without the key or the textbook. If its answer differs from the key, or the key is a number or symbol, the model names up to five other words of the completed sentence. The app skips function words and words the textbook makes predictable ("net external ____"), blanks the others in turn, and keeps the first that the check fills in as the key. A number or symbol key is replaced even by a predictable word. The sentence and explanation stay the same. If none passes, a question the check disagreed with gets a note.
    - **True/false:** a key the check disagrees with gets a note. It is not sent back, because the reviewer then flipped a correct key.
@@ -106,7 +113,7 @@ also works from a sub-path.
   - `api.openai.com`: only when a key is used.
 - **Content Security Policy:** if you set one, it needs `connect-src` for the hosts above, plus `'wasm-unsafe-eval'` in `script-src` for WebGPU/WASM.
 - **libretexts.org hosting:** hosting on a `*.libretexts.org` subdomain also lets the browser call LibreTexts Commons directly, if live search is wanted later.
-- **Catalog freshness:** refresh the catalog snapshot with `npm run catalog` as part of each build.
+- **Catalog freshness:** `public/catalog.json` is a snapshot, and `npm run build` does not refresh it. Run `npm run catalog` before a build to pick up new books.
 
 ## Known limits
 

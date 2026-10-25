@@ -80,6 +80,7 @@ describe('canvas QTI package', () => {
     // A form feed where gpt-6-luna meant the backslash of \(.
     const draft = { ...items[0].draft, stem: 'Which force acts \f(F\f) on the cart?' }
     const files = unzipSync(buildQuizPackage([{ id: 'set-1', title: 'Quiz \u0005', items: [{ ...items[0], draft }] }]))
+    // eslint-disable-next-line no-control-regex -- detecting these is the point
     for (const file of Object.values(files)) expect(strFromU8(file)).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/)
   })
 

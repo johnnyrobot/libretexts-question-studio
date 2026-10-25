@@ -51,5 +51,8 @@ export default defineConfig({
   worker: { format: 'es' },
   test: {
     environment: 'node',
+    // Only the app's own tests. The git-ignored experiments/ folder holds
+    // harnesses that rewrite fine-tuning data and call LibreTexts.
+    include: ['src/**/*.test.{ts,tsx}'],
   },
 })

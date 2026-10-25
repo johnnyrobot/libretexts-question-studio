@@ -1205,7 +1205,9 @@ function latexToCharacters(text: string): string {
 // constants are:\ne = 2.718" is a real line break. Inside math they can only
 // be commands, so there they are restored: Gemma 4 E4B wrote "$F_{A \to B}$"
 // 6 times in the saved runs (2026-10-09), and the tab came through.
+// eslint-disable-next-line no-control-regex -- matching these escapes is the point
 const CONTROL_BEFORE_BRACKET = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]([()[\]])/g
+// eslint-disable-next-line no-control-regex -- matching these escapes is the point
 const CONTROL_BEFORE_BACKSLASH = /[\u0000-\u0008\u000b\u000c\u000e-\u001f](?=\\)/g
 const ESCAPED_IN_MATH = /[\t\n]([oeu])(?![A-Za-z])/g
 const ESCAPE_LETTER: Record<string, string> = { '\t': 't', '\n': 'n' }
