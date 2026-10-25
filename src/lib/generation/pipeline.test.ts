@@ -73,6 +73,13 @@ class FakeProvider implements LLMProvider {
   blankWords: string[][] = []
   // The true/false check's answers; after them it agrees with the fixture.
   trueFalseAnswers: boolean[] = []
+  // The matching and dropdowns checks' answers, one list of option texts per
+  // call (a match per term, an option per blank); after them they agree with
+  // the key.
+  matchingAnswers: string[][] = []
+  dropdownAnswers: string[][] = []
+  // The prompts the reviewer was sent.
+  reviews: string[] = []
 
   constructor(id: LLMProvider['id'] = 'openai') {
     this.id = id
@@ -83,6 +90,7 @@ class FakeProvider implements LLMProvider {
       this.calls.push(request.schemaName)
       if (this.breakFirst.delete(request.schemaName)) return { text: '{"oops":', usage: null }
       if (request.schemaName === 'item_review') {
+        this.reviews.push(prompt)
         // A reviewer with nothing to change.
         const draft = JSON.parse(prompt.slice(prompt.indexOf('<draft>') + 7, prompt.indexOf('</draft>')))
         return { text: JSON.stringify({ issues: [], revised: draft }), usage: null }
@@ -92,6 +100,13 @@ class FakeProvider implements LLMProvider {
         const fixture = SAMPLE_DRAFTS.find((d): d is DraftOf<'multiple_choice' | 'multiple_answers'> => d.item_type === type)!
         const answers = this.keyAnswers.shift() ?? fixture.choices.flatMap((c, i) => (c.correct ? [i + 1] : []))
         return { text: JSON.stringify({ working: '1 wrong: …', answers }), usage: null }
+      }
+      if (request.schemaName === 'matching_check' || request.schemaName === 'dropdowns_check') {
+        const matching = request.schemaName === 'matching_check'
+        const fixture = SAMPLE_DRAFTS.find((d) => d.item_type === (matching ? 'matching' : 'dropdowns'))!
+        const keys = fixture.item_type === 'matching' ? fixture.pairs.map((p) => p.match) : fixture.item_type === 'dropdowns' ? fixture.blanks.map((b) => b.correct) : []
+        const chosen = (matching ? this.matchingAnswers : this.dropdownAnswers).shift() ?? keys
+        return { text: JSON.stringify({ working: '1 A: …', answers: chosen.map((text, i) => letterOf(prompt, text, i)) }), usage: null }
       }
       if (request.schemaName === 'blank_check') {
         return { text: JSON.stringify({ answer: this.blankAnswers.shift() ?? 'chlorophyll' }), usage: null }
@@ -118,6 +133,16 @@ class FakeProvider implements LLMProvider {
       return { text: JSON.stringify({ ...payload, citation_paragraphs }), usage: null }
     })
   }
+}
+
+// The letter the check prompt gives an option: for matching one list of
+// options for every term, for dropdowns a list per blank, in blank order.
+function letterOf(prompt: string, text: string, part: number): string {
+  const question = prompt.slice(prompt.indexOf('<question>'))
+  const lists = question.split(/\n(?=\[[a-z0-9]+\]:\n|Options:\n)/).slice(1)
+  const found = [...(lists[lists.length > 1 ? part : 0] ?? '').matchAll(/^([A-L])\. (.+)$/gm)].find((m) => m[2] === text)
+  if (!found) throw new Error(`"${text}" is not an option in the check prompt`)
+  return found[1]
 }
 
 const callbacks = { onStatus: () => {}, onItem: () => {}, onProgress: () => {} }
@@ -354,10 +379,10 @@ describe('runGeneration', () => {
     expect(openai.calls).toContain('item_review')
   })
 
-  it('checks multiple-choice, select-all, true/false and fill-in-the-blank keys on the in-browser model only', async () => {
+  it('checks multiple-choice, select-all, true/false, fill-in-the-blank, matching and dropdowns keys on the in-browser model only', async () => {
     const local = new FakeProvider('local')
-    const types: ItemType[] = ['multiple_choice', 'multiple_answers', 'true_false', 'fill_in_blank', 'essay']
-    const plan = { itemTypes: types, perPage: 5, reviewPass: false }
+    const types: ItemType[] = ['multiple_choice', 'multiple_answers', 'true_false', 'fill_in_blank', 'matching', 'dropdowns', 'essay']
+    const plan = { itemTypes: types, perPage: 7, reviewPass: false }
     await runGeneration('set-1', source, plan, local, new AbortController().signal, callbacks)
     expect(local.calls.filter((c) => c !== 'concept_batch')).toEqual([
       'multiple_choice_item',
@@ -368,6 +393,10 @@ describe('runGeneration', () => {
       'true_false_check',
       'fill_in_blank_item',
       'blank_check',
+      'matching_item',
+      'matching_check',
+      'dropdowns_item',
+      'dropdowns_check',
       'essay_item',
     ])
     const items = await db.items.where('setId').equals('set-1').toArray()
@@ -548,6 +577,68 @@ describe('runGeneration', () => {
     expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['fill_in_blank_item', 'blank_check', 'blank_choice', 'blank_check'])
     const [item] = await db.items.where('setId').equals('set-1').toArray()
     expect((item.draft as DraftOf<'fill_in_blank'>).answer).toBe('captures')
+  })
+
+  it('sends back a matching pair the check matches differently, and notes it if the check still does', async () => {
+    const provider = new FakeProvider('local')
+    // H2O matched to Nitrogen, before and after the review.
+    provider.matchingAnswers = [
+      ['Carbon dioxide', 'Nitrogen', 'Oxygen'],
+      ['Carbon dioxide', 'Nitrogen', 'Oxygen'],
+    ]
+    await runGeneration('set-1', source, { itemTypes: ['matching'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['matching_item', 'matching_check', 'item_review', 'matching_check'])
+    expect(provider.reviews[0]).toContain('"H2O" is matched to "Water", but an expert may match it to "Nitrogen"')
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it matched “H2O” to “Nitrogen”, not “Water”.'])
+  })
+
+  it('asks the matching check again when it gives one option to two terms', async () => {
+    const provider = new FakeProvider('local')
+    // Oxygen for both H2O and O2, which the prompt rules out; then the key.
+    provider.matchingAnswers = [['Carbon dioxide', 'Oxygen', 'Oxygen']]
+    await runGeneration('set-1', source, { itemTypes: ['matching'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['matching_item', 'matching_check', 'matching_check'])
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.critique).toEqual([])
+  })
+
+  it('sends back a dropdown blank the check fills differently, with no note once the check agrees', async () => {
+    const provider = new FakeProvider('local')
+    // oxygen for [gasin] first; after the review the check agrees with the key.
+    provider.dropdownAnswers = [['oxygen', 'oxygen', 'sunlight']]
+    await runGeneration('set-1', source, { itemTypes: ['dropdowns'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['dropdowns_item', 'dropdowns_check', 'item_review', 'dropdowns_check'])
+    expect(provider.reviews[0]).toContain('The blank [gasin] has "carbon dioxide" as its right option, but an expert may choose "oxygen"')
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.critique).toEqual([])
+  })
+
+  it('notes a dropdown blank the check still fills differently after the review', async () => {
+    const provider = new FakeProvider('local')
+    provider.dropdownAnswers = [
+      ['oxygen', 'oxygen', 'sunlight'],
+      ['oxygen', 'oxygen', 'sunlight'],
+    ]
+    await runGeneration('set-1', source, { itemTypes: ['dropdowns'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it chose “oxygen” for [gasin], not “carbon dioxide”.'])
+  })
+
+  it('shows the matching and dropdowns checks their options in alphabetical order, not next to the key', async () => {
+    const provider = new FakeProvider('local')
+    const prompts: string[] = []
+    const complete = provider.complete.bind(provider)
+    provider.complete = (request) => {
+      if (request.schemaName.endsWith('_check')) prompts.push(request.prompt)
+      return complete(request)
+    }
+    await runGeneration('set-1', source, { itemTypes: ['matching', 'dropdowns'], perPage: 2, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    const [matching, dropdowns] = prompts
+    // Stored as CO2 → Carbon dioxide, H2O → Water, O2 → Oxygen, plus Nitrogen.
+    expect(matching).toContain('Options:\nA. Carbon dioxide\nB. Nitrogen\nC. Oxygen\nD. Water')
+    // Stored with the right option first: oxygen, then carbon dioxide.
+    expect(dropdowns).toContain('[gasout]:\nA. carbon dioxide\nB. oxygen')
   })
 
   it('notes a true/false key the check disagrees with, without sending it back', async () => {

@@ -55,6 +55,12 @@ turns every PHP notice into an exception, and that fails the item.
 The exporter (`src/lib/qti/canvas.ts`) follows all of these. The schemas
 (`src/lib/generation/schema.ts`) reject model output that would break them.
 
+Matching and multiple dropdowns questions give each term or blank its share of
+`SCORE` (`<setvar action="Add">`), in hundredths, and the last one takes what is
+left, so the shares add up to exactly 100 (33.33 + 33.33 + 33.34). ADAPT reads
+only which answers are right; Canvas adds up the shares. The ADAPT harness
+checks the total.
+
 ## Type mapping
 
 | This app | Canvas `question_type` | ADAPT question |

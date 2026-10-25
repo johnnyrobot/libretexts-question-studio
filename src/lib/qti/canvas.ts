@@ -290,7 +290,7 @@ function matchingItem(key: ItemKey, draft: DraftOf<'matching'>, points: number):
   seededShuffle(options, key.id)
   // <render_choice> must carry no attributes: ADAPT iterates its children.
   const renderChoice = `<render_choice>\n${options.map((o) => responseLabel(o.ident, o.text)).join('\n')}\n</render_choice>`
-  const share = formatNumber(Math.round((100 / terms.length) * 100) / 100)
+  const shares = scoreShares(terms.length)
   return item(key, draft.title, 'matching_question', points, [
     presentation(
       draft.stem,
@@ -303,8 +303,8 @@ function matchingItem(key: ItemKey, draft: DraftOf<'matching'>, points: number):
     ),
     resprocessing(
       terms.map(
-        (term) =>
-          `<respcondition>\n<conditionvar>\n<varequal respident="${term.lid}">${term.correct}</varequal>\n</conditionvar>\n<setvar varname="SCORE" action="Add">${share}</setvar>\n</respcondition>`,
+        (term, index) =>
+          `<respcondition>\n<conditionvar>\n<varequal respident="${term.lid}">${term.correct}</varequal>\n</conditionvar>\n<setvar varname="SCORE" action="Add">${shares[index]}</setvar>\n</respcondition>`,
       ),
     ),
     ...standardFeedback(draft.explanation),
@@ -339,7 +339,7 @@ function dropdownsItem(key: ItemKey, draft: DraftOf<'dropdowns'>, points: number
     // shuffles options per student, so the order is not visible to learners.
     options: [blank.correct, ...blank.distractors].map((text) => ({ ident: String(next++), text })),
   }))
-  const share = formatNumber(Math.round((100 / blanks.length) * 100) / 100)
+  const shares = scoreShares(blanks.length)
   return item(key, draft.title, 'multiple_dropdowns_question', points, [
     presentation(
       draft.stem,
@@ -354,12 +354,20 @@ function dropdownsItem(key: ItemKey, draft: DraftOf<'dropdowns'>, points: number
     ),
     resprocessing(
       blanks.map(
-        (blank) =>
-          `<respcondition>\n<conditionvar>\n<varequal respident="response_${blank.id}">${blank.options[0].ident}</varequal>\n</conditionvar>\n<setvar varname="SCORE" action="Add">${share}</setvar>\n</respcondition>`,
+        (blank, index) =>
+          `<respcondition>\n<conditionvar>\n<varequal respident="response_${blank.id}">${blank.options[0].ident}</varequal>\n</conditionvar>\n<setvar varname="SCORE" action="Add">${shares[index]}</setvar>\n</respcondition>`,
       ),
     ),
     ...standardFeedback(draft.explanation),
   ])
+}
+
+// Each part of a matching or dropdowns question adds its share of 100 to
+// SCORE. Equal shares rounded to hundredths add up to 99.99 for three parts
+// and 100.03 for seven, so the last part takes what is left.
+function scoreShares(parts: number): string[] {
+  const share = Math.round(10000 / parts)
+  return Array.from({ length: parts }, (_, index) => formatNumber((index === parts - 1 ? 10000 - share * (parts - 1) : share) / 100))
 }
 
 function essayItem(key: ItemKey, draft: DraftOf<'essay'>, points: number): string {
