@@ -24,7 +24,7 @@ browser.
 1. **Settings:** either download and load the in-browser model, or paste an OpenAI API key.
 2. **Create:**
    - Choose a source and tick the pages you want.
-   - Choose question types and how many questions per page. The second-pass review is on by default. An answer check also answers each multiple-choice, select-all, true/false, fill-in-the-blank, matching and dropdowns question without its key: it sends back multiple-choice, select-all, matching and dropdowns keys it disagrees with, gives a fill-in-the-blank question a new blank when its answer differs from the key, and notes true/false keys it disagrees with. It always runs on the in-browser model; with OpenAI it is on by default and can be turned off in Settings (**Check answer keys**), since each check is another API call.
+   - Choose question types and how many questions per page. The second-pass review is on by default. An answer check also answers each multiple-choice, select-all, true/false, fill-in-the-blank, matching and dropdowns question without its key: it sends back multiple-choice, select-all, matching and dropdowns keys it disagrees with, gives a fill-in-the-blank question a new blank when its answer differs from the key, and notes true/false keys it disagrees with. The app also recomputes the arithmetic in each numerical question's explanation, and sends back a step that does not add up or an answer the working never reaches. These checks always run on the in-browser model; with OpenAI they are on by default and can be turned off in Settings (**Check answer keys**), since they use extra API calls.
    - Generate. Questions appear as they are written, and the run continues if you switch screens.
 3. **Review:** approve, edit, or reject each question. Each question can show the exact source paragraphs it cites.
 4. **Export to ADAPT** (from the set's page): download the QTI (.zip). In ADAPT, go to Dashboard → My Questions → Bulk Import tab → Canvas QTI, pick a folder and license, and upload the file. Earlier downloads stay listed and can be downloaded again.
@@ -44,9 +44,10 @@ npm run catalog        # refresh public/catalog.json from LibreTexts Commons
 
 `npm test` runs only the tests under `src/`: the per-type schemas, the
 generation pipeline and its answer checks (with a scripted model), model output
-parsing and its JSON-escape guard, math formulas and versions, the LibreTexts
-page normaliser, the QTI exporter and export history, backup and restore, the
-question editor, and the OpenAI answer-check setting.
+parsing and its JSON-escape guard, math formulas and versions, the arithmetic
+check of numerical explanations, the LibreTexts page normaliser, the QTI
+exporter and export history, backup and restore, the question editor, and the
+OpenAI answer-check setting.
 
 To check exported packages against ADAPT's real importer (PHP 7.4 compiled to
 WebAssembly; needs the `../adapt` checkout):
@@ -64,7 +65,8 @@ src/lib/content/     LibreTexts access: URL parsing, cross-library page/tree/con
 src/lib/generation/  per-type zod schemas (= ADAPT import rules), prompts, pipeline
 src/lib/llm/         provider interface + validation/retry loop; Transformers.js worker
                      (Gemma 4, EmbeddingGemma 2); WebLLM worker (Qwen3.5); OpenAI
-src/lib/math/        math questions: formula parser (no eval), seeded versions, checks
+src/lib/math/        math questions: formula parser (no eval), seeded versions, checks;
+                     the arithmetic check of numerical explanations
 src/lib/qti/         Canvas QTI 1.2 package builder and export history
 src/lib/storage/     Dexie (IndexedDB) schema, encrypted API-key storage
 src/state/           engine settings, background generation runner
@@ -84,6 +86,7 @@ tests/adapt-parser/  harness that runs ADAPT's QtiImport.php on our packages
    - **Matching and dropdowns:** the check matches each term, or fills each blank, from options listed in alphabetical order. Terms and blanks it answers differently go back once to be fixed, and if the check still disagrees, the question gets a note. These two types were not measured against known wrong keys.
    - **Fill in the blank:** the check fills the blank without the key or the textbook. If its answer differs from the key, or the key is a number or symbol, the model names up to five other words of the completed sentence. The app skips function words and words the textbook makes predictable ("net external ____"), blanks the others in turn, and keeps the first that the check fills in as the key. A number or symbol key is replaced even by a predictable word. The sentence and explanation stay the same. If none passes, a question the check disagreed with gets a note.
    - **True/false:** a key the check disagrees with gets a note. It is not sent back, because the reviewer then flipped a correct key.
+   - **Numerical:** no model answers these. The app evaluates each chain of steps in the explanation ("A = B = C", also ≈), reading LaTeX fractions, roots, powers, products and mixed numbers and skipping units. Neighbouring steps must agree to within the rounding of the digits they are written with plus 0.5% (2% after ≈), and the answer must appear as a result. A step that does not add up, or an answer the working never reaches, goes back once to be fixed and gets a note if it remains. The check is the one that screened the fine-tuning data; it has not been measured on the app's questions.
 7. With the duplicate check on, a question whose stem is very close to one already in the set (cosine ≥ 0.94 between EmbeddingGemma 2 embeddings) gets a note.
 8. Every question is saved as soon as it validates.
 

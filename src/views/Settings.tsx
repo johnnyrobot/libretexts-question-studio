@@ -422,7 +422,8 @@ function OpenAISettings() {
           Check answer keys (uses extra API calls)
           <small>
             The model answers each multiple-choice, select-all, true/false, fill-in-the-blank, matching and dropdowns question
-            again without its key. A key it disagrees with is sent back to be fixed, or noted for you.
+            again without its key, and the app recomputes the arithmetic in each numerical explanation. A key that fails a check
+            is sent back to be fixed, or noted for you.
           </small>
         </span>
       </label>

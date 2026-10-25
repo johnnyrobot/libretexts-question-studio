@@ -83,7 +83,7 @@ export function reviewPrompt(
 ): string {
   const { item_type, ...payload } = draft
   const fix = keyProblems.length
-    ? `\nA separate check answered the question without seeing the answer key and disagreed with it. Fix every one of these problems, ${KEY_FIXES[item_type] ?? KEY_FIXES.default}:\n${keyProblems.map((p) => `- ${untrusted(p)}`).join('\n')}`
+    ? `\n${KEY_CHECKS[item_type] ?? KEY_CHECKS.default} Fix every one of these problems, ${KEY_FIXES[item_type] ?? KEY_FIXES.default}:\n${keyProblems.map((p) => `- ${untrusted(p)}`).join('\n')}`
     : ''
   // From typedAnswerProblem in schema.ts.
   const typed = answerProblem
@@ -230,11 +230,18 @@ const REVIEW_FOCUS: Partial<Record<ItemType | 'default', string>> = {
   math: `does the stem describe a sensible situation that matches answer_formula, states the units, and needs no example or figure from the source; are the variable ranges realistic; and does the explanation describe the same calculation as answer_formula. The variables, constraints, answer_formula, tolerance_percent and units were verified by the app and stay exactly as they are, so return only the reworded title, stem and explanation.`,
 }
 
+// What the reviewer is told the answer check did.
+const KEY_CHECKS: Partial<Record<ItemType | 'default', string>> = {
+  default: 'A separate check answered the question without seeing the answer key and disagreed with it.',
+  numerical: 'A separate check recomputed the arithmetic in the explanation and it does not add up.',
+}
+
 // How the reviewer may fix a key the answer check disagrees with.
 const KEY_FIXES: Partial<Record<ItemType | 'default', string>> = {
   default: 'by changing which choices are marked correct or by replacing the choice',
   matching: 'by changing which option a term is paired with, or by rewording a term or option so that only its match fits it',
   dropdowns: 'by changing which option of a blank is the right one, or by replacing an option',
+  numerical: 'by correcting the working in the explanation, and the answer and its tolerance if the correct result differs',
 }
 
 // Rules for the reviewer's revision where they differ from the drafting rules.

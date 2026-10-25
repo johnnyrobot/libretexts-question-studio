@@ -78,6 +78,12 @@ class FakeProvider implements LLMProvider {
   // the key.
   matchingAnswers: string[][] = []
   dropdownAnswers: string[][] = []
+  // The explanations of the numerical drafts, one per draft; after them the
+  // fixture's.
+  numericalExplanations: string[] = []
+  // What the reviewer changes, one change per review; after them it changes
+  // nothing.
+  revisions: Record<string, unknown>[] = []
   // The prompts the reviewer was sent.
   reviews: string[] = []
 
@@ -91,9 +97,8 @@ class FakeProvider implements LLMProvider {
       if (this.breakFirst.delete(request.schemaName)) return { text: '{"oops":', usage: null }
       if (request.schemaName === 'item_review') {
         this.reviews.push(prompt)
-        // A reviewer with nothing to change.
         const draft = JSON.parse(prompt.slice(prompt.indexOf('<draft>') + 7, prompt.indexOf('</draft>')))
-        return { text: JSON.stringify({ issues: [], revised: draft }), usage: null }
+        return { text: JSON.stringify({ issues: [], revised: { ...draft, ...this.revisions.shift() } }), usage: null }
       }
       if (request.schemaName === 'key_check') {
         const type = prompt.includes('select-all') ? 'multiple_answers' : 'multiple_choice'
@@ -129,7 +134,8 @@ class FakeProvider implements LLMProvider {
       const { item_type: _, ...fixture } = SAMPLE_DRAFTS.find((d) => d.item_type === type)!
       void _
       const citation_paragraphs = [...prompt.matchAll(/\[paragraph (\d+)\]/g)].map((m) => Number(m[1]))
-      const payload = type === 'math' ? mathPayload() : fixture
+      const explanation = type === 'numerical' ? this.numericalExplanations.shift() : undefined
+      const payload = type === 'math' ? mathPayload() : { ...fixture, ...(explanation && { explanation }) }
       return { text: JSON.stringify({ ...payload, citation_paragraphs }), usage: null }
     })
   }
@@ -641,6 +647,31 @@ describe('runGeneration', () => {
     await runGeneration('set-1', source, { itemTypes: ['dropdowns'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
     const [item] = await db.items.where('setId').equals('set-1').toArray()
     expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it chose “oxygen” for [gasin], not “carbon dioxide”.'])
+  })
+
+  it('sends back a numerical explanation whose arithmetic is wrong, and notes it if it stays wrong', async () => {
+    const provider = new FakeProvider('local')
+    // 6 × 2 is 12; the key is 6.
+    provider.numericalExplanations = ['Each glucose molecule needs \\(6 \\times 2 = 6\\) oxygen atoms from carbon dioxide.']
+    await runGeneration('set-1', source, { itemTypes: ['numerical'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    // Recomputing the arithmetic takes no model call.
+    expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['numerical_item', 'item_review'])
+    expect(provider.reviews[0]).toContain('A separate check recomputed the arithmetic in the explanation')
+    expect(provider.reviews[0]).toContain('In the explanation, "6 * 2" is 12, not 6: redo the arithmetic from there')
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.critique).toEqual(['An automatic arithmetic check disagrees with the explanation: “6 * 2” is 12, not 6.'])
+  })
+
+  it('sends back a numerical answer the explanation never arrives at, with no note once it does', async () => {
+    const provider = new FakeProvider('local')
+    provider.numericalExplanations = ['Photosynthesis uses carbon dioxide and water to make glucose.']
+    provider.revisions = [{ explanation: 'One glucose molecule needs \\(\\frac{12}{2} = 6\\) molecules of carbon dioxide.' }]
+    await runGeneration('set-1', source, { itemTypes: ['numerical'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['numerical_item', 'item_review'])
+    expect(provider.reviews[0]).toContain('The answer is 6, but the explanation never arrives at it')
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.critique).toEqual([])
+    expect(item.draft).toMatchObject({ item_type: 'numerical', explanation: expect.stringContaining('\\frac{12}{2} = 6') })
   })
 
   it('shows the matching and dropdowns checks their options in alphabetical order, not next to the key', async () => {
