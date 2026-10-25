@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import { withPageNumbers } from '../content/normalize'
 import { NoValidResponse, type Embedder, type LLMProvider, type ProgressEvent } from '../llm/types'
+import { arithmeticProblems, type ArithmeticProblem } from '../math/arithmetic'
 import { CONSTANT_NAMES, FUNCTION_NAMES } from '../math/expr'
-import { formatUnits } from '../math/format'
+import { formatComputed, formatNumber, formatUnits } from '../math/format'
 import { checkWorkedExample, VARIABLE_NAME } from '../math/spec'
 import { db, newId, type StoredItem, type StoredSource } from '../storage/db'
 import {
@@ -533,7 +534,11 @@ function sourceText(unit: SourceUnit): string {
 // Matching and dropdowns questions get the same check and the same handling,
 // with one answer per term or blank. Unlike multiple choice, they were not
 // measured against known wrong keys.
-export type KeyDisagreement = ChoiceDisagreement | PartDisagreement
+// A numerical question's explanation has its arithmetic recomputed instead
+// (see ../math/arithmetic), with no model call, and is handled the same way:
+// a wrong step, or a key the working never arrives at, goes back once and is
+// noted if it is still there. It was not measured on the app's questions.
+export type KeyDisagreement = ChoiceDisagreement | PartDisagreement | ArithmeticProblem
 
 export interface ChoiceDisagreement {
   choice: string
@@ -571,6 +576,8 @@ export async function checkAnswerKey(
       const prompt = dropdownsCheckPrompt(unit, draft.stem, parts.map(({ part, options }) => ({ id: part, options })))
       return checkParts(provider, prompt, 'dropdowns_check', parts, signal, callbacks)
     }
+    case 'numerical':
+      return arithmeticProblems(draft.explanation, draft.answer, draft.tolerance)
     default:
       return []
   }
@@ -651,7 +658,8 @@ function alphabetical(texts: string[]): string[] {
 }
 
 // Checks the key of a multiple-choice, select-all, true/false,
-// fill-in-the-blank, matching or dropdowns question, and fixes it or notes it.
+// fill-in-the-blank, matching, dropdowns or numerical question, and fixes it
+// or notes it.
 export async function verifyAnswerKey(
   provider: LLMProvider,
   unit: SourceUnit,
@@ -667,6 +675,7 @@ export async function verifyAnswerKey(
     case 'multiple_answers':
     case 'matching':
     case 'dropdowns':
+    case 'numerical':
       return verifyByReview(provider, unit, concept, draft, allowed, signal, callbacks)
     case 'true_false':
       return verifyTrueFalse(provider, unit, draft, signal, callbacks)
@@ -1059,6 +1068,11 @@ function escapeRegExp(text: string): string {
 }
 
 function keyProblem(itemType: ItemType, disagreement: KeyDisagreement): string {
+  if ('kind' in disagreement) {
+    return disagreement.kind === 'step'
+      ? `In the explanation, "${clip(disagreement.written, 160)}" is ${formatComputed(disagreement.value)}, not ${formatComputed(disagreement.nextValue)}: redo the arithmetic from there, and correct the answer if the result changes.`
+      : `The answer is ${formatNumber(disagreement.key)}, but the explanation never arrives at it: work the explanation through to the answer, or correct the answer to the result the working gives.`
+  }
   if ('part' in disagreement) {
     const part = clip(disagreement.part, 160)
     const key = clip(disagreement.key, 160)
@@ -1076,8 +1090,17 @@ function keyProblem(itemType: ItemType, disagreement: KeyDisagreement): string {
 }
 
 function keyNote(itemType: ItemType, disagreements: KeyDisagreement[]): string {
-  const choices = disagreements.flatMap((d) => ('part' in d ? [] : [d]))
+  const arithmetic = disagreements.flatMap((d) => ('kind' in d ? [d] : []))
+  const choices = disagreements.flatMap((d) => ('choice' in d ? [d] : []))
   const parts = disagreements.flatMap((d) => ('part' in d ? [d] : []))
+  if (arithmetic.length) {
+    const found = arithmetic.map((d) =>
+      d.kind === 'step'
+        ? `“${clip(d.written, 100)}” is ${formatComputed(d.value)}, not ${formatComputed(d.nextValue)}`
+        : `it never arrives at the answer ${formatNumber(d.key)}`,
+    )
+    return `An automatic arithmetic check disagrees with the explanation: ${found.join('; ')}.`
+  }
   if (itemType === 'true_false') {
     return `An automatic answer check disagrees with the answer key: it judged the statement ${choices[0].checkSaysCorrect ? 'true' : 'false'}.`
   }
