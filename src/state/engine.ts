@@ -18,6 +18,9 @@ export interface EngineSettings {
   localF16: boolean
   openaiModel: string
   effort: ReasoningEffort
+  // Check OpenAI's answer keys too, at extra calls (the in-browser model
+  // always checks them).
+  answerCheck: boolean
   // Flag questions that repeat one already in the set (EmbeddingGemma 2).
   duplicateCheck: boolean
 }
@@ -28,6 +31,7 @@ export const DEFAULT_ENGINE: EngineSettings = {
   localF16: true,
   openaiModel: 'gpt-6-luna',
   effort: 'high',
+  answerCheck: true,
   duplicateCheck: true,
 }
 

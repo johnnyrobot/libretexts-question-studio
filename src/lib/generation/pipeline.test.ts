@@ -379,12 +379,12 @@ describe('runGeneration', () => {
     expect(openai.calls).toContain('item_review')
   })
 
-  it('checks multiple-choice, select-all, true/false, fill-in-the-blank, matching and dropdowns keys on the in-browser model only', async () => {
+  it('checks multiple-choice, select-all, true/false, fill-in-the-blank, matching and dropdowns keys on the in-browser model, and on OpenAI when asked', async () => {
     const local = new FakeProvider('local')
     const types: ItemType[] = ['multiple_choice', 'multiple_answers', 'true_false', 'fill_in_blank', 'matching', 'dropdowns', 'essay']
     const plan = { itemTypes: types, perPage: 7, reviewPass: false }
     await runGeneration('set-1', source, plan, local, new AbortController().signal, callbacks)
-    expect(local.calls.filter((c) => c !== 'concept_batch')).toEqual([
+    const checked = [
       'multiple_choice_item',
       'key_check',
       'multiple_answers_item',
@@ -398,12 +398,30 @@ describe('runGeneration', () => {
       'dropdowns_item',
       'dropdowns_check',
       'essay_item',
-    ])
+    ]
+    expect(local.calls.filter((c) => c !== 'concept_batch')).toEqual(checked)
     const items = await db.items.where('setId').equals('set-1').toArray()
     expect(items.every((i) => i.critique.length === 0)).toBe(true)
+    // On OpenAI each check is a paid call, so it runs only when the plan asks.
+    const unchecked = new FakeProvider('openai')
+    await runGeneration('set-1', source, { ...plan, answerCheck: false }, unchecked, new AbortController().signal, callbacks)
+    expect(unchecked.calls.filter((c) => /_check$|^blank_choice$/.test(c))).toEqual([])
     const openai = new FakeProvider('openai')
-    await runGeneration('set-1', source, plan, openai, new AbortController().signal, callbacks)
-    expect(openai.calls.filter((c) => /_check$|^blank_choice$/.test(c))).toEqual([])
+    await runGeneration('set-1', source, { ...plan, answerCheck: true }, openai, new AbortController().signal, callbacks)
+    expect(openai.calls.filter((c) => c !== 'concept_batch')).toEqual(checked)
+  })
+
+  it('sends a wrong key back on OpenAI too, and notes it if the check still disagrees', async () => {
+    const provider = new FakeProvider('openai')
+    provider.keyAnswers = [[1], [1]]
+    const plan = { itemTypes: ['multiple_choice'] as ItemType[], perPage: 1, reviewPass: false, answerCheck: true }
+    await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+    expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['multiple_choice_item', 'key_check', 'item_review', 'key_check'])
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(provider.reviews[0]).toContain('Carbon dioxide')
+    expect(item.critique).toEqual([
+      'An automatic answer check disagrees with the answer key: it judged that “Oxygen” is also correct; “Carbon dioxide” is not correct.',
+    ])
   })
 
   it('blanks another word when the check fills the blank differently, keeping the sentence', async () => {
