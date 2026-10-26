@@ -84,16 +84,34 @@ async function crossLibrary<T>(library: Library, suffix: string, signal?: AbortS
   try {
     body = JSON.parse(text)
   } catch {
-    throw new LibreTextsError('LibreTexts returned an unreadable response for that page.')
+    body = undefined
   }
+  const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : {}
+  const refusal = refusalOf(response.status, record)
+  if (refusal) throw new LibreTextsError(refusal)
+  if (body === undefined) throw new LibreTextsError('LibreTexts returned an unreadable response for that page.')
   if (!response.ok || !body || typeof body !== 'object') {
     throw new LibreTextsError('LibreTexts could not find that page.')
   }
-  const record = body as Record<string, unknown>
   if (record.error || record.exception || record.status === 404) {
     throw new LibreTextsError('LibreTexts could not find that page.')
   }
   return body as T
+}
+
+// A refusal is not a missing page: the page may well exist. Deki names its
+// token, auth and permission checks in the exception and resource it answers
+// with, such as MindTouch.Deki.Auth.Exceptions.TokenValidationFailedException
+// and System.API.Error.developer-token-validation-failed.
+function refusalOf(status: number, record: Record<string, unknown>): string | null {
+  const named = [record.exception, record.resource].filter((part) => typeof part === 'string').join(' ')
+  if (/token/i.test(named)) {
+    return "LibreTexts would not share that page right now (it asked for an access token). This is on LibreTexts' side; try again later."
+  }
+  if (status === 401 || status === 403 || /\bauth\b|authori[sz]|authenticat|permission|access.?denied/i.test(named)) {
+    return 'LibreTexts would not share that page (it needs permission to read it). The page may not be public; if it is, try again later.'
+  }
+  return null
 }
 
 export interface PageInfo {
