@@ -36,6 +36,8 @@ export interface LLMProvider {
   readonly id: 'local' | 'openai'
   readonly model: string
   complete<T>(request: CompletionRequest<T>): Promise<Completion<T>>
+  // Loads the model afresh after the GPU was lost. Only in-browser engines can.
+  recover?(onProgress?: (progress: { value: number; text: string }) => void): Promise<void>
 }
 
 // Turns texts into unit vectors whose dot product is their similarity.
@@ -62,6 +64,25 @@ export class LLMError extends Error {
 
 export class ValidationFailure extends Error {}
 
+// WebGPU lost the device (a driver reset, the GPU process restarting, memory
+// running out). Nothing on it survives, so asking again cannot help until the
+// model is loaded afresh. `detail` keeps what the engine reported.
+export class GpuLost extends LLMError {
+  readonly detail: string
+
+  constructor(detail: string) {
+    super('The GPU stopped responding.')
+    this.detail = detail
+  }
+}
+
+// How ONNX Runtime Web and Chrome word a lost device, as the worker passes
+// them on: "[Device] is lost", or a failed OrtRun inside the WebGPU provider,
+// which ends the same way: the model has to be loaded again.
+export function isGpuLost(message: string): boolean {
+  return /\bdevice\]? (?:was |is )?lost/i.test(message) || (/OrtRun/.test(message) && /webgpu|wgpu|GPUBuffer/i.test(message))
+}
+
 // Every attempt was answered, but none passed the checks. Unlike other
 // LLMErrors this says nothing about the engine, so starting afresh can help.
 export class NoValidResponse extends LLMError {}
@@ -86,7 +107,7 @@ export async function completeWithRetries<T>(
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     request.signal?.throwIfAborted()
     try {
-      const result = await generate(prompt, attempt)
+      const result = await generate(prompt, attempt).catch(asGpuLost)
       usage = addUsage(usage, result.usage)
       const parsed = parseJsonResponse(result.text)
       return { value: request.validate(parsed), usage, attempts: attempt }
@@ -106,6 +127,12 @@ export async function completeWithRetries<T>(
     }
   }
   throw new NoValidResponse(`The model did not return a valid ${request.schemaName}: ${lastError}`)
+}
+
+// Only what the engine throws is read this way: the checks quote the model's
+// own words, which can say anything.
+function asGpuLost(error: unknown): never {
+  throw error instanceof Error && !(error instanceof LLMError) && isGpuLost(error.message) ? new GpuLost(error.message) : error
 }
 
 export function parseJsonResponse(text: string): unknown {

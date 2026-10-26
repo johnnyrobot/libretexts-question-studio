@@ -173,6 +173,7 @@ async function loadLlm(id: number, target: ModelTarget): Promise<null> {
   // About 0.2 s more for Gemma's vocabulary.
   const texts = Array.from({ length: tokenizer.get_vocab().size }, (_, id) => tokenizer.decode([id]))
   llm = { key: keyOf(target), model, tokenizer, tokens: { texts, escapes: escapeTokens(texts) } }
+  await watchDevice()
   return null
 }
 
@@ -195,7 +196,22 @@ async function loadEmbedder(id: number, target: ModelTarget): Promise<null> {
     progress_callback,
   })
   embedder = { key: keyOf(target), model, tokenizer }
+  await watchDevice()
   return null
+}
+
+// Tells the page when WebGPU loses the device both models run on (a driver
+// reset, the GPU process restarting), so the model stops counting as loaded
+// even when the loss comes between runs. ONNX Runtime shares one device
+// across sessions and publishes it once the first session exists.
+const watched = new WeakSet<GPUDevice>()
+async function watchDevice(): Promise<void> {
+  const device = await (env.backends.onnx.webgpu as { device?: GPUDevice | Promise<GPUDevice> } | undefined)?.device
+  if (!device || watched.has(device)) return
+  watched.add(device)
+  void device.lost.then((info) => {
+    if (info.reason !== 'destroyed') reply({ id: 0, kind: 'lost', message: info.message || 'The GPU device was lost.' })
+  })
 }
 
 async function unloadEmbedder(): Promise<null> {

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { runGeneration, type GenerationPlan, type GenerationResult } from '../lib/generation/pipeline'
-import type { Embedder, LLMProvider } from '../lib/llm/types'
+import { GpuLost, type Embedder, type LLMProvider } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
 
 // Generation outlives any one screen: the instructor can browse the library
@@ -67,7 +67,7 @@ export async function startGeneration(
     update({ running: false, status: `Done — ${result.created} question(s) written.` })
   } catch (error) {
     const cancelled = controller?.signal.aborted
-    const message = error instanceof Error ? error.message : String(error)
+    const message = error instanceof GpuLost ? gpuLostMessage(state.written) : error instanceof Error ? error.message : String(error)
     await db.sets.update(setId, {
       status: cancelled ? 'cancelled' : 'failed',
       error: cancelled ? 'Stopped before finishing. Questions written so far were kept.' : message,
@@ -89,6 +89,13 @@ function resultError({ created, skipped, errors }: GenerationResult): string | n
   }
   if (created === 0 && skipped) return 'No questions could be written: the model’s answers did not pass the app’s checks.'
   return null
+}
+
+// The run loads the model again once where the engine can (pipeline.ts), so
+// by now it is the instructor's turn.
+function gpuLostMessage(written: number): string {
+  const kept = written ? ' The questions written so far were kept.' : ''
+  return `The GPU stopped responding while writing questions.${kept} Reload the model in Settings, or close other GPU-heavy tabs, and try again.`
 }
 
 export function cancelGeneration(): void {
