@@ -7,6 +7,7 @@ import {
 } from '@mlc-ai/web-llm'
 import {
   completeWithRetries,
+  GpuLost,
   LLMError,
   retryTemperature,
   schemaInstruction,
@@ -16,6 +17,7 @@ import {
   type LLMProvider,
 } from './types'
 import { loadedLocalModel, setLoadedLocalModel, unloadAnyLocalModel, type LoadProgress } from './local-models'
+import type { GpuLostMessage } from './local.worker'
 
 // In-browser generation with WebLLM (WebGPU), for Qwen3.5 4B. Qwen3.5 is
 // Apache-2.0, ships prebuilt for WebLLM, and its hybrid attention keeps an 8K
@@ -54,6 +56,8 @@ export async function downloadBytes(modelId: string): Promise<number | null> {
 
 let worker: Worker | null = null
 let engine: WebWorkerMLCEngine | null = null
+// Why the model is gone, until it is loaded again: a lost GPU takes it.
+let lost: GpuLost | null = null
 
 export async function loadLocalModel(modelId: string, onProgress: (progress: LoadProgress) => void): Promise<void> {
   if (engine && loadedLocalModel() === modelId) return
@@ -64,8 +68,16 @@ export async function loadLocalModel(modelId: string, onProgress: (progress: Loa
     appConfig,
     initProgressCallback: (report) => onProgress({ value: report.progress, text: report.text }),
   })
+  // The worker's own lost report is not WebLLM's to read: it fails on message
+  // kinds it does not know.
+  const deliver = worker.onmessage
+  worker.onmessage = function (this: Worker, event: MessageEvent<GpuLostMessage | unknown>) {
+    if (isGpuLostMessage(event.data)) loseModel(event.data.message)
+    else deliver?.call(this, event)
+  }
   try {
     await engine.reload(modelId, { context_window_size: CONTEXT_WINDOW })
+    lost = null
     setLoadedLocalModel(modelId, unloadLocalModel)
   } catch (error) {
     unloadLocalModel()
@@ -79,6 +91,27 @@ export function unloadLocalModel(): void {
   worker = null
   engine = null
   if (wasLoaded) setLoadedLocalModel(null)
+}
+
+function isGpuLostMessage(data: unknown): data is GpuLostMessage {
+  return (data as GpuLostMessage | null)?.kind === 'gpuLost'
+}
+
+// WebGPU lost the device (a driver reset, the GPU process restarting). WebLLM
+// only logs it and disposes the model, so the model stops counting as loaded
+// here and the next call says why instead of retrying.
+function loseModel(detail: string): GpuLost {
+  lost ??= new GpuLost(detail)
+  if (engine && loadedLocalModel() !== null) setLoadedLocalModel(null)
+  return lost
+}
+
+// WebLLM passes errors on from its worker as plain strings. Once the GPU is
+// lost, WebLLM has disposed the model, and every call fails on the disposed
+// objects or on the model no longer being there.
+function asEngineError(error: unknown): unknown {
+  if (typeof error === 'string' && /already been disposed|^ModelNotLoadedError/.test(error)) return loseModel(error)
+  return error
 }
 
 export function createProvider(modelId: string): LLMProvider {
@@ -108,13 +141,17 @@ export class LocalProvider implements LLMProvider {
     return completeWithRetries(request, (prompt, attempt) => this.generate(request, prompt, attempt))
   }
 
+  recover(onProgress: (progress: LoadProgress) => void = () => undefined): Promise<void> {
+    return loadLocalModel(this.model, onProgress)
+  }
+
   private async generate<T>(
     request: CompletionRequest<T>,
     prompt: string,
     attempt: number,
   ): Promise<{ text: string; usage: CompletionUsage | null }> {
     if (!engine || loadedLocalModel() !== this.model) {
-      throw new LLMError('The in-browser model is not loaded. Load it from Settings first.')
+      throw lost ?? new LLMError('The in-browser model is not loaded. Load it from Settings first.')
     }
     const active = engine
     const abort = () => active.interruptGenerate()
@@ -160,6 +197,8 @@ export class LocalProvider implements LLMProvider {
       }
       // Drop any reasoning prefix the model emitted despite thinking being off.
       return { text: text.replace(/^[\s\S]*?<\/think>/, ''), usage }
+    } catch (error) {
+      throw lost ?? asEngineError(error)
     } finally {
       request.signal?.removeEventListener('abort', abort)
     }
