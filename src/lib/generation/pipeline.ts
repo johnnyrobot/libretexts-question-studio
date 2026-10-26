@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { withPageNumbers } from '../content/normalize'
-import { NoValidResponse, type Embedder, type LLMProvider, type ProgressEvent } from '../llm/types'
+import { GpuLost, NoValidResponse, type Embedder, type LLMProvider, type ProgressEvent } from '../llm/types'
 import { arithmeticProblems, type ArithmeticProblem } from '../math/arithmetic'
 import { CONSTANT_NAMES, FUNCTION_NAMES } from '../math/expr'
 import { formatComputed, formatNumber, formatUnits } from '../math/format'
@@ -230,6 +230,23 @@ export async function runGeneration(
     }
   }
 
+  // A lost GPU takes the model with it, so every later step would fail too.
+  // The model is loaded again once a run and the interrupted step tried again;
+  // after that a loss ends the run, keeping the questions written. The
+  // duplicate check's model was on the same GPU and is not loaded again.
+  let reloaded = false
+  const reloadAfter = async (error: unknown): Promise<boolean> => {
+    if (!(error instanceof GpuLost)) return false
+    if (reloaded || !provider.recover) throw error
+    reloaded = true
+    duplicates = null
+    callbacks.onStatus('The GPU stopped responding. Loading the model again…')
+    await provider.recover((progress) => callbacks.onModelEvent?.({ kind: 'status', message: progress.text })).catch(() => {
+      throw error
+    })
+    return true
+  }
+
   // Types are assigned up front so each section's concept prompt knows how
   // many calculation questions it has to supply.
   let typeCursor = existing.length
@@ -250,6 +267,10 @@ export async function runGeneration(
           : extractConcepts(provider, target.unit, 2, 2, signal, callbacks),
       )
       extracted.set(target, concepts)
+      // Concepts a lost GPU interrupted are found again on the reloaded model.
+      concepts.catch((error: unknown) => {
+        if (error instanceof GpuLost) extracted.delete(target)
+      })
     }
     return concepts
   }
@@ -271,7 +292,7 @@ export async function runGeneration(
       try {
         concepts = await conceptsOf(k, `Looking elsewhere in “${unit.pageTitle}” for numbers to calculate with…`)
       } catch (error) {
-        if (signal.aborted) throw error
+        if (signal.aborted || error instanceof GpuLost) throw error
         continue
       }
       for (const concept of concepts.filter((c) => c.quantitative)) {
@@ -287,41 +308,45 @@ export async function runGeneration(
   for (const [index, current] of units.entries()) {
     if (!current.count) continue
     signal.throwIfAborted()
+    const finding = `Finding concepts in “${current.unit.pageTitle}”…`
     let concepts: Concept[]
     try {
-      concepts = await conceptsOf(index, `Finding concepts in “${current.unit.pageTitle}”…`)
+      concepts = await conceptsOf(index, finding).catch(async (error: unknown) => {
+        if (signal.aborted || !(await reloadAfter(error))) throw error
+        return conceptsOf(index, finding)
+      })
     } catch (error) {
-      if (signal.aborted) throw error
+      if (signal.aborted || error instanceof GpuLost) throw error
       leaveOut(error, current.count)
       done += current.count
       callbacks.onProgress(done, total)
       continue
     }
 
-    for (let j = 0; j < current.count; j++) {
+    for (let j = 0; j < current.count; ) {
       signal.throwIfAborted()
       let concept = concepts[j % concepts.length]
       let itemType = slotTypes[index][j]
       // The section the question is written from.
       let unit = current.unit
       const notes: string[] = []
-      if (QUANTITATIVE_TYPES.has(itemType)) {
-        const found = await findQuantitative(index)
-        if (found) {
-          concept = found.concept
-          unit = found.unit.unit
-        } else {
-          const requested = ITEM_TYPE_LABELS[itemType].toLowerCase()
-          itemType = plan.itemTypes.find((t) => !QUANTITATIVE_TYPES.has(t)) ?? 'multiple_choice'
-          notes.push(
-            `A ${requested} question was requested, but no quantitative content was found on this page, so a ${itemType.replace(/_/g, ' ')} question was written instead.`,
-          )
-        }
-      }
-      const allowed = new Set(unit.paragraphs.map(([i]) => i))
-      const kind = itemType.replace(/_/g, ' ')
-      callbacks.onStatus(`Writing a ${kind} question on “${concept.label}”…`)
       try {
+        if (QUANTITATIVE_TYPES.has(itemType)) {
+          const found = await findQuantitative(index)
+          if (found) {
+            concept = found.concept
+            unit = found.unit.unit
+          } else {
+            const requested = ITEM_TYPE_LABELS[itemType].toLowerCase()
+            itemType = plan.itemTypes.find((t) => !QUANTITATIVE_TYPES.has(t)) ?? 'multiple_choice'
+            notes.push(
+              `A ${requested} question was requested, but no quantitative content was found on this page, so a ${itemType.replace(/_/g, ' ')} question was written instead.`,
+            )
+          }
+        }
+        const allowed = new Set(unit.paragraphs.map(([i]) => i))
+        const kind = itemType.replace(/_/g, ' ')
+        callbacks.onStatus(`Writing a ${kind} question on “${concept.label}”…`)
         let draft = await withFreshStarts((round) => {
           if (round > 1) callbacks.onStatus(`Starting the ${kind} question on “${concept.label}” over…`)
           return draftItem(provider, unit, concept, itemType, stems.slice(-12), allowed, signal, callbacks)
@@ -340,7 +365,7 @@ export async function runGeneration(
             reviewNotes = reviewed.issues
             critique = [...notes, ...reviewed.issues]
           } catch (error) {
-            if (signal.aborted) throw error
+            if (signal.aborted || error instanceof GpuLost) throw error
             critique = [...notes, `Automatic review could not complete (${message(error)}); the unreviewed draft was kept.`]
           }
         }
@@ -364,7 +389,14 @@ export async function runGeneration(
           const answer = draft.answer.toLowerCase()
           critique = [...critique.filter((note) => !note.toLowerCase().includes(answer)), typed]
         }
-        const similar = await duplicates?.add(draft.stem).catch(() => null)
+        const similar = await duplicates?.add(draft.stem).catch((error: unknown) => {
+          // Its model went with the GPU; the questions do not need it.
+          if (error instanceof GpuLost) {
+            duplicates = null
+            console.warn('Duplicate check stopped:', error)
+          }
+          return null
+        })
         if (similar && similar.similarity >= DUPLICATE_SIMILARITY) {
           critique = [...critique, `Very similar to another question in this set: “${clip(similar.stem, 140)}”`]
         }
@@ -387,9 +419,12 @@ export async function runGeneration(
         callbacks.onItem(item)
       } catch (error) {
         if (signal.aborted) throw error
+        // The same question is written again on the reloaded model.
+        if (await reloadAfter(error)) continue
         leaveOut(error, 1)
       }
       callbacks.onProgress(++done, total)
+      j++
     }
   }
   return { created, skipped, errors }
@@ -686,10 +721,11 @@ export async function verifyAnswerKey(
   }
 }
 
-// The checks are a convenience: one that cannot run leaves the question as it is.
+// The checks are a convenience: one that cannot run leaves the question as it
+// is. A lost GPU is not the check's failure, so it goes on up.
 function unlessAborted<T>(signal: AbortSignal) {
   return (error: unknown): T | null => {
-    if (signal.aborted) throw error
+    if (signal.aborted || error instanceof GpuLost) throw error
     console.warn('Answer check unavailable:', error)
     return null
   }
@@ -715,7 +751,7 @@ async function verifyByReview(
     const problems = disagreements.map((d) => keyProblem(draft.item_type, d))
     fixed = (await reviewItem(provider, unit, concept, draft, allowed, signal, callbacks, problems)).draft
   } catch (error) {
-    if (signal.aborted) throw error
+    if (signal.aborted || error instanceof GpuLost) throw error
     return { draft, notes: [keyNote(draft.item_type, disagreements)] }
   }
   const remaining = await check(fixed)

@@ -1,5 +1,55 @@
 import { describe, expect, it } from 'vitest'
-import { dropTrailingCommas, parseJsonResponse, repairLatexEscapes } from './types'
+import { DEVICE_LOST_ERROR } from './fixtures'
+import { completeWithRetries, dropTrailingCommas, GpuLost, parseJsonResponse, repairLatexEscapes } from './types'
+
+describe('completeWithRetries', () => {
+  const request = {
+    system: '',
+    prompt: 'Write a question.',
+    schemaName: 'question',
+    schema: {},
+    validate: (value: unknown) => value,
+  }
+
+  it('stops at a lost GPU instead of asking again', async () => {
+    let calls = 0
+    const completion = completeWithRetries(request, async () => {
+      calls++
+      throw new Error(DEVICE_LOST_ERROR)
+    })
+    await expect(completion).rejects.toBeInstanceOf(GpuLost)
+    expect(calls).toBe(1)
+  })
+
+  it('still asks again when a check quotes an answer about something lost', async () => {
+    // The pipeline's checks quote the model's words back to it.
+    let calls = 0
+    const completion = completeWithRetries(
+      {
+        ...request,
+        validate: (value: unknown) => {
+          throw new Error(`label "${(value as { label: string }).label}" says what kind of concept it is`)
+        },
+      },
+      async () => {
+        calls++
+        return { text: '{"label": "The energy is lost as heat"}', usage: null }
+      },
+    )
+    await expect(completion).rejects.not.toBeInstanceOf(GpuLost)
+    expect(calls).toBe(3)
+  })
+
+  it('still asks again when the engine loses something other than the GPU', async () => {
+    let calls = 0
+    const completion = completeWithRetries(request, async () => {
+      calls++
+      throw new Error('Connection is lost.')
+    })
+    await expect(completion).rejects.not.toBeInstanceOf(GpuLost)
+    expect(calls).toBe(3)
+  })
+})
 
 describe('parseJsonResponse', () => {
   it('reads LaTeX written with one backslash as LaTeX, not as JSON escapes', () => {

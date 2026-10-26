@@ -1,7 +1,8 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SAMPLE_DRAFTS } from '../qti/fixtures'
-import { completeWithRetries, LLMError, repairLatexEscapes, type CompletionRequest, type Embedder, type LLMProvider } from '../llm/types'
+import { DEVICE_LOST_ERROR } from '../llm/fixtures'
+import { completeWithRetries, GpuLost, LLMError, repairLatexEscapes, type CompletionRequest, type Embedder, type LLMProvider } from '../llm/types'
 import { db, type StoredSource } from '../storage/db'
 import { checkWorkedExample } from '../math/spec'
 import {
@@ -64,6 +65,8 @@ class FakeProvider implements LLMProvider {
   readonly model = 'fake'
   calls: string[] = []
   breakFirst = new Set<string>()
+  // The GPU is lost on the next call for each schema listed, once per entry.
+  loseGpuOn: string[] = []
   // The answer check's answers, one list per call; after that it agrees with
   // the fixture's key.
   keyAnswers: number[][] = []
@@ -94,6 +97,11 @@ class FakeProvider implements LLMProvider {
   complete<T>(request: CompletionRequest<T>) {
     return completeWithRetries(request, async (prompt) => {
       this.calls.push(request.schemaName)
+      const lost = this.loseGpuOn.indexOf(request.schemaName)
+      if (lost >= 0) {
+        this.loseGpuOn.splice(lost, 1)
+        throw new Error(DEVICE_LOST_ERROR)
+      }
       if (this.breakFirst.delete(request.schemaName)) return { text: '{"oops":', usage: null }
       if (request.schemaName === 'item_review') {
         this.reviews.push(prompt)
@@ -1388,5 +1396,133 @@ describe('cleanReviewNotes', () => {
       'The explanation contradicts the source about the direction of friction.',
     ]
     expect(cleanReviewNotes(notes)).toEqual([notes[0], notes[1], notes[2], 'The model answer omits the second key point.', notes[5]])
+  })
+})
+
+describe('a lost GPU', () => {
+  const plan = { itemTypes: ['multiple_choice'] as ItemType[], perPage: 1, reviewPass: false }
+  const inBrowser = () => Object.assign(new FakeProvider('local'), { recover: vi.fn(async () => undefined) })
+
+  it('loads the model again and writes the interrupted question', async () => {
+    const provider = inBrowser()
+    provider.loseGpuOn.push('multiple_choice_item')
+    const result = await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    expect(provider.calls.filter((call) => call === 'multiple_choice_item')).toHaveLength(2)
+  })
+
+  it('ends the run at a second loss, keeping the questions written', async () => {
+    const provider = inBrowser()
+    // Once the first question is in, the GPU fails every time.
+    const onItem = () => provider.loseGpuOn.push('multiple_choice_item', 'multiple_choice_item')
+    const run = runGeneration('set-1', source, { ...plan, perPage: 2 }, provider, new AbortController().signal, { ...callbacks, onItem })
+    await expect(run).rejects.toBeInstanceOf(GpuLost)
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    expect(await db.items.where('setId').equals('set-1').count()).toBe(1)
+  })
+
+  it('ends the run when the model cannot be loaded again', async () => {
+    const provider = inBrowser()
+    provider.recover.mockRejectedValue(new LLMError('The GPU ran out of memory loading the model.'))
+    provider.loseGpuOn.push('multiple_choice_item')
+    const run = runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+    await expect(run).rejects.toBeInstanceOf(GpuLost)
+    expect(provider.calls.filter((call) => call === 'multiple_choice_item')).toHaveLength(1)
+  })
+
+  it('ends the run at once on an engine that cannot load the model again', async () => {
+    const provider = new FakeProvider('local')
+    provider.loseGpuOn.push('multiple_choice_item')
+    const run = runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+    await expect(run).rejects.toBeInstanceOf(GpuLost)
+    expect(provider.calls.filter((call) => call === 'multiple_choice_item')).toHaveLength(1)
+  })
+
+  it('loads the model again and finds the concepts it was finding', async () => {
+    const provider = inBrowser()
+    provider.loseGpuOn.push('concept_batch')
+    const result = await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    expect(provider.calls.filter((call) => call === 'concept_batch')).toHaveLength(2)
+  })
+
+  it('loads the model again and goes on looking elsewhere on the page for numbers', async () => {
+    // As in the math test above: the question's own section has no numbers.
+    const paragraphs = source.pages[0].paragraphs.map((p, i) => ({ ...p, text: p.text.repeat(i ? 400 : 800) }))
+    const long = { ...source, pages: [{ ...source.pages[0], paragraphs }] }
+    const provider = inBrowser()
+    const original = provider.complete.bind(provider)
+    let lost = false
+    provider.complete = (request) =>
+      request.schemaName === 'concept_batch'
+        ? completeWithRetries(request, async (prompt) => {
+            const second = prompt.includes('[paragraph 1]')
+            if (second && !lost) {
+              lost = true
+              throw new Error(DEVICE_LOST_ERROR)
+            }
+            const concept = second
+              ? { label: 'Oxygen release rate', description: 'Volume of oxygen per minute', source_paragraphs: [1], quantitative: true }
+              : { label: 'Inputs', description: 'What plants take in', source_paragraphs: [0], quantitative: false }
+            return { text: JSON.stringify({ concepts: [concept] }), usage: null }
+          })
+        : original(request)
+    const result = await runGeneration('set-1', long, { ...plan, itemTypes: ['math'] }, provider, new AbortController().signal, callbacks)
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.draft.concept_label).toBe('Oxygen release rate')
+  })
+
+  it('loads the model again when the GPU goes during the review', async () => {
+    const provider = inBrowser()
+    provider.loseGpuOn.push('item_review')
+    const result = await runGeneration('set-1', source, { ...plan, reviewPass: true }, provider, new AbortController().signal, callbacks)
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.critique.join(' ')).not.toMatch(/could not complete/)
+  })
+
+  it('loads the model again when the GPU goes during the answer check', async () => {
+    const provider = inBrowser()
+    provider.loseGpuOn.push('key_check')
+    const result = await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    expect(provider.calls.filter((call) => call === 'key_check')).toHaveLength(2)
+  })
+
+  it('loads the model again when the GPU goes while fixing a wrong key', async () => {
+    const provider = inBrowser()
+    provider.keyAnswers = [[1]]
+    provider.loseGpuOn.push('item_review')
+    const result = await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks)
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.critique.join(' ')).not.toMatch(/could not|disagrees/)
+  })
+
+  it('goes on writing without the duplicate check once the GPU drops it', async () => {
+    const embedder = fakeEmbedder()
+    const embed = embedder.embed
+    let calls = 0
+    embedder.embed = (texts) => (++calls === 1 ? Promise.reject(new GpuLost(DEVICE_LOST_ERROR)) : embed(texts))
+    const result = await runGeneration('set-1', source, { ...plan, perPage: 2 }, inBrowser(), new AbortController().signal, callbacks, embedder)
+    expect(result).toEqual({ created: 2, skipped: 0, errors: [] })
+    expect(calls).toBe(1)
+  })
+
+  it('goes on without the duplicate check after loading the model again', async () => {
+    // The duplicate check's model was on the same GPU, and only the question writer is loaded again.
+    const embedder = fakeEmbedder()
+    const provider = inBrowser()
+    provider.loseGpuOn.push('multiple_choice_item')
+    const result = await runGeneration('set-1', source, plan, provider, new AbortController().signal, callbacks, embedder)
+    expect(result).toEqual({ created: 1, skipped: 0, errors: [] })
+    expect(embedder.texts).toEqual([])
   })
 })

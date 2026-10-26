@@ -8,6 +8,8 @@ import {
 } from './local-models'
 import {
   completeWithRetries,
+  GpuLost,
+  isGpuLost,
   LLMError,
   retryTemperature,
   schemaInstruction,
@@ -59,6 +61,8 @@ export type WorkerReply =
   | { id: number; kind: 'error'; message: string }
   | { id: number; kind: 'progress'; loaded: number; total: number }
   | { id: number; kind: 'tokens'; generated: number }
+  // WebGPU lost the device, whether or not a call was running on it.
+  | { id: 0; kind: 'lost'; message: string }
 
 type Without<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
@@ -70,6 +74,9 @@ interface Pending {
 
 let worker: Worker | null = null
 let nextId = 1
+// Why the model is gone, until it is loaded again: a lost GPU takes it
+// whichever call noticed, the duplicate check's included.
+let lost: GpuLost | null = null
 const pending = new Map<number, Pending>()
 
 function ensureWorker(): Worker {
@@ -77,12 +84,15 @@ function ensureWorker(): Worker {
   const created = new Worker(new URL('./transformers.worker.ts', import.meta.url), { type: 'module' })
   created.onmessage = (event: MessageEvent<WorkerReply>) => {
     const message = event.data
+    if (message.kind === 'lost') return resetWorker(new GpuLost(message.message))
     const entry = pending.get(message.id)
     if (!entry) return
     if (message.kind === 'done') {
       pending.delete(message.id)
       entry.resolve(message.value)
     } else if (message.kind === 'error') {
+      // Everything on a lost device is gone: start the next load afresh.
+      if (isGpuLost(message.message)) return resetWorker(new GpuLost(message.message))
       pending.delete(message.id)
       entry.reject(new Error(message.message))
     } else {
@@ -91,17 +101,18 @@ function ensureWorker(): Worker {
   }
   created.onerror = (event) => {
     event.preventDefault()
-    resetWorker(`The model runtime stopped: ${event.message || 'unknown error'}`)
+    resetWorker(new LLMError(`The model runtime stopped: ${event.message || 'unknown error'}`))
   }
   worker = created
   return created
 }
 
-function resetWorker(reason: string): void {
+function resetWorker(error: LLMError): void {
+  if (error instanceof GpuLost) lost = error
   worker?.terminate()
   worker = null
   statuses.clear()
-  for (const entry of pending.values()) entry.reject(new LLMError(reason))
+  for (const entry of pending.values()) entry.reject(error)
   pending.clear()
   if (localModelOf(loadedLocalModel() ?? '')?.runtime === 'transformers') setLoadedLocalModel(null)
 }
@@ -176,6 +187,7 @@ export async function loadLocalModel(modelId: string, onProgress: (progress: Loa
   const target = llmTarget(modelId)
   try {
     await call({ kind: 'load', target }, progressHandler(onProgress))
+    lost = null
     setLoadedLocalModel(modelId, unloadLocalModel)
   } catch (error) {
     throw new LLMError(describeLoadError(error))
@@ -202,7 +214,10 @@ function describeLoadError(error: unknown): string {
   if (/quota|storage/i.test(message)) {
     return 'The browser ran out of storage for the model. Free some disk space and try again.'
   }
-  if (/device.*lost|out of memory|OOM|allocat/i.test(message)) {
+  if (error instanceof GpuLost || /device.*lost/i.test(message)) {
+    return 'The GPU stopped responding while loading the model. Close other GPU-heavy tabs or apps and try again, or use an OpenAI key.'
+  }
+  if (/out of memory|OOM|allocat/i.test(message)) {
     return 'The GPU ran out of memory loading the model. Close other GPU-heavy tabs or apps, or use an OpenAI key.'
   }
   return `The model could not be loaded: ${message}`
@@ -224,13 +239,17 @@ export class TransformersProvider implements LLMProvider {
     return completeWithRetries(request, (prompt, attempt) => this.generate(request, prompt, attempt))
   }
 
+  recover(onProgress: (progress: LoadProgress) => void = () => undefined): Promise<void> {
+    return loadLocalModel(this.model, onProgress)
+  }
+
   private async generate<T>(
     request: CompletionRequest<T>,
     prompt: string,
     attempt: number,
   ): Promise<{ text: string; usage: CompletionUsage | null }> {
     if (loadedLocalModel() !== this.model || !worker) {
-      throw new LLMError('The in-browser model is not loaded. Load it from Settings first.')
+      throw lost ?? new LLMError('The in-browser model is not loaded. Load it from Settings first.')
     }
     const active = worker
     const abort = () => active.postMessage({ id: 0, kind: 'abort' })
