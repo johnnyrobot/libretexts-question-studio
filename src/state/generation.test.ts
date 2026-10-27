@@ -90,29 +90,44 @@ describe('startGeneration', () => {
 })
 
 // Web Locks as a browser shares them between an origin's tabs, exclusive mode
-// only; Node has none.
+// only. The tests need locks they can let go of as a closing tab does.
 class FakeLocks {
   private held = new Map<string, { released: Promise<void>; release: () => void }>()
+  private requests = new Set<Promise<unknown>>()
 
-  async request<T>(name: string, ...args: [(lock: object | null) => Promise<T>] | [{ ifAvailable?: boolean }, (lock: object | null) => Promise<T>]) {
+  request<T>(name: string, ...args: [(lock: object | null) => Promise<T>] | [{ ifAvailable?: boolean }, (lock: object | null) => Promise<T>]) {
     const [options, callback] = args.length === 1 ? [{}, args[0]] : args
-    if (options.ifAvailable && this.held.has(name)) return callback(null)
-    while (this.held.has(name)) await this.held.get(name)!.released
-    let release = () => {}
-    const hold = { released: new Promise<void>((resolve) => (release = resolve)), release: () => release() }
-    this.held.set(name, hold)
-    try {
-      return await callback({ name, mode: 'exclusive' })
-    } finally {
-      if (this.held.get(name) === hold) this.held.delete(name)
-      hold.release()
-    }
+    const request = this.run(name, options, callback)
+    this.requests.add(request)
+    void request.catch(() => undefined).finally(() => this.requests.delete(request))
+    return request
+  }
+
+  // Resolves once every request made so far has finished, waiting ones included.
+  async settled() {
+    while (this.requests.size) await Promise.allSettled([...this.requests])
   }
 
   // As a browser does when a tab closes: every lock it held is let go.
   closeTab() {
     for (const [name, hold] of this.held) {
       this.held.delete(name)
+      hold.release()
+    }
+  }
+
+  private async run<T>(name: string, options: { ifAvailable?: boolean }, callback: (lock: object | null) => Promise<T>) {
+    if (options.ifAvailable && this.held.has(name)) return callback(null)
+    while (this.held.has(name)) await this.held.get(name)!.released
+    let release = () => {}
+    const released = new Promise<void>((resolve) => (release = resolve))
+    const hold = { released, release }
+    this.held.set(name, hold)
+    try {
+      return await callback({ name, mode: 'exclusive' })
+    } finally {
+      // closeTab may have let go of it already, and another request may hold the name now.
+      if (this.held.get(name) === hold) this.held.delete(name)
       hold.release()
     }
   }
@@ -168,14 +183,15 @@ describe('markInterruptedSets', () => {
 
   // A second tab, opened from a page link for instance, runs this on load (LT-74).
   it('leaves a set alone while a tab is still generating it', async () => {
-    vi.stubGlobal('navigator', { locks: new FakeLocks() })
+    const locks = new FakeLocks()
+    vi.stubGlobal('navigator', { locks })
     const generation = await startPausedGeneration()
     await markInterruptedSets()
     expect(await db.sets.get('set-1')).toMatchObject({ status: 'generating', error: null })
     generation.resume()
     await generation.finished
     // The second tab, waiting on the lock, finds the set finished.
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await locks.settled()
     expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
   })
 

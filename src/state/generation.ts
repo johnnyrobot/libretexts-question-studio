@@ -120,8 +120,10 @@ function whileGenerating(setId: string, run: () => Promise<void>): Promise<void>
 
 // A set still marked "generating" when the app starts was cut off by a closed
 // tab or reload, unless another tab holds its lock and is writing it still;
-// finished questions were saved as they were written. Without Web Locks no tab
-// can tell, so every such set is taken as cut off.
+// finished questions were saved as they were written. A set another tab holds
+// is marked once that tab lets go of it, if it is still generating then: the
+// tab was closed mid-run. Without Web Locks no tab can tell, so every such set
+// is taken as cut off.
 export async function markInterruptedSets(): Promise<void> {
   const generating = await db.sets.filter((set) => set.status === 'generating').toArray()
   const locks = webLocks()
@@ -130,8 +132,8 @@ export async function markInterruptedSets(): Promise<void> {
       locks
         ? locks.request(generationLockName(set.id), { ifAvailable: true }, async (lock) => {
             if (lock) return markInterrupted(set.id)
-            // Marked once the other tab lets go, in case it is closed before it
-            // finishes; the app opens meanwhile.
+            // Not awaited: the app waits for this function before its first
+            // render (main.tsx), and the other tab may write for minutes.
             void locks.request(generationLockName(set.id), () => markInterrupted(set.id)).catch(() => undefined)
           })
         : markInterrupted(set.id),
