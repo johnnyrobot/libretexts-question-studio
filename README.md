@@ -127,21 +127,25 @@ also works from a sub-path.
 
 ## Question quality
 
-The test set is 22 textbook pages kept out of all prompt tuning and training: 2 pages from each of 11 books in 11 subjects. Each model was asked for 8 questions per page, rotating through the 8 types that have an answer key, with the review on; a question a model could not finish is left out, so each wrote fewer than 176. The two in-browser models also ran the answer check, and GPT-6 Luna did not (see **What the numbers cover**). Claude graded all the questions blind against one rubric, with the three models' questions shuffled together:
+The test set is 22 textbook pages kept out of all prompt tuning and training: 2 pages from each of 11 books in 11 subjects. Each model was asked for 8 questions per page, rotating through the 8 types that have an answer key, with the review on; a question a model could not finish is left out, so each wrote fewer than 176. Both Gemma 4 E4B runs also had the answer check, done by the default model in both; GPT-6 Luna's run did not (see **What the numbers cover**). Claude graded all the questions blind against one rubric, with the three models' questions shuffled together. Each question gets one verdict:
 
-- **Usable as is:** an instructor would publish the question without editing it.
-- **Rejected:** the question has a wrong key, cannot be answered, is trivial, or needs rewriting.
-- **Weak distractors:** in multiple choice, select all, dropdowns and matching, a wrong choice is implausible, a near-duplicate or a joke.
+- **Usable as is:** an instructor would publish it without editing.
+- **Needs a small edit:** fixable in under a minute.
+- **Rejected:** a wrong key, unanswerable, trivial, or needs rewriting. A wrong key always means rejected.
+
+A **wrong answer key** is false for the question as written; a fill-in-the-blank key is also wrong when another common word fits equally well. **Weak distractors** counts only multiple choice, select-all, dropdowns and matching questions: one of the wrong choices is implausible, a near-duplicate or a joke.
 
 | | Gemma 4 E4B in the browser (the default) | Fine-tuned Gemma 4 E4B (tested, not shipped) | GPT-6 Luna, high reasoning effort |
 |---|---|---|---|
 | **Usable as is** | 35% (59/168) | 44% (75/172) | 62% (108/175) |
+| Needs a small edit | 36% (60/168) | 28% (49/172) | 19% (33/175) |
+| Rejected | 29% (49/168) | 28% (48/172) | 19% (34/175) |
 | **Wrong answer key** | 17% (28/168) | 19% (32/172) | 5% (9/175) |
-| Rejected | 29% | 28% | 19% |
-| Weak distractors | 59% | 56% | 21% |
+| Wrong key with no note from the app | 4% (6/168) | 6% (10/172) | 4% (7/175) |
+| Weak distractors | 59% (61/103) | 56% (59/106) | 21% (19/90) |
 
-- **Wrong answer keys are the error that matters most, and the in-browser model makes far more of them.** About one question in five or six has a wrong key, three to four times GPT-6 Luna's rate.
-- **Matching and dropdowns are the weakest types, and numerical is weak too.** A third to nearly half of the in-browser models' matching and dropdowns questions have wrong keys, and few are usable. Numerical questions from the default model have wrong keys where GPT-6 Luna's have none, and the fine-tuned model's were rarely usable. Select all that apply is also rarely usable from the default model. By type, usable as is / wrong key (8 to 40 questions per type, so read these roughly):
+- **Wrong answer keys are the error that matters most, and Gemma 4 E4B makes far more of them.** About one question in five or six has a wrong key, three to four times GPT-6 Luna's rate. The app put a note on 22 of the default model's 28 wrong keys, but it also puts one on 62% of that model's questions, so a note is only a weak warning.
+- **Matching and dropdowns are the weakest types, and numerical is weak too.** A third to nearly half of Gemma 4 E4B's matching and dropdowns questions have wrong keys, with or without fine-tuning, and few are usable. The default model's numerical questions have wrong keys where GPT-6 Luna's have none, and the fine-tuned model's were rarely usable. Select-all is also rarely usable from the default model. GPT-6 Luna's weak type is fill in the blank, which it wrote without the answer check that now re-blanks a question the check fills differently. By type, usable as is / wrong key (8 to 40 questions per type, so read these roughly):
 
   | Type | Gemma 4 E4B | Fine-tuned | GPT-6 Luna |
   |---|---|---|---|
@@ -154,8 +158,8 @@ The test set is 22 textbook pages kept out of all prompt tuning and training: 2 
   | Fill in the blank | 52% / 19% | 50% / 14% | 45% / 36% |
   | Math | 25% / 0% | 33% / 22% | 30% / 0% |
 
-- **Fine-tuning raised usable questions but did not reduce wrong keys.** The fine-tuned model is Gemma 4 E4B with a LoRA adapter (a small set of trained changes to its weights), merged at a quarter strength. The adapter was trained on 3,855 questions that Gemma 4 31B drafted from 261 other LibreTexts books. In the test, the fine-tuned model drafted the questions, and the default model did every other step, including the review and the answer check. On the 162 slots (same page, type and position) where both wrote a question, the fine-tuned model wrote more usable questions (45% vs 35%, p = 0.014) and as many wrong keys (17% each). It is not in the app, because it leaves wrong keys where they were and would need a second 2.9 GB model decoder in GPU memory beside the default model's.
-- **What the numbers cover.** The default model and GPT-6 Luna wrote their questions on 2026-10-10. That was before the answer check covered matching and dropdowns, before the arithmetic check of numerical explanations, and before the answer check ran on OpenAI; the app does all three by default now. The fine-tuned model wrote its questions on 2026-10-26 and 27 with the first two. Taken together, its matching, dropdowns and numerical questions were still no better than the default model's without them. This test does not show what the newer checks do for the default model.
+- **Fine-tuning raised usable questions but did not reduce wrong keys.** The fine-tuned model is Gemma 4 E4B with a LoRA adapter (a small set of trained changes to its weights), applied at a quarter of its trained strength. The adapter was trained on 3,855 questions that Gemma 4 31B drafted from 261 other LibreTexts books. In the test, the fine-tuned model drafted the questions, and the default model did every other step, including the review and the answer check. On the 162 slots (same page, type and position) where both wrote a question, the fine-tuned model wrote more usable questions (45% vs 35%, p = 0.014) and as many wrong keys (17% each). It is not in the app, because it leaves wrong keys where they were and would need a second 2.9 GB set of weights in GPU memory beside the default model.
+- **What the numbers cover.** The default model and GPT-6 Luna wrote their questions on 2026-10-10. That was before the answer check covered matching and dropdowns, before the arithmetic check of numerical explanations, and before the answer check ran on OpenAI; the app does all three by default now. The fine-tuned run, on 2026-10-26 and 27, had the first two. Counted together, its matching, dropdowns and numerical questions were no better than the default model's from 2026-10-10. This test does not show what the newer checks do for the default model.
 
 ## Known limits
 
