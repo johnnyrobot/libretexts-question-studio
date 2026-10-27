@@ -5,7 +5,7 @@ import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
 import { TocPicker } from '../components/TocPicker'
 import { loadCatalog, searchCatalog, type CatalogBook } from '../lib/content/catalog'
-import { getTree, LIBRARIES, parsePageId, type Library, type TocNode } from '../lib/content/libretexts'
+import { getTree, LIBRARIES, parsePageLink, type Library, type TocNode } from '../lib/content/libretexts'
 import {
   buildLibreTextsSource,
   buildPastedSource,
@@ -228,7 +228,7 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
 // The page a link to the app names, as the URL the link tab looks up.
 function linkedPage(pageLink: string): { url: string } | { error: string } {
   try {
-    const { library, id } = parsePageId(pageLink)
+    const { library, id } = parsePageLink(pageLink)
     return { url: `https://${library}.libretexts.org/@go/page/${id}` }
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) }
@@ -239,30 +239,40 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
   const [linked] = useState(() => (pageLink === undefined ? null : linkedPage(pageLink)))
   const [url, setUrl] = useState(linked && 'url' in linked ? linked.url : '')
   const [resolved, setResolved] = useState<ResolvedUrl | null>(null)
-  const [busy, setBusy] = useState(false)
+  // A linked page is looked up as soon as the tab opens, so the tab starts busy.
+  const [busy, setBusy] = useState(linked !== null && 'url' in linked)
   const [error, setError] = useState<string | null>(linked && 'error' in linked ? linked.error : null)
   const [progress, setProgress] = useState('')
 
-  const lookUp = async (target: string, signal?: AbortSignal) => {
+  useEffect(() => {
+    if (!linked || !('url' in linked)) return
+    const controller = new AbortController()
+    const { signal } = controller
+    resolveUrl(linked.url, signal)
+      .then((result) => {
+        if (!signal.aborted) setResolved(result)
+      })
+      .catch((e) => {
+        if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
+      })
+      .finally(() => {
+        if (!signal.aborted) setBusy(false)
+      })
+    return () => controller.abort()
+  }, [linked])
+
+  const lookUp = async () => {
     setBusy(true)
     setError(null)
     setResolved(null)
     try {
-      setResolved(await resolveUrl(target, signal))
+      setResolved(await resolveUrl(url))
     } catch (e) {
-      if (!signal?.aborted) setError(e instanceof Error ? e.message : String(e))
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
-      if (!signal?.aborted) setBusy(false)
+      setBusy(false)
     }
   }
-
-  // A linked page is looked up as soon as the tab opens.
-  useEffect(() => {
-    if (!linked || !('url' in linked)) return
-    const controller = new AbortController()
-    lookUp(linked.url, controller.signal)
-    return () => controller.abort()
-  }, [linked])
 
   const confirm = async (pages: TocNode[]) => {
     if (!resolved) return
@@ -295,7 +305,7 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
         className="search-row"
         onSubmit={(e) => {
           e.preventDefault()
-          lookUp(url)
+          lookUp()
         }}
       >
         <label>

@@ -26,7 +26,7 @@ browser.
    - Choose a source and tick the pages you want.
    - Choose question types and how many questions per page. The second-pass review is on by default. An answer check also answers each multiple-choice, select-all, true/false, fill-in-the-blank, matching and dropdowns question without its key: it sends back multiple-choice, select-all, matching and dropdowns keys it disagrees with, gives a fill-in-the-blank question a new blank when its answer differs from the key, and notes true/false keys it disagrees with. The app also recomputes the arithmetic in each numerical question's explanation, and sends back a step that does not add up or an answer the working never reaches. These checks always run on the in-browser model; with OpenAI they are on by default and can be turned off in Settings (**Check answer keys**), since they use extra API calls.
    - Generate. Questions appear as they are written, and the run continues if you switch screens.
-   - **Link straight to a page:** add `?page=<library>-<page id>` to the app's address, for example `https://qtistudio.libretexts.dev/?page=human-378488` (`?human-378488` works too). The app opens Create on the **Paste a link** tab with that page looked up, ready to tick. The library is the part before `.libretexts.org` (bio, biz, chem, eng, espanol, geo, human, k12, math, med, phys, socialsci, stats or workforce), and the page id is the number in the page's `/@go/page/<id>` link.
+   - **Link straight to a page:** put `?page=<library>-<page id>` right after the app's address, for example `https://qtistudio.libretexts.dev/?page=human-378488` (`?human-378488` works too). The app opens Create on the **Paste a link** tab with that page looked up and its content pages ticked, as if you had pasted its link. The library is the part before `.libretexts.org`, such as `human` or `chem`, and the page id is the number in the page's `/@go/page/<id>` link. A link to an unknown library says which libraries there are.
 3. **Review:** approve, edit, or reject each question. Each question can show the exact source paragraphs it cites.
 4. **Export to ADAPT** (from the set's page): download the QTI (.zip). In ADAPT, go to Dashboard → My Questions → Bulk Import tab → Canvas QTI, pick a folder and license, and upload the file. Earlier downloads stay listed and can be downloaded again.
    - **Math questions:** by default each one goes into that file as one version. Choose **Randomized** to download a second file in which each math question is its own quiz with several versions. ADAPT makes each quiz an assignment; import it into a course with an assignment template whose Dynamic Questioning settings are Random sampling: Yes and Number of randomized assessments: 1, and each student gets one version.
@@ -47,8 +47,8 @@ npm run catalog        # refresh public/catalog.json from LibreTexts Commons
 generation pipeline and its answer checks (with a scripted model), model output
 parsing and its JSON-escape guard, math formulas and versions, the arithmetic
 check of numerical explanations, the LibreTexts page normaliser, the QTI
-exporter and export history, backup and restore, the question editor, and the
-OpenAI answer-check setting.
+exporter and export history, backup and restore, the question editor, the
+OpenAI answer-check setting, and links that open the app on a LibreTexts page.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint, the tests and the build,
 but not the ADAPT importer check below; run that one locally.

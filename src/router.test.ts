@@ -1,25 +1,38 @@
 import { describe, expect, it } from 'vitest'
-import { pageLinkFromRoute, pageLinkRoute } from './router'
+import { pageLinkAddress, pageLinkFromRoute } from './router'
+
+const APP = 'https://qtistudio.libretexts.dev/'
 
 describe('a link that opens a LibreTexts page', () => {
   it.each([
-    ['?page=human-378488', '/page/human-378488'],
-    ['?human-378488', '/page/human-378488'],
-    ['?page=human-378488&utm_source=slack', '/page/human-378488'],
-    ['?history-378488', '/page/history-378488'],
-    ['?page=nonsense', '/page/nonsense'],
-  ])('turns %s into the route %s', (search, route) => {
-    expect(pageLinkRoute(search)).toBe(route)
+    ['?page=human-378488', '/#/page/human-378488'],
+    ['?human-378488', '/#/page/human-378488'],
+    ['?page=human-378488&utm_source=slack', '/#/page/human-378488'],
+    ['?human-378488&fbclid=IwAR0abc', '/#/page/human-378488'],
+    ['?utm_source=slack&human-378488', '/#/page/human-378488'],
+    ['?page=human-378488#/library', '/#/page/human-378488'],
+    ['?history-378488', '/#/page/history-378488'],
+    ['?page=nonsense', '/#/page/nonsense'],
+    ['?page=a%2Fb%20c', '/#/page/a%2Fb%20c'],
+  ])('moves %s to the route in %s', (query, address) => {
+    expect(pageLinkAddress(APP + query)).toBe(address)
   })
 
-  it.each(['', '?', '?utm_source=slack', '?debug', '?human-378488&debug'])('leaves %j alone', (search) => {
-    expect(pageLinkRoute(search)).toBeNull()
+  it('keeps the path the app is served from', () => {
+    expect(pageLinkAddress('https://example.org/apps/qs/?human-1')).toBe('/apps/qs/#/page/human-1')
   })
 
-  it('gives the route back the page exactly as the link had it', () => {
-    expect(pageLinkFromRoute(pageLinkRoute('?page=human-378488')!)).toBe('human-378488')
-    expect(pageLinkFromRoute(pageLinkRoute('?page=a%2Fb%20c')!)).toBe('a/b c')
-    expect(pageLinkFromRoute(pageLinkRoute('?page=')!)).toBe('')
+  it.each(['', '?', '?utm_source=slack', '?debug', '?human-378488=1', '?human-1&chem-2', '#/page/human-1', '#/library?page=human-1'])(
+    'leaves %j alone',
+    (rest) => {
+      expect(pageLinkAddress(APP + rest)).toBeNull()
+    },
+  )
+
+  it('gives the page back from the route exactly as the link had it', () => {
+    expect(pageLinkFromRoute('/page/human-378488')).toBe('human-378488')
+    expect(pageLinkFromRoute('/page/a%2Fb%20c')).toBe('a/b c')
+    expect(pageLinkFromRoute('/page/')).toBe('')
   })
 
   it('finds no page in other routes', () => {

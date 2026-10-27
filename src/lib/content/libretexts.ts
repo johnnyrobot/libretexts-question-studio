@@ -65,8 +65,10 @@ export function parseLibreTextsUrl(input: string): PageRef {
 }
 
 // A page as a link to the app names it: <library>-<page id>, e.g. human-378488.
-export function parsePageId(input: string): { library: Library; id: string } {
-  const match = input.trim().toLowerCase().match(/^([a-z0-9]+)-(\d+)$/)
+export const PAGE_LINK = /^([a-z0-9]+)-(\d+)$/i
+
+export function parsePageLink(input: string): Extract<PageRef, { id: string }> {
+  const match = input.trim().toLowerCase().match(PAGE_LINK)
   if (!match) {
     throw new LibreTextsError(
       'That link does not name a LibreTexts page. A page link ends in ?page=<library>-<page number>, such as ?page=human-378488.',
