@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit reviews a pull request only when asked, once, just before merge
+# (`@coderabbitai full review`). See libretexts-dev/docs/agents/code-review.md.
+reviews:
+  auto_review:
+    enabled: false
+    auto_incremental_review: false
