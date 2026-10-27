@@ -125,10 +125,42 @@ also works from a sub-path.
 - **libretexts.org hosting:** hosting on a `*.libretexts.org` subdomain also lets the browser call LibreTexts Commons directly, if live search is wanted later.
 - **Catalog freshness:** `public/catalog.json` is a snapshot, and `npm run build` does not refresh it. Run `npm run catalog` before a build to pick up new books.
 
+## Question quality
+
+The test set is 22 textbook pages kept out of all prompt tuning and training: 2 pages from each of 11 books in 11 subjects. Each model was asked for 8 questions per page, rotating through the 8 types that have an answer key, with the review on; a question a model could not finish is left out, so each wrote fewer than 176. The two in-browser models also ran the answer check, and GPT-6 Luna did not (see **What the numbers cover**). Claude graded all the questions blind against one rubric, with the three models' questions shuffled together:
+
+- **Usable as is:** an instructor would publish the question without editing it.
+- **Rejected:** the question has a wrong key, cannot be answered, is trivial, or needs rewriting.
+- **Weak distractors:** in multiple choice, select all, dropdowns and matching, a wrong choice is implausible, a near-duplicate or a joke.
+
+| | Gemma 4 E4B in the browser (the default) | Fine-tuned Gemma 4 E4B (tested, not shipped) | GPT-6 Luna, high reasoning effort |
+|---|---|---|---|
+| **Usable as is** | 35% (59/168) | 44% (75/172) | 62% (108/175) |
+| **Wrong answer key** | 17% (28/168) | 19% (32/172) | 5% (9/175) |
+| Rejected | 29% | 28% | 19% |
+| Weak distractors | 59% | 56% | 21% |
+
+- **Wrong answer keys are the error that matters most, and the in-browser model makes far more of them.** About one question in five or six has a wrong key, three to four times GPT-6 Luna's rate.
+- **Matching and dropdowns are the weakest types, and numerical is weak too.** A third to nearly half of the in-browser models' matching and dropdowns questions have wrong keys, and few are usable. Numerical questions from the default model have wrong keys where GPT-6 Luna's have none, and the fine-tuned model's were rarely usable. Select all that apply is also rarely usable from the default model. By type, usable as is / wrong key (8 to 40 questions per type, so read these roughly):
+
+  | Type | Gemma 4 E4B | Fine-tuned | GPT-6 Luna |
+  |---|---|---|---|
+  | Matching | 5% / 43% | 0% / 45% | 64% / 0% |
+  | Multiple dropdowns | 5% / 32% | 23% / 36% | 55% / 5% |
+  | Numerical | 43% / 14% | 15% / 8% | 52% / 0% |
+  | Multiple choice | 37% / 13% | 65% / 10% | 75% / 0% |
+  | Select all that apply | 18% / 5% | 32% / 18% | 77% / 0% |
+  | True/false | 91% / 0% | 95% / 0% | 91% / 0% |
+  | Fill in the blank | 52% / 19% | 50% / 14% | 45% / 36% |
+  | Math | 25% / 0% | 33% / 22% | 30% / 0% |
+
+- **Fine-tuning raised usable questions but did not reduce wrong keys.** The fine-tuned model is Gemma 4 E4B with a LoRA adapter (a small set of trained changes to its weights), merged at a quarter strength. The adapter was trained on 3,855 questions that Gemma 4 31B drafted from 261 other LibreTexts books. In the test, the fine-tuned model drafted the questions, and the default model did every other step, including the review and the answer check. On the 162 slots (same page, type and position) where both wrote a question, the fine-tuned model wrote more usable questions (45% vs 35%, p = 0.014) and as many wrong keys (17% each). It is not in the app, because it leaves wrong keys where they were and would need a second 2.9 GB model decoder in GPU memory beside the default model's.
+- **What the numbers cover.** The default model and GPT-6 Luna wrote their questions on 2026-10-10. That was before the answer check covered matching and dropdowns, before the arithmetic check of numerical explanations, and before the answer check ran on OpenAI; the app does all three by default now. The fine-tuned model wrote its questions on 2026-10-26 and 27 with the first two. Taken together, its matching, dropdowns and numerical questions were still no better than the default model's without them. This test does not show what the newer checks do for the default model.
+
 ## Known limits
 
 - The in-browser models need WebGPU: recent desktop Chrome or Edge, Safari 26, or Firefox on Windows / Apple Silicon. Phones are not supported. Gemma 4 E4B has only been tested in desktop Chrome on Apple Silicon; Qwen3.5 4B is the fallback.
-- Small local models write weaker distractors than GPT-6 Luna. Every question is a draft until an instructor approves it.
+- The in-browser models write weaker distractors and more wrong answer keys than GPT-6 Luna (measured on Gemma 4 E4B; see [Question quality](#question-quality)). Every question is a draft until an instructor approves it.
 - Images and figures are not used as question material. Image alt text is kept as text.
 - ADAPT grades fill-in-the-blank against a single answer by exact match, ignoring case (alternates are honoured by Canvas only). The app asks for answers in plain words. With the answer check, it also blanks another word when the check fills the blank differently. Questions where it cannot are noted. ADAPT ignores feedback on several types.
 - In ADAPT, essays take the assignment's Default Open-ended Submission Type; with None, students have nothing to submit.
