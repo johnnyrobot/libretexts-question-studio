@@ -5,7 +5,7 @@ import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
 import { TocPicker } from '../components/TocPicker'
 import { loadCatalog, searchCatalog, type CatalogBook } from '../lib/content/catalog'
-import { getTree, LIBRARIES, licenseLabel, parsePageLink, type Library, type TocNode } from '../lib/content/libretexts'
+import { getTree, LIBRARIES, licenseLabel, parsePageLink, partHolding, type Library, type TocNode } from '../lib/content/libretexts'
 import {
   buildLibreTextsSource,
   buildPastedSource,
@@ -109,16 +109,20 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
   }
 
   const confirm = async (pages: TocNode[]) => {
-    if (!book) return
+    if (!book || !tree) return
     setBusy(true)
     setError(null)
+    // Pages from one chapter are credited to that chapter, and pages from across
+    // the book to the book, under the title the catalog gives it.
+    const part = partHolding(tree, pages)
+    const whole = part === tree && part.children.length > 0
     try {
       onSource(
         await buildLibreTextsSource({
           library: book.library,
-          title: pages.length === 1 ? pages[0].title : book.title,
-          url: pages.length === 1 ? pages[0].url : book.url,
-          kind: pages.length === 1 ? 'page' : 'section',
+          title: whole ? book.title : part.title,
+          url: whole ? book.url : part.url,
+          kind: part.children.length === 0 ? 'page' : 'section',
           pages,
           license: licenseFromCatalog(book.license),
           book: { title: book.title, author: book.author || null },
@@ -281,12 +285,15 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
     setError(null)
     try {
       const isBook = resolved.book && `${resolved.page.library}-${resolved.page.id}` === resolved.book.id
+      // Pages from one chapter of the linked page are credited to that chapter.
+      const part = partHolding(resolved.tree, pages)
+      const whole = part === resolved.tree
       onSource(
         await buildLibreTextsSource({
           library: resolved.page.library,
-          title: pages.length === 1 ? pages[0].title : resolved.page.title,
-          url: pages.length === 1 ? pages[0].url : resolved.page.url,
-          kind: resolved.tree.children.length === 0 ? 'page' : isBook ? 'book' : 'section',
+          title: whole ? resolved.page.title : part.title,
+          url: whole ? resolved.page.url : part.url,
+          kind: part.children.length === 0 ? 'page' : whole && isBook ? 'book' : 'section',
           pages,
           license: resolved.page.license,
           book: resolved.book ? { title: resolved.book.title, author: resolved.book.author } : undefined,

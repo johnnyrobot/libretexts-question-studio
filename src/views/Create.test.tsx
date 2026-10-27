@@ -178,8 +178,22 @@ describe('opening the app with no page link', () => {
 
 const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)
 
-// Finds the book in book search, ticks its content pages and continues.
-async function chooseInBookSearch(continueLabel: string, title = '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)') {
+// Ticks one chapter, section or page in the page picker.
+const tick = (title: string) =>
+  act(async () =>
+    [...document.querySelectorAll('.toc-label')]
+      .find((label) => label.querySelector('span')?.firstChild?.textContent === title)!
+      .querySelector('input')!
+      .click(),
+  )
+
+// Finds the book in book search, ticks its content pages (or just the part
+// named) and continues.
+async function chooseInBookSearch(
+  continueLabel: string,
+  title = '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)',
+  part?: string,
+) {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
@@ -196,10 +210,35 @@ async function chooseInBookSearch(continueLabel: string, title = '¡HOLA! Spanis
   expect(result.querySelector('strong')?.textContent).toBe(title)
   await act(async () => result.click())
   await settle()
-  await act(async () => button('Select all content')!.click())
+  if (part) await tick(part)
+  else await act(async () => button('Select all content')!.click())
   await act(async () => button(continueLabel)!.click())
   await settle()
 }
+
+// A book with two chapters, the first holding two pages.
+const tocNode = (id: string, title: string, children: object[] = []) => ({
+  '@id': id,
+  title,
+  'uri.ui': `https://human.libretexts.org/Bookshelves/Languages/Spanish/HOLA/${id}`,
+  subpages: children.length > 0 ? { page: children } : '',
+})
+const BOOK_TREE = {
+  page: tocNode('378400', BOOK.title, [
+    tocNode('1', '1: Saludos', [tocNode('1.1', '1.1: Hola'), tocNode('1.2', '1.2: Adiós')]),
+    tocNode('2', '2: La familia', [tocNode('2.1', '2.1: Mi familia')]),
+  ]),
+}
+// The book's cover page, for a link to the whole book.
+const COVER = {
+  '@id': '378400',
+  title: BOOK.title,
+  path: { '#text': 'Bookshelves/Languages/Spanish' },
+  'uri.ui': 'https://human.libretexts.org/Bookshelves/Languages/Spanish',
+  tags: PAGE.tags,
+}
+const bookTree = (target: string) =>
+  target.includes('/tree') ? BOOK_TREE : target.includes('/pages/378400?') ? COVER : found(target)
 
 describe('crediting the book a source comes from', () => {
   it('keeps the book and its authors for a page from a link', async () => {
@@ -233,6 +272,41 @@ describe('crediting the book a source comes from', () => {
     const [source] = await db.sources.toArray()
     expect(source.title).toBe('¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)')
     expect(source.title).toBe(source.book?.title)
+  })
+
+  it('names pages from one chapter in book search by the chapter, from the book', async () => {
+    libreTexts(bookTree)
+    await chooseInBookSearch('Continue with 2 pages', undefined, '1: Saludos')
+    const [source] = await db.sources.toArray()
+    expect(source).toMatchObject({
+      title: '1: Saludos',
+      url: 'https://human.libretexts.org/Bookshelves/Languages/Spanish/HOLA/1',
+      kind: 'section',
+      book: { title: '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)', author: 'Beatrice Tseng, Karla Lemari, Lisbeth Rosales' },
+    })
+  })
+
+  it('names pages from across chapters in book search by the book', async () => {
+    libreTexts(bookTree)
+    await chooseInBookSearch('Continue with 3 pages')
+    const [source] = await db.sources.toArray()
+    expect(source).toMatchObject({ title: '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)', url: CATALOG.books[0].u })
+  })
+
+  it('names pages from one chapter of a linked book by the chapter, from the book', async () => {
+    libreTexts(bookTree)
+    await openLink('human-378400')
+    await act(async () => button('Clear')!.click())
+    await tick('1: Saludos')
+    await act(async () => button('Continue with 2 pages')!.click())
+    await settle()
+    const [source] = await db.sources.toArray()
+    expect(source).toMatchObject({
+      title: '1: Saludos',
+      url: 'https://human.libretexts.org/Bookshelves/Languages/Spanish/HOLA/1',
+      kind: 'section',
+      book: { title: 'HOLA Spanish 3 (Tseng Rosales and Lemari)' },
+    })
   })
 
   it('names no license for a book the catalog lists under a code that is not a license', async () => {
