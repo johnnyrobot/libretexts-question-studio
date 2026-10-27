@@ -47,36 +47,41 @@ export async function startGeneration(
   if (state.running) throw new Error('A generation is already running.')
   controller = new AbortController()
   update({ running: true, setId, status: 'Starting…', done: 0, written: 0, total: 0, detail: '' })
-  await db.sets.update(setId, { status: 'generating', error: null, updatedAt: Date.now() })
-  try {
-    const result = await runGeneration(setId, source, plan, provider, controller.signal, {
-      onStatus: (status) => update({ status, detail: '' }),
-      onItem: () => update({ written: state.written + 1 }),
-      onProgress: (done, total) => update({ done, total }),
-      onModelEvent: (event) => {
-        if (event.kind === 'status') update({ detail: event.message })
-        else if (event.kind === 'reasoning') update({ detail: event.text })
-        else update({ detail: `${event.generated} chunks generated…` })
-      },
-    }, embedder)
-    await db.sets.update(setId, {
-      status: result.created === 0 && (result.skipped || result.errors.length) ? 'failed' : 'complete',
-      error: resultError(result),
-      updatedAt: Date.now(),
-    })
-    update({ running: false, status: `Done — ${result.created} question(s) written.` })
-  } catch (error) {
-    const cancelled = controller?.signal.aborted
-    const message = error instanceof GpuLost ? gpuLostMessage(state.written) : error instanceof Error ? error.message : String(error)
-    await db.sets.update(setId, {
-      status: cancelled ? 'cancelled' : 'failed',
-      error: cancelled ? 'Stopped before finishing. Questions written so far were kept.' : message,
-      updatedAt: Date.now(),
-    })
-    update({ running: false, status: cancelled ? 'Stopped.' : `Failed: ${message}` })
-  } finally {
-    controller = null
-  }
+  const { signal } = controller
+  await whileGenerating(setId, async () => {
+    // Marked again now the lock is held, in case another tab took the set for
+    // interrupted in the moment before.
+    await db.sets.update(setId, { status: 'generating', error: null, updatedAt: Date.now() })
+    try {
+      const result = await runGeneration(setId, source, plan, provider, signal, {
+        onStatus: (status) => update({ status, detail: '' }),
+        onItem: () => update({ written: state.written + 1 }),
+        onProgress: (done, total) => update({ done, total }),
+        onModelEvent: (event) => {
+          if (event.kind === 'status') update({ detail: event.message })
+          else if (event.kind === 'reasoning') update({ detail: event.text })
+          else update({ detail: `${event.generated} chunks generated…` })
+        },
+      }, embedder)
+      await db.sets.update(setId, {
+        status: result.created === 0 && (result.skipped || result.errors.length) ? 'failed' : 'complete',
+        error: resultError(result),
+        updatedAt: Date.now(),
+      })
+      update({ running: false, status: `Done — ${result.created} question(s) written.` })
+    } catch (error) {
+      const cancelled = signal.aborted
+      const message = error instanceof GpuLost ? gpuLostMessage(state.written) : error instanceof Error ? error.message : String(error)
+      await db.sets.update(setId, {
+        status: cancelled ? 'cancelled' : 'failed',
+        error: cancelled ? 'Stopped before finishing. Questions written so far were kept.' : message,
+        updatedAt: Date.now(),
+      })
+      update({ running: false, status: cancelled ? 'Stopped.' : `Failed: ${message}` })
+    } finally {
+      controller = null
+    }
+  })
 }
 
 // Questions whose answers never passed the checks were already started over
@@ -102,16 +107,39 @@ export function cancelGeneration(): void {
   controller?.abort(new DOMException('Generation cancelled', 'AbortError'))
 }
 
+// A set's generation holds this lock from start to finish, in whichever tab
+// runs it: Web Locks are shared by every tab of the app. Browsers offer them
+// only on https and localhost.
+const generationLock = (setId: string) => `generation:${setId}`
+const webLocks = (): LockManager | undefined => navigator.locks ?? undefined
+
+function whileGenerating(setId: string, run: () => Promise<void>): Promise<void> {
+  const locks = webLocks()
+  return locks ? locks.request(generationLock(setId), run) : run()
+}
+
 // A set still marked "generating" when the app starts was cut off by a closed
-// tab or reload; finished questions were saved as they were written.
+// tab or reload, unless another tab holds its lock and is writing it still;
+// finished questions were saved as they were written. Without Web Locks no tab
+// can tell, so every such set is taken as cut off.
 export async function markInterruptedSets(): Promise<void> {
-  const stale = await db.sets.filter((set) => set.status === 'generating').toArray()
+  const generating = await db.sets.filter((set) => set.status === 'generating').toArray()
+  const locks = webLocks()
   await Promise.all(
-    stale.map((set) =>
-      db.sets.update(set.id, {
-        status: 'cancelled',
-        error: 'Interrupted when the app was closed. Questions written before that were kept.',
-      }),
+    generating.map((set) =>
+      locks
+        ? locks.request(generationLock(set.id), { ifAvailable: true }, (lock) => (lock ? markInterrupted(set.id) : undefined))
+        : markInterrupted(set.id),
     ),
   )
+}
+
+// Checks the status again in the same transaction: the tab that held the
+// lock may have finished the set just before letting go of it.
+async function markInterrupted(setId: string): Promise<void> {
+  await db.sets
+    .where('id')
+    .equals(setId)
+    .and((set) => set.status === 'generating')
+    .modify({ status: 'cancelled', error: 'Interrupted when the app was closed. Questions written before that were kept.' })
 }

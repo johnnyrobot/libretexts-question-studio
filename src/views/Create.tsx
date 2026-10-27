@@ -445,6 +445,9 @@ function Configure({ source }: { source: StoredSource }) {
       setError(provider)
       return
     }
+    // Ready before the set is saved as generating, so the generation can take
+    // the set's lock straight after (see markInterruptedSets).
+    const embedder = await createEmbedder(engine)
     const setId = newId()
     const now = Date.now()
     await db.sets.add({
@@ -459,7 +462,7 @@ function Configure({ source }: { source: StoredSource }) {
       createdAt: now,
       updatedAt: now,
     })
-    void startGeneration(setId, source, { itemTypes: types, perPage, reviewPass, answerCheck }, provider, await createEmbedder(engine))
+    void startGeneration(setId, source, { itemTypes: types, perPage, reviewPass, answerCheck }, provider, embedder)
     navigate(`/set/${setId}`)
   }
 
