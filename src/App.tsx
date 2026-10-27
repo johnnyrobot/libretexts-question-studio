@@ -4,7 +4,7 @@ import { Icon } from './components/Icon'
 import { localModel, useLoadedLocalModel } from './lib/llm/local-models'
 import { db } from './lib/storage/db'
 import { useSessionKey } from './lib/storage/secrets'
-import { useRoute } from './router'
+import { pageLinkFromRoute, useRoute } from './router'
 import { localModelId, useEngineSettings } from './state/engine'
 import { useGeneration } from './state/generation'
 import { TEXT_SIZES, setTextSize, useNarrowLayout, useTextSize } from './state/text-size'
@@ -19,7 +19,7 @@ interface InstallPromptEvent extends Event {
 }
 
 type Page =
-  | { name: 'create'; sourceId?: string }
+  | { name: 'create'; sourceId?: string; pageLink?: string }
   | { name: 'library' }
   | { name: 'set'; setId: string; tab: 'review' | 'export' }
   | { name: 'settings'; section: SettingsSection }
@@ -30,6 +30,8 @@ function pageFor(route: string): Page {
   if (route === '/library') return { name: 'library' }
   if (route === '/settings') return { name: 'settings', section: 'engine' }
   if (route === '/settings/data') return { name: 'settings', section: 'data' }
+  const pageLink = pageLinkFromRoute(route)
+  if (pageLink !== undefined) return { name: 'create', pageLink }
   return { name: 'create', sourceId: route.match(/^\/new\/([\w-]+)$/)?.[1] }
 }
 
@@ -100,7 +102,11 @@ export default function App({ updateReady, applyUpdate }: { updateReady: boolean
   if (page.name === 'set') view = <SetView key={page.setId} setId={page.setId} tab={page.tab} />
   else if (page.name === 'library') view = <Library />
   else if (page.name === 'settings') view = <Settings section={page.section} />
-  else view = <Create key={page.sourceId ?? 'new'} sourceId={page.sourceId} />
+  else {
+    // A page link gets its own key, so leaving it for #/ starts afresh.
+    const key = page.sourceId ?? (page.pageLink === undefined ? 'new' : `page:${page.pageLink}`)
+    view = <Create key={key} sourceId={page.sourceId} pageLink={page.pageLink} />
+  }
 
   const watchingRun = page.name === 'set' && page.setId === generation.setId
 

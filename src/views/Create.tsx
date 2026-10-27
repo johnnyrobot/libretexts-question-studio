@@ -5,7 +5,7 @@ import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
 import { TocPicker } from '../components/TocPicker'
 import { loadCatalog, searchCatalog, type CatalogBook } from '../lib/content/catalog'
-import { getTree, LIBRARIES, type Library, type TocNode } from '../lib/content/libretexts'
+import { getTree, LIBRARIES, parsePageLink, type Library, type TocNode } from '../lib/content/libretexts'
 import {
   buildLibreTextsSource,
   buildPastedSource,
@@ -22,9 +22,10 @@ import { navigate } from '../router'
 type SourceTab = 'search' | 'url' | 'paste'
 
 // Step 1 lives at #/, step 2 at #/new/<sourceId>, so Back returns to the
-// source choice and a saved source can be reused for a fresh set.
-export function Create({ sourceId }: { sourceId?: string }) {
-  return sourceId ? <ConfigureStep sourceId={sourceId} /> : <SourceStep />
+// source choice and a saved source can be reused for a fresh set. A link to
+// the app that names a page (#/page/<library>-<id>) opens step 1 on that page.
+export function Create({ sourceId, pageLink }: { sourceId?: string; pageLink?: string }) {
+  return sourceId ? <ConfigureStep sourceId={sourceId} /> : <SourceStep pageLink={pageLink} />
 }
 
 // ---------------------------------------------------------------- step 1
@@ -35,8 +36,8 @@ const SOURCE_TABS = [
   ['paste', 'Paste text'],
 ] as const
 
-function SourceStep() {
-  const [tab, setTab] = useState<SourceTab>('search')
+function SourceStep({ pageLink }: { pageLink?: string }) {
+  const [tab, setTab] = useState<SourceTab>(pageLink === undefined ? 'search' : 'url')
   // Focus starts in the search box, but arrowing back to its tab later must
   // leave focus on the tab.
   const [switched, setSwitched] = useState(false)
@@ -60,7 +61,7 @@ function SourceStep() {
       />
       <TabPanel className="tab-panel" panelId="source-panel" selected={tab}>
         {tab === 'search' && <BookSearch onSource={onSource} autoFocus={!switched} />}
-        {tab === 'url' && <UrlSource onSource={onSource} />}
+        {tab === 'url' && <UrlSource onSource={onSource} pageLink={pageLink} />}
         {tab === 'paste' && <PasteSource onSource={onSource} />}
       </TabPanel>
     </>
@@ -224,12 +225,41 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
   )
 }
 
-function UrlSource({ onSource }: { onSource: (source: StoredSource) => void }) {
-  const [url, setUrl] = useState('')
+// The page a link to the app names, as the URL the link tab looks up.
+function linkedPage(pageLink: string): { url: string } | { error: string } {
+  try {
+    const { library, id } = parsePageLink(pageLink)
+    return { url: `https://${library}.libretexts.org/@go/page/${id}` }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) => void; pageLink?: string }) {
+  const [linked] = useState(() => (pageLink === undefined ? null : linkedPage(pageLink)))
+  const [url, setUrl] = useState(linked && 'url' in linked ? linked.url : '')
   const [resolved, setResolved] = useState<ResolvedUrl | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // A linked page is looked up as soon as the tab opens, so the tab starts busy.
+  const [busy, setBusy] = useState(linked !== null && 'url' in linked)
+  const [error, setError] = useState<string | null>(linked && 'error' in linked ? linked.error : null)
   const [progress, setProgress] = useState('')
+
+  useEffect(() => {
+    if (!linked || !('url' in linked)) return
+    const controller = new AbortController()
+    const { signal } = controller
+    resolveUrl(linked.url, signal)
+      .then((result) => {
+        if (!signal.aborted) setResolved(result)
+      })
+      .catch((e) => {
+        if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
+      })
+      .finally(() => {
+        if (!signal.aborted) setBusy(false)
+      })
+    return () => controller.abort()
+  }, [linked])
 
   const lookUp = async () => {
     setBusy(true)
@@ -285,6 +315,8 @@ function UrlSource({ onSource }: { onSource: (source: StoredSource) => void }) {
             required
             placeholder="https://chem.libretexts.org/Bookshelves/…"
             value={url}
+            // Fixed while busy, so the page found is always the one this link names.
+            readOnly={busy}
             onChange={(e) => setUrl(e.target.value)}
           />
         </label>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getPageInfo, getTree } from './libretexts'
+import { getPageInfo, getTree, parsePageLink } from './libretexts'
 
 // What LibreTexts' proxy answers, with fetch stubbed: nothing here reaches the
 // network.
@@ -65,5 +65,27 @@ describe('a page that is not there', () => {
     // Made up in Deki's shape, like the refusals above.
     answer(JSON.stringify({ exception: 'MindTouch.Dream.DreamNotFoundException', message: 'Page not found' }))
     await expect(getTree('chem', '999999')).rejects.toThrow(NOT_FOUND)
+  })
+})
+
+describe('a page named by a link to the app', () => {
+  it('reads <library>-<id>', () => {
+    expect(parsePageLink('human-378488')).toEqual({ library: 'human', id: '378488' })
+  })
+
+  it('ignores case and surrounding spaces', () => {
+    expect(parsePageLink(' Chem-501189 ')).toEqual({ library: 'chem', id: '501189' })
+  })
+
+  it('names the libraries when the library is not one of them', () => {
+    expect(() => parsePageLink('history-378488')).toThrow(
+      '“history” is not a LibreTexts library. Use one of bio, biz, chem, eng, espanol, geo, human, k12, math, med, phys, socialsci, stats, workforce.',
+    )
+  })
+
+  it.each(['human', 'human-', '378488', 'human-37a8', 'human-378488-2', ''])('says what a page link looks like for %j', (input) => {
+    expect(() => parsePageLink(input)).toThrow(
+      'That link does not name a LibreTexts page. A page link ends in ?page=<library>-<page number>, such as ?page=human-378488.',
+    )
   })
 })
