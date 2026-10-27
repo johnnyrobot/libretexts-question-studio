@@ -60,6 +60,16 @@ export function loadCatalog(): Promise<{ books: CatalogBook[]; generatedAt: stri
   return catalog
 }
 
+// The catalog's entry for a book, or null when the catalog has none or could
+// not be loaded.
+export async function findCatalogBook(id: string): Promise<CatalogBook | null> {
+  try {
+    return (await loadCatalog()).books.find((book) => book.id === id) ?? null
+  } catch {
+    return null
+  }
+}
+
 const fold = (value: string) =>
   value
     .normalize('NFKD')

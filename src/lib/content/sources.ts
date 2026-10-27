@@ -1,4 +1,5 @@
 import { db, newId, type SourcePage, type StoredSource } from '../storage/db'
+import { findCatalogBook } from './catalog'
 import {
   bookCoverPath,
   getContentsHtml,
@@ -18,7 +19,8 @@ import { normalizeHtml, normalizePlainText, withPageNumbers } from './normalize'
 export interface ResolvedUrl {
   page: PageInfo
   tree: TocNode
-  book: { id: string; title: string } | null
+  // The book the page is in, with its authors when the catalog knows them.
+  book: { id: string; title: string; author: string | null } | null
 }
 
 // A pasted URL may point at a page, a chapter, or a whole book; its tree tells
@@ -32,7 +34,8 @@ export async function resolveUrl(input: string, signal?: AbortSignal): Promise<R
   if (cover) {
     try {
       const coverInfo = cover === page.path ? page : await getPageInfo({ library: page.library, path: cover }, signal)
-      book = { id: `${page.library}-${coverInfo.id}`, title: coverInfo.title }
+      const id = `${page.library}-${coverInfo.id}`
+      book = { id, title: coverInfo.title, author: (await findCatalogBook(id))?.author || null }
     } catch {
       book = null
     }
