@@ -50,7 +50,8 @@ parsing and its JSON-escape guard, math formulas and versions, the arithmetic
 check of numerical explanations, the LibreTexts page normaliser and book
 lookup, the QTI exporter with its author name and source credit, export
 history, backup and restore, the question editor, the OpenAI answer-check
-setting, and links that open the app on a LibreTexts page.
+setting, links that open the app on a LibreTexts page, and a second tab
+leaving a set alone while another tab is still writing it.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint, the tests and the build,
 but not the ADAPT importer check below; run that one locally.

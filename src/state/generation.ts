@@ -110,12 +110,12 @@ export function cancelGeneration(): void {
 // A set's generation holds this lock from start to finish, in whichever tab
 // runs it: Web Locks are shared by every tab of the app. Browsers offer them
 // only on https and localhost.
-const generationLock = (setId: string) => `generation:${setId}`
+const generationLockName = (setId: string) => `generation:${setId}`
 const webLocks = (): LockManager | undefined => navigator.locks ?? undefined
 
 function whileGenerating(setId: string, run: () => Promise<void>): Promise<void> {
   const locks = webLocks()
-  return locks ? locks.request(generationLock(setId), run) : run()
+  return locks ? locks.request(generationLockName(setId), run) : run()
 }
 
 // A set still marked "generating" when the app starts was cut off by a closed
@@ -128,7 +128,12 @@ export async function markInterruptedSets(): Promise<void> {
   await Promise.all(
     generating.map((set) =>
       locks
-        ? locks.request(generationLock(set.id), { ifAvailable: true }, (lock) => (lock ? markInterrupted(set.id) : undefined))
+        ? locks.request(generationLockName(set.id), { ifAvailable: true }, async (lock) => {
+            if (lock) return markInterrupted(set.id)
+            // Marked once the other tab lets go, in case it is closed before it
+            // finishes; the app opens meanwhile.
+            void locks.request(generationLockName(set.id), () => markInterrupted(set.id)).catch(() => undefined)
+          })
         : markInterrupted(set.id),
     ),
   )
