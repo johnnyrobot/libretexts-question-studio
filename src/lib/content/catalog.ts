@@ -71,12 +71,12 @@ export async function findCatalogBook(id: string): Promise<CatalogBook | null> {
 }
 
 // The start of a page's path that is the catalog book the page is in, or null
-// when the catalog lists no book above it for certain or could not be loaded.
-// Books sit at different depths under courses and shelves. A few entries are a
-// single page of a book, so the deepest entry of more than one page wins, then
-// the deepest of any size. A few others are a course or campus with books of
-// its own listed inside it: a page under one, outside those books, may be in a
-// book the catalog does not list, so it gets none.
+// when the catalog lists no book above it or could not be loaded. Books sit at
+// different depths under courses and shelves. A few entries are a course with
+// books inside it, or a single page of a book, so the deepest entry of more
+// than one page wins, then the deepest of any size. A few are a whole campus
+// (Courses/<campus>), which is never the book: a page under one may be in a
+// book the catalog does not list.
 export async function catalogBookPath(library: Library, path: string): Promise<string | null> {
   let books: CatalogBook[]
   try {
@@ -88,15 +88,12 @@ export async function catalogBookPath(library: Library, path: string): Promise<s
   const segments = path.split('/').filter(Boolean)
   const above = segments
     .map((_, index) => segments.slice(0, index + 1).join('/'))
-    .filter((prefix) => byPath.has(prefix.toLowerCase()))
+    .filter((prefix) => byPath.has(prefix.toLowerCase()) && !isCampus(prefix))
     .reverse()
-  const book = above.find((prefix) => manyPages(byPath.get(prefix.toLowerCase())!)) ?? above[0]
-  if (!book) return null
-  const holdsBooks = [...byPath].some(([key, other]) => key.startsWith(`${book.toLowerCase()}/`) && manyPages(other))
-  return holdsBooks ? null : book
+  return above.find((prefix) => (byPath.get(prefix.toLowerCase())!.pages ?? 0) > 1) ?? above[0] ?? null
 }
 
-const manyPages = (book: CatalogBook) => (book.pages ?? 0) > 1
+const isCampus = (path: string) => /^Courses\/[^/]+$/i.test(path)
 
 // A catalog URL's path as a page path names it, lower-cased: Deki matches
 // paths without regard to case.

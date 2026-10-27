@@ -19,7 +19,7 @@ export interface ResolvedUrl {
   page: PageInfo
   tree: TocNode
   // The book the page is in, with its authors when the catalog knows them, or
-  // null when the catalog does not list it for certain.
+  // null when the catalog does not list it or its cover page could not be read.
   book: (SourceBook & { id: string }) | null
 }
 
