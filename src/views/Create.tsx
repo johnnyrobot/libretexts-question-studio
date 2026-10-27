@@ -554,19 +554,16 @@ function clamp(value: number, min: number, max: number) {
   return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : min
 }
 
-// What a source is credited to: the smallest part of the tree holding every
-// page picked (a chapter, a section or one page), so a chapter picked from a
-// book is named and linked as that chapter, or the whole work, under the title
-// and link given for it, when the pages come from across the tree.
+// A source is credited to the part of the tree holding every page picked; the
+// whole tree goes by the title and link the caller gives it.
 function creditFor(
   tree: TocNode,
   pages: TocNode[],
-  work: { title: string; url: string; isBook: boolean },
+  whole: { title: string; url: string; isBook: boolean },
 ): { title: string; url: string; kind: StoredSource['kind'] } {
   const part = partHolding(tree, pages)
-  if (part.children.length === 0) return { title: part.title, url: part.url, kind: 'page' }
-  if (part === tree) return { title: work.title, url: work.url, kind: work.isBook ? 'book' : 'section' }
-  return { title: part.title, url: part.url, kind: 'section' }
+  const kind = part.children.length === 0 ? 'page' : part === tree && whole.isBook ? 'book' : 'section'
+  return part === tree ? { title: whole.title, url: whole.url, kind } : { title: part.title, url: part.url, kind }
 }
 
 function licenseFromCatalog(code: string): StoredSource['license'] {

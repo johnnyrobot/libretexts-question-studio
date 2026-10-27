@@ -247,6 +247,7 @@ describe('crediting the book a source comes from', () => {
     await act(async () => button('Continue with 1 page')!.click())
     await settle()
     const [source] = await db.sources.toArray()
+    expect(source).toMatchObject({ title: PAGE.title, url: PAGE['uri.ui'], kind: 'page' })
     expect(source.book).toEqual({
       title: 'HOLA Spanish 3 (Tseng Rosales and Lemari)',
       author: 'Beatrice Tseng, Karla Lemari, Lisbeth Rosales',

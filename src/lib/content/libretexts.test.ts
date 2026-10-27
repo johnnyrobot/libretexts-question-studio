@@ -102,7 +102,7 @@ describe('the part of a book that holds the pages picked', () => {
     ['some pages of one chapter', ['1.1.1', '1.2'], '1'],
     ['a whole chapter', ['1.1.1', '1.1.2', '1.2'], '1'],
     ['pages from across chapters', ['1.2', '2.1'], 'book'],
-  ])('is the narrowest part around %s', (_, picked, part) => {
+  ])('is the smallest part around %s', (_, picked, part) => {
     expect(partHolding(BOOK, picked.map((id) => node(id))).id).toBe(part)
   })
 })
