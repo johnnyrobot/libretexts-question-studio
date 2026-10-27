@@ -1,0 +1,31 @@
+# Lint, unit tests and the production build for every pull request and every
+# push to main. `npm run verify:adapt` stays a local check: it needs ADAPT's PHP
+# source (../adapt) and @php-wasm/node, which this runner does not have.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

@@ -49,8 +49,11 @@ check of numerical explanations, the LibreTexts page normaliser, the QTI
 exporter and export history, backup and restore, the question editor, and the
 OpenAI answer-check setting.
 
+GitHub Actions (`.github/workflows/ci.yml`) runs lint, the tests and the build
+on every pull request and every push to main.
+
 To check exported packages against ADAPT's real importer (PHP 7.4 compiled to
-WebAssembly; needs the `../adapt` checkout):
+WebAssembly; needs the `../adapt` checkout), run this locally; CI does not:
 
 ```bash
 npm install --prefix /tmp/php-wasm @php-wasm/node   # once, ~470 MB
