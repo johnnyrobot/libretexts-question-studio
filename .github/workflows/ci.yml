@@ -1,6 +1,5 @@
-# Lint, unit tests and the production build for every pull request and every
-# push to main. `npm run verify:adapt` stays a local check: it needs ADAPT's PHP
-# source (../adapt) and @php-wasm/node, which this runner does not have.
+# `npm run verify:adapt` stays a local check: it needs ADAPT's PHP source
+# (../adapt, a private repo) and @php-wasm/node, which this runner does not have.
 name: CI
 
 on:
@@ -11,21 +10,29 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels its older run; every commit on main
+# keeps its own result.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
+      # onnxruntime-node (from @huggingface/transformers) would otherwise download
+      # its CUDA build from nuget.org on Linux; the app runs ONNX in the browser.
       - run: npm ci
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
       - run: npm run lint
       - run: npm test
       - run: npm run build
