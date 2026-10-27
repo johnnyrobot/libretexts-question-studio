@@ -5,7 +5,7 @@ import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
 import { TocPicker } from '../components/TocPicker'
 import { loadCatalog, searchCatalog, type CatalogBook } from '../lib/content/catalog'
-import { getTree, LIBRARIES, licenseLabel, parsePageLink, type Library, type TocNode } from '../lib/content/libretexts'
+import { getTree, LIBRARIES, licenseLabel, parsePageLink, partHolding, type Library, type TocNode } from '../lib/content/libretexts'
 import {
   buildLibreTextsSource,
   buildPastedSource,
@@ -109,16 +109,16 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
   }
 
   const confirm = async (pages: TocNode[]) => {
-    if (!book) return
+    if (!book || !tree) return
     setBusy(true)
     setError(null)
     try {
       onSource(
         await buildLibreTextsSource({
           library: book.library,
-          title: pages.length === 1 ? pages[0].title : book.title,
-          url: pages.length === 1 ? pages[0].url : book.url,
-          kind: pages.length === 1 ? 'page' : 'section',
+          // Pages from across the book are credited to it under the title the
+          // catalog gives it.
+          ...creditFor(tree, pages, { title: book.title, url: book.url, isBook: true }),
           pages,
           license: licenseFromCatalog(book.license),
           book: { title: book.title, author: book.author || null },
@@ -280,13 +280,11 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
     setBusy(true)
     setError(null)
     try {
-      const isBook = resolved.book && `${resolved.page.library}-${resolved.page.id}` === resolved.book.id
+      const isBook = resolved.book?.id === `${resolved.page.library}-${resolved.page.id}`
       onSource(
         await buildLibreTextsSource({
           library: resolved.page.library,
-          title: pages.length === 1 ? pages[0].title : resolved.page.title,
-          url: pages.length === 1 ? pages[0].url : resolved.page.url,
-          kind: resolved.tree.children.length === 0 ? 'page' : isBook ? 'book' : 'section',
+          ...creditFor(resolved.tree, pages, { title: resolved.page.title, url: resolved.page.url, isBook }),
           pages,
           license: resolved.page.license,
           book: resolved.book ? { title: resolved.book.title, author: resolved.book.author } : undefined,
@@ -554,6 +552,18 @@ function bookPathHint(url: string): string {
 
 function clamp(value: number, min: number, max: number) {
   return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : min
+}
+
+// A source is credited to the part of the tree holding every page picked; the
+// whole tree goes by the title and link the caller gives it.
+function creditFor(
+  tree: TocNode,
+  pages: TocNode[],
+  whole: { title: string; url: string; isBook: boolean },
+): { title: string; url: string; kind: StoredSource['kind'] } {
+  const part = partHolding(tree, pages)
+  const kind = part.children.length === 0 ? 'page' : part === tree && whole.isBook ? 'book' : 'section'
+  return part === tree ? { title: whole.title, url: whole.url, kind } : { title: part.title, url: part.url, kind }
 }
 
 function licenseFromCatalog(code: string): StoredSource['license'] {

@@ -156,6 +156,11 @@ describe('the credit for the source', () => {
       `Questions based on Lecturas intermedias by Erica Brown &amp; Elizabeth Small (${BOOK_URL}). License: CC BY-NC-SA 4.0.`,
     ],
     [
+      'a chapter of a book',
+      { ...PAGE, kind: 'section', title: '4: La literatura', url: `${BOOK_URL}/04`, book: BOOK },
+      `Questions based on 4: La literatura (${BOOK_URL}/04), from Lecturas intermedias by Erica Brown &amp; Elizabeth Small. License: CC BY-NC-SA 4.0.`,
+    ],
+    [
       'a book the catalog names no author for',
       { ...PAGE, book: { title: 'Lecturas intermedias', author: null } },
       `Questions based on 4.2: La profecía de la gitana (${URL}), from Lecturas intermedias. License: CC BY-NC-SA 4.0.`,

@@ -224,6 +224,19 @@ export function leafPages(node: TocNode): TocNode[] {
   return node.children.flatMap(leafPages)
 }
 
+// The smallest part of a tree (the tree itself, a chapter, a section or one
+// page) that holds every page picked from it, so a source can be credited for
+// what was picked.
+export function partHolding(tree: TocNode, pages: TocNode[]): TocNode {
+  const picked = new Set(pages.map((page) => page.id))
+  let part = tree
+  for (;;) {
+    const holding = part.children.filter((child) => leafPages(child).some((leaf) => picked.has(leaf.id)))
+    if (holding.length !== 1) return part
+    part = holding[0]
+  }
+}
+
 // Front/back matter, exercise sets, summaries, and glossary-style pages rarely
 // make good sources (exercise pages would just be paraphrased), so they start
 // unticked. Titles look like "1.11: Exercises" or "2.E: Atoms (Exercises)".

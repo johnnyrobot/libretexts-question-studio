@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getPageInfo, getTree, parsePageLink } from './libretexts'
+import { getPageInfo, getTree, parsePageLink, partHolding, type TocNode } from './libretexts'
 
 // What LibreTexts' proxy answers, with fetch stubbed: nothing here reaches the
 // network.
@@ -87,5 +87,22 @@ describe('a page named by a link to the app', () => {
     expect(() => parsePageLink(input)).toThrow(
       'That link does not name a LibreTexts page. A page link ends in ?page=<library>-<page number>, such as ?page=human-378488.',
     )
+  })
+})
+
+// A book with two chapters: the first holds a section of two pages and a page
+// of its own, the second one page.
+const node = (id: string, children: TocNode[] = []): TocNode => ({ id, title: id, url: `https://example.org/${id}`, children })
+const BOOK = node('book', [node('1', [node('1.1', [node('1.1.1'), node('1.1.2')]), node('1.2')]), node('2', [node('2.1')])])
+
+describe('the part of a book that holds the pages picked', () => {
+  it.each([
+    ['one page', ['1.2'], '1.2'],
+    ['a whole section', ['1.1.1', '1.1.2'], '1.1'],
+    ['some pages of one chapter', ['1.1.1', '1.2'], '1'],
+    ['a whole chapter', ['1.1.1', '1.1.2', '1.2'], '1'],
+    ['pages from across chapters', ['1.2', '2.1'], 'book'],
+  ])('is the smallest part around %s', (_, picked, part) => {
+    expect(partHolding(BOOK, picked.map((id) => node(id))).id).toBe(part)
   })
 })
