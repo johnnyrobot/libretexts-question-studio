@@ -60,6 +60,47 @@ export function loadCatalog(): Promise<{ books: CatalogBook[]; generatedAt: stri
   return catalog
 }
 
+// The catalog's entry for a book, or null when the catalog has none or could
+// not be loaded.
+export async function findCatalogBook(id: string): Promise<CatalogBook | null> {
+  try {
+    return (await loadCatalog()).books.find((book) => book.id === id) ?? null
+  } catch {
+    return null
+  }
+}
+
+// The start of a page's path that is the catalog book the page is in, or null
+// when the catalog lists no book above it or could not be loaded. Books sit at
+// different depths under courses and shelves. A few entries are a course with
+// books inside it, or a single page of a book, so the deepest entry of more
+// than one page wins, then the deepest of any size.
+export async function catalogBookPath(library: Library, path: string): Promise<string | null> {
+  let books: CatalogBook[]
+  try {
+    books = (await loadCatalog()).books
+  } catch {
+    return null
+  }
+  const byPath = new Map(books.filter((book) => book.library === library).map((book) => [pathKey(book.url), book]))
+  const segments = path.split('/').filter(Boolean)
+  const above = segments
+    .map((_, index) => segments.slice(0, index + 1).join('/'))
+    .filter((prefix) => byPath.has(prefix.toLowerCase()))
+    .reverse()
+  return above.find((prefix) => (byPath.get(prefix.toLowerCase())!.pages ?? 0) > 1) ?? above[0] ?? null
+}
+
+// A catalog URL's path as a page path names it, lower-cased: Deki matches
+// paths without regard to case.
+function pathKey(url: string): string {
+  try {
+    return decodeURIComponent(new URL(url).pathname).split('/').filter(Boolean).join('/').toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
 const fold = (value: string) =>
   value
     .normalize('NFKD')

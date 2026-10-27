@@ -1,10 +1,11 @@
 import 'fake-indexeddb/auto'
 import { strFromU8, unzipSync } from 'fflate'
+import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { DraftOf } from '../generation/schema'
 import { compileMath } from '../math/spec'
-import { db } from '../storage/db'
+import { db, type StoredSource } from '../storage/db'
 import { numericalExpectation } from './adapt-expectations'
 import { itemIdent, mathVersion } from './canvas'
 import { exportMathVersions, exportSet } from './export'
@@ -37,6 +38,21 @@ async function seed(drafts = SAMPLE_DRAFTS) {
     })),
   )
 }
+
+async function descriptionAndManifest(blob: Blob) {
+  const entries = Object.entries(unzipSync(new Uint8Array(await blob.arrayBuffer())))
+  const text = (end: string) => strFromU8(entries.find(([path]) => path.endsWith(end))![1])
+  // The description is HTML inside XML: undo the XML escaping to read the HTML.
+  const description = /<description>([^<]*)<\/description>/
+    .exec(text('assessment_meta.xml'))![1]
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+  return { description, manifest: text('imsmanifest.xml') }
+}
+
+const sha256 = async (blob: Blob) => createHash('sha256').update(new Uint8Array(await blob.arrayBuffer())).digest('hex')
 
 async function quizzes(blob: Blob) {
   const files = unzipSync(new Uint8Array(await blob.arrayBuffer()))
@@ -82,6 +98,27 @@ describe('exportSet', () => {
     expect(meta).not.toMatch(/review/i)
   })
 
+  it('writes the same bytes as before authorship for a pasted source with no link or license, and no author', async () => {
+    // Taken on main at e1f63ef, before export authorship; change only on purpose.
+    for (const author of [undefined, '', '   ']) {
+      const set = await exportSet('set', { includeDrafts: false, randomizeMath: false, author })
+      const math = await exportMathVersions('set', false, 3, author)
+      expect(await sha256(set.zip)).toBe('92f8affef628deff8399c3c474b0eefff67cc96e646a973bd39f5262919b07a3')
+      expect(await sha256(math.zip)).toBe('abd9ea8fe5ecfead561791564660f35385bea9ce431152cbbb288fcb5f5b3f40')
+    }
+  })
+
+  it('names the question author for students and in the manifest', async () => {
+    for (const record of [
+      await exportSet('set', { includeDrafts: false, randomizeMath: false, author: '  Ana Ruiz ' }),
+      await exportMathVersions('set', false, 3, '  Ana Ruiz '),
+    ]) {
+      const { description, manifest } = await descriptionAndManifest(record.zip)
+      expect(description).toBe('<div><p>Questions based on Leaves.</p><p>Question author: Ana Ruiz</p></div>')
+      expect(manifest).toContain('\nFN:Ana Ruiz\n')
+    }
+  })
+
   it('leaves math questions out of the main quiz when they are randomized', async () => {
     const record = await exportSet('set', { includeDrafts: false, randomizeMath: true })
     const [quiz] = await quizzes(record.zip)
@@ -93,6 +130,66 @@ describe('exportSet', () => {
   it('says where to go when only math questions are left', async () => {
     await seed([MATH])
     await expect(exportSet('set', { includeDrafts: false, randomizeMath: true })).rejects.toThrow(/Download math versions/)
+  })
+})
+
+describe('the credit for the source', () => {
+  const URL = 'https://human.libretexts.org/@go/page/378488'
+  const PAGE: StoredSource = {
+    id: 's', kind: 'page', title: '4.2: La profecía de la gitana', library: 'human', url: URL,
+    license: { code: 'ccbyncsa', label: 'CC BY-NC-SA 4.0', version: '4.0' }, pages: [], createdAt: 1,
+  }
+  const BOOK = { title: 'Lecturas intermedias', author: 'Erica Brown & Elizabeth Small' }
+  const BOOK_URL = 'https://human.libretexts.org/Bookshelves/Languages/Spanish/Lecturas_intermedias'
+
+  beforeEach(() => seed())
+
+  it.each<[string, StoredSource, string]>([
+    [
+      'a page of a book',
+      { ...PAGE, book: BOOK },
+      `Questions based on 4.2: La profecía de la gitana (${URL}), from Lecturas intermedias by Erica Brown &amp; Elizabeth Small. License: CC BY-NC-SA 4.0.`,
+    ],
+    [
+      'a whole book',
+      { ...PAGE, kind: 'book', title: 'Lecturas intermedias', url: BOOK_URL, book: BOOK },
+      `Questions based on Lecturas intermedias by Erica Brown &amp; Elizabeth Small (${BOOK_URL}). License: CC BY-NC-SA 4.0.`,
+    ],
+    [
+      'a book the catalog names no author for',
+      { ...PAGE, book: { title: 'Lecturas intermedias', author: null } },
+      `Questions based on 4.2: La profecía de la gitana (${URL}), from Lecturas intermedias. License: CC BY-NC-SA 4.0.`,
+    ],
+    [
+      'a page with no license',
+      { ...PAGE, license: null, book: BOOK },
+      `Questions based on 4.2: La profecía de la gitana (${URL}), from Lecturas intermedias by Erica Brown &amp; Elizabeth Small.`,
+    ],
+    [
+      'a source saved before the app kept its book',
+      PAGE,
+      `Questions based on 4.2: La profecía de la gitana (${URL}). License: CC BY-NC-SA 4.0.`,
+    ],
+    [
+      'a book picked when the app kept a license code with no label as its own label',
+      { ...PAGE, license: { code: 'mixed', label: 'mixed', version: null }, book: BOOK },
+      `Questions based on 4.2: La profecía de la gitana (${URL}), from Lecturas intermedias by Erica Brown &amp; Elizabeth Small.`,
+    ],
+  ])('credits %s with what is known', async (_, source, credit) => {
+    await db.sources.put(source)
+    const record = await exportSet('set', { includeDrafts: false, randomizeMath: false })
+    expect((await descriptionAndManifest(record.zip)).description).toBe(`<div><p>${credit}</p></div>`)
+  })
+
+  it('puts the source credit and the question author in the zip together', async () => {
+    await db.sources.put({ ...PAGE, book: BOOK })
+    const record = await exportSet('set', { includeDrafts: false, randomizeMath: false, author: 'Ana Ruiz' })
+    const { description, manifest } = await descriptionAndManifest(record.zip)
+    expect(description).toBe(
+      `<div><p>Questions based on 4.2: La profecía de la gitana (${URL}), from Lecturas intermedias by Erica Brown &amp; Elizabeth Small. License: CC BY-NC-SA 4.0.</p><p>Question author: Ana Ruiz</p></div>`,
+    )
+    expect(manifest).toContain('<value>author</value>')
+    expect(manifest).toContain('\nFN:Ana Ruiz\n')
   })
 })
 

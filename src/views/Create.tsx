@@ -5,7 +5,7 @@ import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
 import { TocPicker } from '../components/TocPicker'
 import { loadCatalog, searchCatalog, type CatalogBook } from '../lib/content/catalog'
-import { getTree, LIBRARIES, parsePageLink, type Library, type TocNode } from '../lib/content/libretexts'
+import { getTree, LIBRARIES, licenseLabel, parsePageLink, type Library, type TocNode } from '../lib/content/libretexts'
 import {
   buildLibreTextsSource,
   buildPastedSource,
@@ -116,11 +116,12 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
       onSource(
         await buildLibreTextsSource({
           library: book.library,
-          title: pages.length === 1 ? pages[0].title : (tree?.title ?? book.title),
+          title: pages.length === 1 ? pages[0].title : book.title,
           url: pages.length === 1 ? pages[0].url : book.url,
           kind: pages.length === 1 ? 'page' : 'section',
           pages,
           license: licenseFromCatalog(book.license),
+          book: { title: book.title, author: book.author || null },
           onProgress: (done, total) => setProgress(`Loading page ${done} of ${total}…`),
         }),
       )
@@ -288,6 +289,7 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
           kind: resolved.tree.children.length === 0 ? 'page' : isBook ? 'book' : 'section',
           pages,
           license: resolved.page.license,
+          book: resolved.book ? { title: resolved.book.title, author: resolved.book.author } : undefined,
           onProgress: (done, total) => setProgress(`Loading page ${done} of ${total}…`),
         }),
       )
@@ -555,18 +557,8 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function licenseFromCatalog(code: string): StoredSource['license'] {
-  if (!code) return null
-  const labels: Record<string, string> = {
-    ccby: 'CC BY',
-    ccbysa: 'CC BY-SA',
-    ccbync: 'CC BY-NC',
-    ccbyncsa: 'CC BY-NC-SA',
-    ccbynd: 'CC BY-ND',
-    ccbyncnd: 'CC BY-NC-ND',
-    publicdomain: 'Public domain',
-    gnu: 'GNU GPL',
-    gnufdl: 'GNU FDL',
-    arr: 'All rights reserved',
-  }
-  return { code, label: labels[code] ?? code, version: null }
+  // Like a page's license tags, a code with no label (such as "mixed") names
+  // no one license, so it is left for the instructor to fill in.
+  const label = licenseLabel(code)
+  return label ? { code, label, version: null } : null
 }

@@ -46,7 +46,13 @@ export interface QuizPackageInput {
   pointsPerItem?: number
 }
 
-export function buildQuizPackage(quizzes: QuizPackageInput[]): Uint8Array {
+export interface PackageOptions {
+  // Who wrote the questions. ADAPT ignores the manifest's metadata, so the
+  // export also names them in each quiz's description.
+  author?: string
+}
+
+export function buildQuizPackage(quizzes: QuizPackageInput[], options: PackageOptions = {}): Uint8Array {
   if (quizzes.length === 0) throw new Error('Nothing to export.')
   const files: Record<string, Uint8Array> = {}
   const resources: string[] = []
@@ -60,23 +66,48 @@ export function buildQuizPackage(quizzes: QuizPackageInput[]): Uint8Array {
       `<resource identifier="${dir}_meta" type="associatedcontent/imscc_xmlv1p1/learning-application-resource" href="${dir}/assessment_meta.xml">\n<file href="${dir}/assessment_meta.xml"/>\n</resource>`,
     )
   }
-  files['imsmanifest.xml'] = strToU8(buildManifestXml(ident(quizzes[0].id) + '_manifest', resources))
+  files['imsmanifest.xml'] = strToU8(buildManifestXml(ident(quizzes[0].id) + '_manifest', resources, options.author))
   // A fixed local-time stamp keeps the archive byte-stable for the same content
   // (zip stores local DOS time, so a UTC date would shift with the time zone).
   return zipSync(files, { level: 9, mtime: new Date(2000, 0, 1) })
 }
 
-function buildManifestXml(identifier: string, resources: string[]): string {
+function buildManifestXml(identifier: string, resources: string[], author = ''): string {
+  // With no author the manifest stays exactly as it was before authorship.
+  const lom = author.trim() ? `\n${authorLom(author)}` : ''
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     `<manifest identifier="${identifier}" xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1 http://www.imsglobal.org/xsd/imscp_v1p1.xsd">`,
-    '<metadata>\n<schema>IMS Content</schema>\n<schemaversion>1.1.3</schemaversion>\n</metadata>',
+    `<metadata>\n<schema>IMS Content</schema>\n<schemaversion>1.1.3</schemaversion>${lom}\n</metadata>`,
     '<organizations/>',
     '<resources>',
     ...resources,
     '</resources>',
     '</manifest>',
     '',
+  ].join('\n')
+}
+
+// IEEE LOM in its own XML binding (IEEE 1484.12.3), whose lom/lifeCycle/
+// contribute names belong to that namespace and not to IMS MD 1.2's (Canvas's
+// exports mix the two). The block declares the namespace itself, so the
+// manifest element is unchanged. The author is a contributor with the LOM role
+// "author", named by a vCard 3.0: FN escapes \ , and ;, and the required N is
+// left empty rather than guessed.
+function authorLom(author: string): string {
+  const name = oneLine(author).replace(/[\\,;]/g, (c) => `\\${c}`)
+  return [
+    '<lom xmlns="http://ltsc.ieee.org/xsd/LOM">',
+    '<lifeCycle>',
+    '<contribute>',
+    '<role>',
+    '<source>LOMv1.0</source>',
+    '<value>author</value>',
+    '</role>',
+    `<entity>BEGIN:VCARD\nVERSION:3.0\nFN:${xml(name)}\nN:;;;;\nEND:VCARD</entity>`,
+    '</contribute>',
+    '</lifeCycle>',
+    '</lom>',
   ].join('\n')
 }
 

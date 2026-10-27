@@ -18,6 +18,12 @@ export interface SourceLicense {
   version: string | null
 }
 
+// A book as the export credits it: its title and, when known, its authors.
+export interface SourceBook {
+  title: string
+  author: string | null
+}
+
 export interface StoredSource {
   id: string
   kind: 'page' | 'section' | 'book' | 'paste'
@@ -25,6 +31,9 @@ export interface StoredSource {
   library: string | null
   url: string | null
   license: SourceLicense | null
+  // The book a LibreTexts source comes from, for crediting it. Sources saved
+  // before the app kept it have none.
+  book?: SourceBook
   pages: SourcePage[]
   createdAt: number
 }

@@ -2,7 +2,8 @@
 import 'fake-indexeddb/auto'
 import { act, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { db } from '../lib/storage/db'
 import { Create } from './Create'
 
 declare global {
@@ -22,7 +23,39 @@ const PAGE = {
 const BOOK = { '@id': '378400', title: 'HOLA Spanish 3 (Tseng Rosales and Lemari)', path: { '#text': 'Bookshelves/Languages/Spanish' } }
 const TREE = { page: { '@id': '378488', title: PAGE.title, 'uri.ui': PAGE['uri.ui'], subpages: '' } }
 
-const found = (target: string) => (target.includes('/tree') ? TREE : target.includes('/pages/=') ? BOOK : PAGE)
+const CONTENTS = { body: '<p>Melquíades llegó a Macondo con una tribu de gitanos que vendían imanes y lupas.</p>' }
+// The bundled catalog, cut down to the book above, a book listed under
+// "mixed", a code that is not a license, and one under CK-12's own license.
+// The app loads it once per test file.
+const CATALOG = {
+  generatedAt: '2026-10-06T03:25:33.782Z',
+  books: [
+    {
+      id: 'human-378400',
+      t: '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)',
+      a: 'Beatrice Tseng, Karla Lemari, Lisbeth Rosales',
+      l: 'human',
+      s: 'Languages',
+      c: '',
+      lic: 'ccbyncsa',
+      u: 'https://human.libretexts.org/Bookshelves/Languages/Spanish',
+      n: 1,
+    },
+    { id: 'human-378401', t: 'Lecturas mixtas', a: '', l: 'human', s: '', c: '', lic: 'mixed', u: 'https://human.libretexts.org/Lecturas', n: 1 },
+    { id: 'human-378402', t: 'Álgebra básica', a: 'CK12', l: 'human', s: '', c: '', lic: 'ck12', u: 'https://human.libretexts.org/Algebra', n: 1 },
+  ],
+}
+
+const found = (target: string) =>
+  target.endsWith('catalog.json')
+    ? CATALOG
+    : target.includes('/contents')
+      ? CONTENTS
+      : target.includes('/tree')
+        ? TREE
+        : target.includes('/pages/=')
+          ? BOOK
+          : PAGE
 
 function libreTexts(answer: (target: string) => unknown = found) {
   const fetch = vi.fn(async (url: string) => new Response(JSON.stringify(await answer(url))))
@@ -34,6 +67,10 @@ let cleanup: (() => void) | null = null
 afterEach(() => {
   cleanup?.()
   vi.unstubAllGlobals()
+})
+
+beforeEach(async () => {
+  await db.sources.clear()
 })
 
 // Lets the stubbed lookups reach the page.
@@ -136,5 +173,79 @@ describe('opening the app with no page link', () => {
       container.remove()
     }
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Find a book')
+  })
+})
+
+const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)
+
+// Finds the book in book search, ticks its content pages and continues.
+async function chooseInBookSearch(continueLabel: string, title = '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)') {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  act(() => root.render(<Create />))
+  cleanup = () => {
+    act(() => root.unmount())
+    container.remove()
+  }
+  await settle()
+  const search = container.querySelector<HTMLInputElement>('input[type="search"]')!
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, title)
+  await act(async () => search.dispatchEvent(new Event('input', { bubbles: true })))
+  const result = container.querySelector<HTMLButtonElement>('.result-list button')!
+  expect(result.querySelector('strong')?.textContent).toBe(title)
+  await act(async () => result.click())
+  await settle()
+  await act(async () => button('Select all content')!.click())
+  await act(async () => button(continueLabel)!.click())
+  await settle()
+}
+
+describe('crediting the book a source comes from', () => {
+  it('keeps the book and its authors for a page from a link', async () => {
+    libreTexts()
+    await openLink('human-378488')
+    await act(async () => button('Continue with 1 page')!.click())
+    await settle()
+    const [source] = await db.sources.toArray()
+    expect(source.book).toEqual({
+      title: 'HOLA Spanish 3 (Tseng Rosales and Lemari)',
+      author: 'Beatrice Tseng, Karla Lemari, Lisbeth Rosales',
+    })
+  })
+
+  it('keeps the book and its authors for pages chosen in book search', async () => {
+    libreTexts()
+    await chooseInBookSearch('Continue with 1 page')
+    const [source] = await db.sources.toArray()
+    expect(source.book).toEqual({
+      title: '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)',
+      author: 'Beatrice Tseng, Karla Lemari, Lisbeth Rosales',
+    })
+  })
+
+  it('names pages from across a book in book search by the book’s own title', async () => {
+    const chapter = (id: string) => ({ '@id': id, title: `Chapter ${id}`, 'uri.ui': `https://human.libretexts.org/${id}`, subpages: '' })
+    libreTexts((target) =>
+      target.includes('/tree') ? { page: { '@id': '378400', title: BOOK.title, subpages: { page: [chapter('1'), chapter('2')] } } } : found(target),
+    )
+    await chooseInBookSearch('Continue with 2 pages')
+    const [source] = await db.sources.toArray()
+    expect(source.title).toBe('¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)')
+    expect(source.title).toBe(source.book?.title)
+  })
+
+  it('names no license for a book the catalog lists under a code that is not a license', async () => {
+    libreTexts()
+    await chooseInBookSearch('Continue with 1 page', 'Lecturas mixtas')
+    const [source] = await db.sources.toArray()
+    expect(source.license).toBeNull()
+  })
+
+  it('names CK-12’s own license for a book the catalog lists under it', async () => {
+    libreTexts()
+    await chooseInBookSearch('Continue with 1 page', 'Álgebra básica')
+    const [source] = await db.sources.toArray()
+    expect(source.license).toEqual({ code: 'ck12', label: 'CK-12 License', version: null })
   })
 })

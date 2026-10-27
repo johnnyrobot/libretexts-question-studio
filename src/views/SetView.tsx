@@ -10,7 +10,16 @@ import { localModelLabel } from '../lib/llm/local-models'
 import { ITEM_TYPE_LABELS } from '../lib/generation/schema'
 import { DEFAULT_VERSIONS, MAX_VERSIONS } from '../lib/math/spec'
 import { downloadBlob, exportMathVersions, exportSet } from '../lib/qti/export'
-import { db, deleteSet, type ItemStatus, type StoredItem, type StoredSet, type StoredSource } from '../lib/storage/db'
+import {
+  db,
+  deleteSet,
+  getSetting,
+  putSetting,
+  type ItemStatus,
+  type StoredItem,
+  type StoredSet,
+  type StoredSource,
+} from '../lib/storage/db'
 import { cancelGeneration, useGeneration } from '../state/generation'
 import { navigate } from '../router'
 
@@ -351,6 +360,9 @@ function capitalize(value: string): string {
 
 // ---------------------------------------------------------------- export
 
+// The author name typed at export, kept in this browser for the next export.
+const EXPORT_AUTHOR = 'exportAuthor'
+
 function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; source: StoredSource | null }) {
   const exports = useLiveQuery(() => db.exports.where('setId').equals(set.id).reverse().sortBy('createdAt'), [set.id])
   const generation = useGeneration()
@@ -358,6 +370,29 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   const [randomizeMath, setRandomizeMath] = useState(false)
   const [versions, setVersions] = useState(DEFAULT_VERSIONS)
   const [exportError, setExportError] = useState<string | null>(null)
+  // null until the remembered name has loaded.
+  const [author, setAuthor] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    // An unreadable setting names no one, rather than keeping downloads waiting.
+    getSetting(EXPORT_AUTHOR, '')
+      .catch(() => '')
+      .then((saved) => {
+        if (!cancelled) setAuthor((typed) => typed ?? saved)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const changeAuthor = (value: string) => {
+    setAuthor(value)
+    void putSetting(EXPORT_AUTHOR, value)
+  }
+  const authorName = author ?? ''
+  // A download before the remembered name loads would leave the author out.
+  const authorLoading = author === null
 
   const running = generation.running && generation.setId === set.id
   const approved = items.filter((item) => item.status === 'approved').length
@@ -401,12 +436,20 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
               <button
                 type="button"
                 className="primary"
-                disabled={exportable === 0 || running}
-                onClick={() => download(() => exportSet(set.id, { includeDrafts, randomizeMath }))}
+                disabled={exportable === 0 || running || authorLoading}
+                onClick={() => download(() => exportSet(set.id, { includeDrafts, randomizeMath, author: authorName }))}
               >
                 <Icon name="download" /> Download
               </button>
             </div>
+            <label>
+              Author name <small>(optional)</small>
+              <input value={authorName} onChange={(e) => changeAuthor(e.target.value)} autoComplete="name" />
+              <small>
+                Named as the questions’ author in the file and in each quiz’s instructions, which students see. Remembered in
+                this browser only.
+              </small>
+            </label>
             {drafts > 0 && (
               <label className="inline">
                 <input type="checkbox" checked={includeDrafts} onChange={(e) => setIncludeDrafts(e.target.checked)} />
@@ -458,7 +501,7 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
                         onChange={(e) => setVersions(Math.min(MAX_VERSIONS, Math.max(2, Math.round(Number(e.target.value)) || 2)))}
                       />
                     </label>
-                    <button type="button" disabled={running} onClick={() => download(() => exportMathVersions(set.id, includeDrafts, versions))}>
+                    <button type="button" disabled={running || authorLoading} onClick={() => download(() => exportMathVersions(set.id, includeDrafts, versions, authorName))}>
                       <Icon name="download" /> Download math versions
                     </button>
                   </div>

@@ -1,4 +1,5 @@
-import { db, newId, type SourcePage, type StoredSource } from '../storage/db'
+import { db, newId, type SourceBook, type SourcePage, type StoredSource } from '../storage/db'
+import { catalogBookPath, findCatalogBook } from './catalog'
 import {
   bookCoverPath,
   getContentsHtml,
@@ -18,7 +19,8 @@ import { normalizeHtml, normalizePlainText, withPageNumbers } from './normalize'
 export interface ResolvedUrl {
   page: PageInfo
   tree: TocNode
-  book: { id: string; title: string } | null
+  // The book the page is in, with its authors when the catalog knows them.
+  book: (SourceBook & { id: string }) | null
 }
 
 // A pasted URL may point at a page, a chapter, or a whole book; its tree tells
@@ -28,11 +30,14 @@ export async function resolveUrl(input: string, signal?: AbortSignal): Promise<R
   const page = await getPageInfo(ref, signal)
   const tree = await getTree(page.library, page.id, signal)
   let book: ResolvedUrl['book'] = null
-  const cover = bookCoverPath(page.path)
+  // A book the catalog has may be filed at any depth; otherwise assume the
+  // usual depth of three.
+  const cover = (await catalogBookPath(page.library, page.path)) ?? bookCoverPath(page.path)
   if (cover) {
     try {
       const coverInfo = cover === page.path ? page : await getPageInfo({ library: page.library, path: cover }, signal)
-      book = { id: `${page.library}-${coverInfo.id}`, title: coverInfo.title }
+      const id = `${page.library}-${coverInfo.id}`
+      book = { id, title: coverInfo.title, author: (await findCatalogBook(id))?.author || null }
     } catch {
       book = null
     }
@@ -64,6 +69,7 @@ export async function buildLibreTextsSource(options: {
   kind: StoredSource['kind']
   pages: TocNode[]
   license: StoredSource['license']
+  book?: SourceBook
   signal?: AbortSignal
   onProgress?: (done: number, total: number) => void
 }): Promise<StoredSource> {
@@ -95,6 +101,7 @@ export async function buildLibreTextsSource(options: {
     library: options.library,
     url: options.url,
     license: options.license,
+    ...(options.book && { book: options.book }),
     pages: readable,
     createdAt: Date.now(),
   }

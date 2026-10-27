@@ -1,4 +1,5 @@
 import { unzipSync, strFromU8 } from 'fflate'
+import { createHash } from 'node:crypto'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { checkModelDraft, parseDraft, typedAnswerProblem, type DraftOf, type ItemType } from '../generation/schema'
@@ -50,13 +51,53 @@ describe('canvas QTI package', () => {
         {
           id: 'question-studio-import-test',
           title: 'Question Studio — ADAPT import test (safe to delete)',
-          description: 'One question of every type, exported by LibreTexts Question Studio to test ADAPT import.',
+          // Shaped like an export's own: the source credit, then the author.
+          description:
+            'Questions based on 4.2: La profecía de la gitana (https://human.libretexts.org/@go/page/378488), ' +
+            'from ¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari) by Beatrice Tseng, Karla Lemari, Lisbeth Rosales. ' +
+            'License: CC BY-NC-SA 4.0.\n\nQuestion author: Question Studio test',
           items,
         },
-      ])
+      ], { author: 'Question Studio test' })
       writeFileSync('tests/adapt-parser/out/sample.zip', sample)
       writeFileSync('tests/adapt-parser/out/expectations.json', JSON.stringify(SAMPLE_DRAFTS.map(adaptExpectation), null, 2))
     }
+  })
+
+  it('builds the same bytes as before authorship when no author is given', () => {
+    // Taken on main at e1f63ef, before export authorship. An export with no
+    // author must stay byte-for-byte what it was; change this only on purpose.
+    const zip = buildQuizPackage([{ id: 'set-1', title: 'Chapter 1 Quiz', description: 'Questions based on Leaves.', items }])
+    expect(createHash('sha256').update(zip).digest('hex')).toBe('afc38dd1a4181f7a4c858bcf8d1dd7e90eeeecd5d74deaea60590a9935bca383')
+  })
+
+  it('names the question author in the manifest metadata as IEEE LOM, a vCard 3.0 with its required N', () => {
+    const manifestOf = (author?: string) =>
+      strFromU8(unzipSync(buildQuizPackage([{ id: 'set-1', title: 'Quiz', items }], { author }))['imsmanifest.xml'])
+    const manifest = manifestOf('Ruiz, Ana <ana@example.org> & Co')
+    // The LOM block names its own namespace, so the manifest element is the same as with no author.
+    expect(manifest.split('\n')[1]).toBe(manifestOf().split('\n')[1])
+    expect(manifest).toContain(
+      [
+        '<schemaversion>1.1.3</schemaversion>',
+        '<lom xmlns="http://ltsc.ieee.org/xsd/LOM">',
+        '<lifeCycle>',
+        '<contribute>',
+        '<role>',
+        '<source>LOMv1.0</source>',
+        '<value>author</value>',
+        '</role>',
+        '<entity>BEGIN:VCARD',
+        'VERSION:3.0',
+        'FN:Ruiz\\, Ana &lt;ana@example.org&gt; &amp; Co',
+        'N:;;;;',
+        'END:VCARD</entity>',
+        '</contribute>',
+        '</lifeCycle>',
+        '</lom>',
+        '</metadata>',
+      ].join('\n'),
+    )
   })
 
   it('is byte-stable for the same content', () => {

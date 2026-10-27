@@ -31,6 +31,18 @@ quiz.zip
 - `assessment_meta.xml`'s `<title>` and `<description>` become the assignment
   name and instructions when importing into a course. Students see the
   instructions, so the description must not hold notes meant for instructors.
+  The export puts the source credit there (title, book and its authors, link,
+  license) and, when one was typed, "Question author: <name>".
+- ADAPT reads only `<resources>` from the manifest; it ignores `<metadata>`. The
+  export still names a typed author there as IEEE LOM in its own XML binding:
+  `<lom xmlns="http://ltsc.ieee.org/xsd/LOM">` with `lifeCycle/contribute`,
+  role `author` (source `LOMv1.0`) and a vCard 3.0 entity with the name in `FN`
+  and an empty `N`. (Canvas's exports put these IEEE names under the IMS MD 1.2
+  `imsmd` namespace, whose own names are `lifecycle` and `centity/vcard`; the
+  export does not copy that mix.) With no author the
+  manifest is unchanged. The items carry no author: per-item metadata would
+  change the item XML that ADAPT's re-import dedupe compares, so adding or
+  changing the author would import every question again as a new one.
 - Items must sit directly in the root `<section>`. With nested sections, only the
   first nested section is read.
 
