@@ -42,6 +42,18 @@ beforeEach(async () => {
 })
 
 describe('startGeneration', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // A browser can refuse a lock, for a document that isn't fully active say.
+  // The run then goes on unlocked, as without Web Locks.
+  it('writes the set when the browser refuses its lock', async () => {
+    vi.stubGlobal('navigator', { locks: { request: () => Promise.reject(new DOMException('Refused', 'SecurityError')) } })
+    await startGeneration('set-1', source, { itemTypes: ['essay'], perPage: 1, reviewPass: false }, essayProvider())
+    expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
+  })
+
   it('reports a lost GPU as such, never as answers that failed the checks', async () => {
     let calls = 0
     // The in-browser engine as the worker reports a lost device to it.
@@ -133,29 +145,37 @@ class FakeLocks {
   }
 }
 
-// Starts writing set-1, one essay question, and pauses once the run is under
-// way until the test lets it go on.
-async function startPausedGeneration() {
+// Finds one concept on the page and writes one essay question on it, once
+// beforeConcepts lets it go on.
+function essayProvider(beforeConcepts: () => Promise<void> = async () => {}): LLMProvider {
   const { item_type: _, ...essay } = SAMPLE_DRAFTS.find((d) => d.item_type === 'essay')!
   void _
-  let started = () => {}
-  const hasStarted = new Promise<void>((resolve) => (started = resolve))
-  let resume = () => {}
-  const resumed = new Promise<void>((resolve) => (resume = resolve))
-  const provider: LLMProvider = {
+  return {
     id: 'local',
     model: 'fake',
     complete: (request) =>
       completeWithRetries(request, async () => {
         if (request.schemaName === 'concept_batch') {
-          started()
-          await resumed
+          await beforeConcepts()
           const concept = { label: 'Inputs', description: 'What plants take in', source_paragraphs: [0], quantitative: false }
           return { text: JSON.stringify({ concepts: [concept] }), usage: null }
         }
         return { text: JSON.stringify({ ...essay, citation_paragraphs: [0] }), usage: null }
       }),
   }
+}
+
+// Starts writing set-1, one essay question, and pauses once the run is under
+// way until the test lets it go on.
+async function startPausedGeneration() {
+  let started = () => {}
+  const hasStarted = new Promise<void>((resolve) => (started = resolve))
+  let resume = () => {}
+  const resumed = new Promise<void>((resolve) => (resume = resolve))
+  const provider = essayProvider(async () => {
+    started()
+    await resumed
+  })
   const finished = startGeneration('set-1', source, { itemTypes: ['essay'], perPage: 1, reviewPass: false }, provider)
   await hasStarted
   return { resume, finished }

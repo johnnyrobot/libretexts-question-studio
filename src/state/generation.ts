@@ -113,9 +113,21 @@ export function cancelGeneration(): void {
 const generationLockName = (setId: string) => `generation:${setId}`
 const webLocks = (): LockManager | undefined => navigator.locks ?? undefined
 
-function whileGenerating(setId: string, run: () => Promise<void>): Promise<void> {
+// A browser can refuse the lock outright (a document that isn't fully active,
+// say); the run then goes on unlocked, as without Web Locks.
+async function whileGenerating(setId: string, run: () => Promise<void>): Promise<void> {
   const locks = webLocks()
-  return locks ? locks.request(generationLockName(setId), run) : run()
+  if (!locks) return run()
+  let began = false
+  try {
+    await locks.request(generationLockName(setId), () => {
+      began = true
+      return run()
+    })
+  } catch (error) {
+    if (began) throw error
+    await run()
+  }
 }
 
 // A set still marked "generating" when the app starts was cut off by a closed
