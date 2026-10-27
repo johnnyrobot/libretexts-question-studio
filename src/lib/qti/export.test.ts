@@ -188,7 +188,7 @@ describe('the credit for the source', () => {
     expect(description).toBe(
       `<div><p>Questions based on 4.2: La profecía de la gitana (${URL}), from Lecturas intermedias by Erica Brown &amp; Elizabeth Small. License: CC BY-NC-SA 4.0.</p><p>Question author: Ana Ruiz</p></div>`,
     )
-    expect(manifest).toContain('<imsmd:value>author</imsmd:value>')
+    expect(manifest).toContain('<value>author</value>')
     expect(manifest).toContain('\nFN:Ana Ruiz\n')
   })
 })

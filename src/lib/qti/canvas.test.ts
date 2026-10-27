@@ -71,28 +71,30 @@ describe('canvas QTI package', () => {
     expect(createHash('sha256').update(zip).digest('hex')).toBe('afc38dd1a4181f7a4c858bcf8d1dd7e90eeeecd5d74deaea60590a9935bca383')
   })
 
-  it('names the question author in the manifest metadata, as a vCard 3.0 with its required N', () => {
-    const zip = buildQuizPackage([{ id: 'set-1', title: 'Quiz', items }], { author: 'Ruiz, Ana <ana@example.org> & Co' })
-    const manifest = strFromU8(unzipSync(zip)['imsmanifest.xml'])
-    expect(manifest).toContain(' xmlns:imsmd="http://www.imsglobal.org/xsd/imsmd_v1p2" ')
+  it('names the question author in the manifest metadata as IEEE LOM, a vCard 3.0 with its required N', () => {
+    const manifestOf = (author?: string) =>
+      strFromU8(unzipSync(buildQuizPackage([{ id: 'set-1', title: 'Quiz', items }], { author }))['imsmanifest.xml'])
+    const manifest = manifestOf('Ruiz, Ana <ana@example.org> & Co')
+    // The LOM block names its own namespace, so the manifest element is the same as with no author.
+    expect(manifest.split('\n')[1]).toBe(manifestOf().split('\n')[1])
     expect(manifest).toContain(
       [
         '<schemaversion>1.1.3</schemaversion>',
-        '<imsmd:lom>',
-        '<imsmd:lifeCycle>',
-        '<imsmd:contribute>',
-        '<imsmd:role>',
-        '<imsmd:source>LOMv1.0</imsmd:source>',
-        '<imsmd:value>author</imsmd:value>',
-        '</imsmd:role>',
-        '<imsmd:entity>BEGIN:VCARD',
+        '<lom xmlns="http://ltsc.ieee.org/xsd/LOM">',
+        '<lifeCycle>',
+        '<contribute>',
+        '<role>',
+        '<source>LOMv1.0</source>',
+        '<value>author</value>',
+        '</role>',
+        '<entity>BEGIN:VCARD',
         'VERSION:3.0',
         'FN:Ruiz\\, Ana &lt;ana@example.org&gt; &amp; Co',
         'N:;;;;',
-        'END:VCARD</imsmd:entity>',
-        '</imsmd:contribute>',
-        '</imsmd:lifeCycle>',
-        '</imsmd:lom>',
+        'END:VCARD</entity>',
+        '</contribute>',
+        '</lifeCycle>',
+        '</lom>',
         '</metadata>',
       ].join('\n'),
     )

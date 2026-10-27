@@ -375,9 +375,12 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
 
   useEffect(() => {
     let cancelled = false
-    getSetting(EXPORT_AUTHOR, '').then((saved) => {
-      if (!cancelled) setAuthor((typed) => typed ?? saved)
-    })
+    // An unreadable setting names no one, rather than keeping downloads waiting.
+    getSetting(EXPORT_AUTHOR, '')
+      .catch(() => '')
+      .then((saved) => {
+        if (!cancelled) setAuthor((typed) => typed ?? saved)
+      })
     return () => {
       cancelled = true
     }
@@ -388,6 +391,8 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
     void putSetting(EXPORT_AUTHOR, value)
   }
   const authorName = author ?? ''
+  // A download before the remembered name loads would leave the author out.
+  const authorLoading = author === null
 
   const running = generation.running && generation.setId === set.id
   const approved = items.filter((item) => item.status === 'approved').length
@@ -431,7 +436,7 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
               <button
                 type="button"
                 className="primary"
-                disabled={exportable === 0 || running}
+                disabled={exportable === 0 || running || authorLoading}
                 onClick={() => download(() => exportSet(set.id, { includeDrafts, randomizeMath, author: authorName }))}
               >
                 <Icon name="download" /> Download
@@ -496,7 +501,7 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
                         onChange={(e) => setVersions(Math.min(MAX_VERSIONS, Math.max(2, Math.round(Number(e.target.value)) || 2)))}
                       />
                     </label>
-                    <button type="button" disabled={running} onClick={() => download(() => exportMathVersions(set.id, includeDrafts, versions, authorName))}>
+                    <button type="button" disabled={running || authorLoading} onClick={() => download(() => exportMathVersions(set.id, includeDrafts, versions, authorName))}>
                       <Icon name="download" /> Download math versions
                     </button>
                   </div>

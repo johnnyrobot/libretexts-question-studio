@@ -77,7 +77,7 @@ function buildManifestXml(identifier: string, resources: string[], author = ''):
   const lom = author.trim() ? `\n${authorLom(author)}` : ''
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<manifest identifier="${identifier}" xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1"${lom && ' xmlns:imsmd="http://www.imsglobal.org/xsd/imsmd_v1p2"'} xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1 http://www.imsglobal.org/xsd/imscp_v1p1.xsd">`,
+    `<manifest identifier="${identifier}" xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1 http://www.imsglobal.org/xsd/imscp_v1p1.xsd">`,
     `<metadata>\n<schema>IMS Content</schema>\n<schemaversion>1.1.3</schemaversion>${lom}\n</metadata>`,
     '<organizations/>',
     '<resources>',
@@ -88,24 +88,26 @@ function buildManifestXml(identifier: string, resources: string[], author = ''):
   ].join('\n')
 }
 
-// IEEE LOM in the imsmd namespace and lom/lifeCycle/contribute shape that
-// Canvas's exports use (Canvas names only a date there). The author is a
-// contributor with the LOM role "author", named by a vCard 3.0: FN escapes
-// \ , and ;, and the required N is left empty rather than guessed.
+// IEEE LOM in its own XML binding (IEEE 1484.12.3), whose lom/lifeCycle/
+// contribute names belong to that namespace and not to IMS MD 1.2's (Canvas's
+// exports mix the two). The block declares the namespace itself, so the
+// manifest element is unchanged. The author is a contributor with the LOM role
+// "author", named by a vCard 3.0: FN escapes \ , and ;, and the required N is
+// left empty rather than guessed.
 function authorLom(author: string): string {
   const name = oneLine(author).replace(/[\\,;]/g, (c) => `\\${c}`)
   return [
-    '<imsmd:lom>',
-    '<imsmd:lifeCycle>',
-    '<imsmd:contribute>',
-    '<imsmd:role>',
-    '<imsmd:source>LOMv1.0</imsmd:source>',
-    '<imsmd:value>author</imsmd:value>',
-    '</imsmd:role>',
-    `<imsmd:entity>BEGIN:VCARD\nVERSION:3.0\nFN:${xml(name)}\nN:;;;;\nEND:VCARD</imsmd:entity>`,
-    '</imsmd:contribute>',
-    '</imsmd:lifeCycle>',
-    '</imsmd:lom>',
+    '<lom xmlns="http://ltsc.ieee.org/xsd/LOM">',
+    '<lifeCycle>',
+    '<contribute>',
+    '<role>',
+    '<source>LOMv1.0</source>',
+    '<value>author</value>',
+    '</role>',
+    `<entity>BEGIN:VCARD\nVERSION:3.0\nFN:${xml(name)}\nN:;;;;\nEND:VCARD</entity>`,
+    '</contribute>',
+    '</lifeCycle>',
+    '</lom>',
   ].join('\n')
 }
 

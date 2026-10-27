@@ -86,7 +86,33 @@ describe('the author name on the Export page', () => {
     await settle()
     const manifest = (await unzip(downloads))['imsmanifest.xml']
     expect(manifest).toContain('<metadata>\n<schema>IMS Content</schema>\n<schemaversion>1.1.3</schemaversion>\n</metadata>')
-    expect(manifest).not.toContain('imsmd')
+    expect(manifest).not.toContain('<lom')
+  })
+
+  it('waits for the remembered name before a download can start', async () => {
+    await db.settings.put({ key: 'exportAuthor', value: 'Ana Ruiz' })
+    let release = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const read = db.settings.get.bind(db.settings)
+    vi.spyOn(db.settings, 'get').mockImplementation((async (key: string) => {
+      await held
+      return read(key)
+    }) as typeof db.settings.get)
+    const page = await render()
+    expect(page.download().disabled).toBe(true)
+    release()
+    await settle()
+    expect(page.download().disabled).toBe(false)
+    expect(page.authorBox()?.value).toBe('Ana Ruiz')
+  })
+
+  it('starts with no name when the remembered one cannot be read', async () => {
+    vi.spyOn(db.settings, 'get').mockRejectedValue(new Error('IndexedDB is unavailable'))
+    const page = await render()
+    expect(page.download().disabled).toBe(false)
+    expect(page.authorBox()?.value).toBe('')
   })
 
   it('is remembered in this browser and named in the download', async () => {
