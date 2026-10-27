@@ -1,7 +1,6 @@
 import { db, newId, type SourceBook, type SourcePage, type StoredSource } from '../storage/db'
 import { catalogBookPath, findCatalogBook } from './catalog'
 import {
-  bookCoverPath,
   getContentsHtml,
   getPageInfo,
   getTree,
@@ -30,9 +29,10 @@ export async function resolveUrl(input: string, signal?: AbortSignal): Promise<R
   const page = await getPageInfo(ref, signal)
   const tree = await getTree(page.library, page.id, signal)
   let book: ResolvedUrl['book'] = null
-  // A book the catalog has may be filed at any depth; otherwise assume the
-  // usual depth of three.
-  const cover = (await catalogBookPath(page.library, page.path)) ?? bookCoverPath(page.path)
+  // The book is the catalog's, which may be filed at any depth. A page whose
+  // book the catalog does not list is credited on its own rather than to a
+  // guess, which could name a shelf.
+  const cover = await catalogBookPath(page.library, page.path)
   if (cover) {
     try {
       const coverInfo = cover === page.path ? page : await getPageInfo({ library: page.library, path: cover }, signal)

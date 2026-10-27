@@ -254,6 +254,25 @@ describe('crediting the book a source comes from', () => {
     })
   })
 
+  it('credits a linked page on its own when the catalog lists no book above it', async () => {
+    const url = 'https://human.libretexts.org/Bookshelves/Languages/French/Nouveau/01/1.01'
+    const page = { ...PAGE, path: { '#text': 'Bookshelves/Languages/French/Nouveau/01/1.01' }, 'uri.ui': url }
+    libreTexts((target) =>
+      target.endsWith('catalog.json') || target.includes('/contents')
+        ? found(target)
+        : target.includes('/tree')
+          ? { page: { ...TREE.page, 'uri.ui': url } }
+          : page,
+    )
+    const view = await openLink('human-378488')
+    expect(view.text()).not.toContain('From “')
+    await act(async () => button('Continue with 1 page')!.click())
+    await settle()
+    const [source] = await db.sources.toArray()
+    expect(source).toMatchObject({ title: PAGE.title, url, license: { code: 'ccbyncsa', label: 'CC BY-NC-SA 4.0', version: '4.0' } })
+    expect(source.book).toBeUndefined()
+  })
+
   it('keeps the book and its authors for pages chosen in book search', async () => {
     libreTexts()
     await chooseInBookSearch('Continue with 1 page')

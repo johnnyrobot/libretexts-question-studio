@@ -210,15 +210,6 @@ export async function getContentsHtml(library: Library, id: string, signal?: Abo
   return parts.join('')
 }
 
-// The book a page belongs to is the third path segment under Bookshelves/Courses.
-export function bookCoverPath(path: string): string | null {
-  const segments = path.split('/').filter(Boolean)
-  if (segments.length >= 3 && (segments[0] === 'Bookshelves' || segments[0] === 'Courses')) {
-    return segments.slice(0, 3).join('/')
-  }
-  return null
-}
-
 export function leafPages(node: TocNode): TocNode[] {
   if (node.children.length === 0) return [node]
   return node.children.flatMap(leafPages)

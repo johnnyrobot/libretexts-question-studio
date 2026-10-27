@@ -64,11 +64,15 @@ describe('looking up a pasted link', () => {
     })
   })
 
-  it('names no author for a book the catalog does not have', async () => {
-    const cover = 'Courses/Irvine_Valley_College/HOLA_Spanish_4'
-    libreTexts(`${cover}/04/4.02`, { [cover]: { id: '400000', title: 'HOLA Spanish 4' } })
+  // A book missing from the catalog may sit at any depth, so a guess could name
+  // its shelf; the page is credited on its own instead (LT-75).
+  it.each([
+    ['filed on a shelf', 'Bookshelves/Languages/Spanish', 'Bookshelves/Languages/Spanish/Lecturas_nuevas/01:_Uno/1.01:_Hola'],
+    ['at the usual depth', 'Courses/Irvine_Valley_College/HOLA_Spanish_4', 'Courses/Irvine_Valley_College/HOLA_Spanish_4/04/4.02'],
+  ])('names no book for a page the catalog lists no book above, %s', async (_, above, path) => {
+    libreTexts(path, { [above]: { id: '400000', title: above.split('/').pop()! } })
     const { book } = await resolveUrl('https://human.libretexts.org/@go/page/378488')
-    expect(book).toEqual({ id: 'human-400000', title: 'HOLA Spanish 4', author: null })
+    expect(book).toBeNull()
   })
 
   it('finds a book filed deeper than a shelf, not the shelf', async () => {

@@ -32,7 +32,8 @@ quiz.zip
   name and instructions when importing into a course. Students see the
   instructions, so the description must not hold notes meant for instructors.
   The export puts the source credit there (title, book and its authors, link,
-  license) and, when one was typed, "Question author: <name>".
+  license; the book only when the bundled catalog lists it) and, when one was
+  typed, "Question author: <name>".
 - ADAPT reads only `<resources>` from the manifest; it ignores `<metadata>`. The
   export still names a typed author there as IEEE LOM in its own XML binding:
   `<lom xmlns="http://ltsc.ieee.org/xsd/LOM">` with `lifeCycle/contribute`,
