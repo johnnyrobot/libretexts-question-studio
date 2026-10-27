@@ -216,13 +216,13 @@ async function chooseInBookSearch(
   await settle()
 }
 
-// A book with two chapters, the first holding two pages.
 const tocNode = (id: string, title: string, children: object[] = []) => ({
   '@id': id,
   title,
   'uri.ui': `https://human.libretexts.org/Bookshelves/Languages/Spanish/HOLA/${id}`,
   subpages: children.length > 0 ? { page: children } : '',
 })
+// A book with two chapters, the first holding two pages.
 const BOOK_TREE = {
   page: tocNode('378400', BOOK.title, [
     tocNode('1', '1: Saludos', [tocNode('1.1', '1.1: Hola'), tocNode('1.2', '1.2: Adiós')]),
@@ -263,17 +263,6 @@ describe('crediting the book a source comes from', () => {
     })
   })
 
-  it('names pages from across a book in book search by the book’s own title', async () => {
-    const chapter = (id: string) => ({ '@id': id, title: `Chapter ${id}`, 'uri.ui': `https://human.libretexts.org/${id}`, subpages: '' })
-    libreTexts((target) =>
-      target.includes('/tree') ? { page: { '@id': '378400', title: BOOK.title, subpages: { page: [chapter('1'), chapter('2')] } } } : found(target),
-    )
-    await chooseInBookSearch('Continue with 2 pages')
-    const [source] = await db.sources.toArray()
-    expect(source.title).toBe('¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)')
-    expect(source.title).toBe(source.book?.title)
-  })
-
   it('names pages from one chapter in book search by the chapter, from the book', async () => {
     libreTexts(bookTree)
     await chooseInBookSearch('Continue with 2 pages', undefined, '1: Saludos')
@@ -286,11 +275,12 @@ describe('crediting the book a source comes from', () => {
     })
   })
 
-  it('names pages from across chapters in book search by the book', async () => {
+  it('names pages from across chapters in book search by the book’s own title', async () => {
     libreTexts(bookTree)
     await chooseInBookSearch('Continue with 3 pages')
     const [source] = await db.sources.toArray()
-    expect(source).toMatchObject({ title: '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)', url: CATALOG.books[0].u })
+    expect(source).toMatchObject({ title: '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)', url: CATALOG.books[0].u, kind: 'book' })
+    expect(source.title).toBe(source.book?.title)
   })
 
   it('names pages from one chapter of a linked book by the chapter, from the book', async () => {

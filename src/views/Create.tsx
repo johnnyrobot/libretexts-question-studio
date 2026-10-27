@@ -112,17 +112,13 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
     if (!book || !tree) return
     setBusy(true)
     setError(null)
-    // Pages from one chapter are credited to that chapter, and pages from across
-    // the book to the book, under the title the catalog gives it.
-    const part = partHolding(tree, pages)
-    const whole = part === tree && part.children.length > 0
     try {
       onSource(
         await buildLibreTextsSource({
           library: book.library,
-          title: whole ? book.title : part.title,
-          url: whole ? book.url : part.url,
-          kind: part.children.length === 0 ? 'page' : 'section',
+          // Pages from across the book are credited to it under the title the
+          // catalog gives it.
+          ...creditFor(tree, pages, { title: book.title, url: book.url, isBook: true }),
           pages,
           license: licenseFromCatalog(book.license),
           book: { title: book.title, author: book.author || null },
@@ -284,16 +280,11 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
     setBusy(true)
     setError(null)
     try {
-      const isBook = resolved.book && `${resolved.page.library}-${resolved.page.id}` === resolved.book.id
-      // Pages from one chapter of the linked page are credited to that chapter.
-      const part = partHolding(resolved.tree, pages)
-      const whole = part === resolved.tree
+      const isBook = resolved.book?.id === `${resolved.page.library}-${resolved.page.id}`
       onSource(
         await buildLibreTextsSource({
           library: resolved.page.library,
-          title: whole ? resolved.page.title : part.title,
-          url: whole ? resolved.page.url : part.url,
-          kind: part.children.length === 0 ? 'page' : whole && isBook ? 'book' : 'section',
+          ...creditFor(resolved.tree, pages, { title: resolved.page.title, url: resolved.page.url, isBook }),
           pages,
           license: resolved.page.license,
           book: resolved.book ? { title: resolved.book.title, author: resolved.book.author } : undefined,
@@ -561,6 +552,21 @@ function bookPathHint(url: string): string {
 
 function clamp(value: number, min: number, max: number) {
   return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : min
+}
+
+// What a source is credited to: the smallest part of the tree holding every
+// page picked (a chapter, a section or one page), so a chapter picked from a
+// book is named and linked as that chapter, or the whole work, under the title
+// and link given for it, when the pages come from across the tree.
+function creditFor(
+  tree: TocNode,
+  pages: TocNode[],
+  work: { title: string; url: string; isBook: boolean },
+): { title: string; url: string; kind: StoredSource['kind'] } {
+  const part = partHolding(tree, pages)
+  if (part.children.length === 0) return { title: part.title, url: part.url, kind: 'page' }
+  if (part === tree) return { title: work.title, url: work.url, kind: work.isBook ? 'book' : 'section' }
+  return { title: part.title, url: part.url, kind: 'section' }
 }
 
 function licenseFromCatalog(code: string): StoredSource['license'] {
