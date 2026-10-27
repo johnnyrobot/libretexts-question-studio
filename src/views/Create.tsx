@@ -315,6 +315,8 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
             required
             placeholder="https://chem.libretexts.org/Bookshelves/…"
             value={url}
+            // Fixed while busy, so the page found is always the one this link names.
+            readOnly={busy}
             onChange={(e) => setUrl(e.target.value)}
           />
         </label>

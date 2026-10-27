@@ -58,6 +58,7 @@ async function openLink(pageLink: string) {
   return {
     selectedTab: () => container.querySelector('[role="tab"][aria-selected="true"]')?.textContent,
     link: () => container.querySelector<HTMLInputElement>('input[type="url"]')?.value,
+    linkFixed: () => container.querySelector<HTMLInputElement>('input[type="url"]')?.readOnly,
     alert: () => container.querySelector('[role="alert"]')?.textContent,
     lookUp: () => container.querySelector<HTMLButtonElement>('button[type="submit"]'),
     text: () => container.textContent ?? '',
@@ -79,7 +80,8 @@ describe('opening the app on a page link', () => {
     expect(view.alert()).toBeUndefined()
   })
 
-  it('keeps Look up busy until LibreTexts answers', async () => {
+  // The link cannot change under the lookup, so the page shown is always the link's.
+  it('keeps Look up busy, and the link fixed, until LibreTexts answers', async () => {
     let answer = () => {}
     const answered = new Promise<void>((resolve) => {
       answer = resolve
@@ -91,10 +93,12 @@ describe('opening the app on a page link', () => {
     const view = await openLink('human-378488')
     expect(view.lookUp()?.textContent).toBe('Looking up…')
     expect(view.lookUp()?.disabled).toBe(true)
+    expect(view.linkFixed()).toBe(true)
     answer()
     await settle()
     expect(view.lookUp()?.textContent).toBe('Look up')
     expect(view.lookUp()?.disabled).toBe(false)
+    expect(view.linkFixed()).toBe(false)
   })
 
   it('names the libraries, and looks nothing up, for a library LibreTexts does not have', async () => {
