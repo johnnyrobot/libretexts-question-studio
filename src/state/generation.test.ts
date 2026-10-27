@@ -1,10 +1,10 @@
 import 'fake-indexeddb/auto'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEVICE_LOST_ERROR } from '../lib/llm/fixtures'
 import { SAMPLE_DRAFTS } from '../lib/qti/fixtures'
 import { completeWithRetries, type LLMProvider } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
-import { startGeneration } from './generation'
+import { markInterruptedSets, startGeneration } from './generation'
 
 const source: StoredSource = {
   id: 'src-1',
@@ -42,6 +42,18 @@ beforeEach(async () => {
 })
 
 describe('startGeneration', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // A browser can refuse a lock, for a document that isn't fully active say.
+  // The run then goes on unlocked, as without Web Locks.
+  it('writes the set when the browser refuses its lock', async () => {
+    vi.stubGlobal('navigator', { locks: { request: () => Promise.reject(new DOMException('Refused', 'SecurityError')) } })
+    await startGeneration('set-1', source, { itemTypes: ['essay'], perPage: 1, reviewPass: false }, essayProvider())
+    expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
+  })
+
   it('reports a lost GPU as such, never as answers that failed the checks', async () => {
     let calls = 0
     // The in-browser engine as the worker reports a lost device to it.
@@ -86,5 +98,132 @@ describe('startGeneration', () => {
     expect(set?.error).toBe(
       'The GPU stopped responding while writing questions. The questions written so far were kept. Reload the model in Settings, or close other GPU-heavy tabs, and try again.',
     )
+  })
+})
+
+// Web Locks as a browser shares them between an origin's tabs, exclusive mode
+// only. The tests need locks they can let go of as a closing tab does.
+class FakeLocks {
+  private held = new Map<string, { released: Promise<void>; release: () => void }>()
+  private requests = new Set<Promise<unknown>>()
+
+  request<T>(name: string, ...args: [(lock: object | null) => Promise<T>] | [{ ifAvailable?: boolean }, (lock: object | null) => Promise<T>]) {
+    const [options, callback] = args.length === 1 ? [{}, args[0]] : args
+    const request = this.run(name, options, callback)
+    this.requests.add(request)
+    void request.catch(() => undefined).finally(() => this.requests.delete(request))
+    return request
+  }
+
+  // Resolves once every request made so far has finished, waiting ones included.
+  async settled() {
+    while (this.requests.size) await Promise.allSettled([...this.requests])
+  }
+
+  // As a browser does when a tab closes: every lock it held is let go.
+  closeTab() {
+    for (const [name, hold] of this.held) {
+      this.held.delete(name)
+      hold.release()
+    }
+  }
+
+  private async run<T>(name: string, options: { ifAvailable?: boolean }, callback: (lock: object | null) => Promise<T>) {
+    if (options.ifAvailable && this.held.has(name)) return callback(null)
+    while (this.held.has(name)) await this.held.get(name)!.released
+    let release = () => {}
+    const released = new Promise<void>((resolve) => (release = resolve))
+    const hold = { released, release }
+    this.held.set(name, hold)
+    try {
+      return await callback({ name, mode: 'exclusive' })
+    } finally {
+      // closeTab may have let go of it already, and another request may hold the name now.
+      if (this.held.get(name) === hold) this.held.delete(name)
+      hold.release()
+    }
+  }
+}
+
+// Finds one concept on the page and writes one essay question on it, once
+// beforeConcepts lets it go on.
+function essayProvider(beforeConcepts: () => Promise<void> = async () => {}): LLMProvider {
+  const { item_type: _, ...essay } = SAMPLE_DRAFTS.find((d) => d.item_type === 'essay')!
+  void _
+  return {
+    id: 'local',
+    model: 'fake',
+    complete: (request) =>
+      completeWithRetries(request, async () => {
+        if (request.schemaName === 'concept_batch') {
+          await beforeConcepts()
+          const concept = { label: 'Inputs', description: 'What plants take in', source_paragraphs: [0], quantitative: false }
+          return { text: JSON.stringify({ concepts: [concept] }), usage: null }
+        }
+        return { text: JSON.stringify({ ...essay, citation_paragraphs: [0] }), usage: null }
+      }),
+  }
+}
+
+// Starts writing set-1, one essay question, and pauses once the run is under
+// way until the test lets it go on.
+async function startPausedGeneration() {
+  let started = () => {}
+  const hasStarted = new Promise<void>((resolve) => (started = resolve))
+  let resume = () => {}
+  const resumed = new Promise<void>((resolve) => (resume = resolve))
+  const provider = essayProvider(async () => {
+    started()
+    await resumed
+  })
+  const finished = startGeneration('set-1', source, { itemTypes: ['essay'], perPage: 1, reviewPass: false }, provider)
+  await hasStarted
+  return { resume, finished }
+}
+
+describe('markInterruptedSets', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // As on an http address other than localhost, where no tab can tell.
+  it('marks every set still generating as interrupted without Web Locks', async () => {
+    vi.stubGlobal('navigator', {})
+    await markInterruptedSets()
+    expect((await db.sets.get('set-1'))?.status).toBe('cancelled')
+  })
+
+  it('marks a set that no tab is generating as interrupted', async () => {
+    vi.stubGlobal('navigator', { locks: new FakeLocks() })
+    await markInterruptedSets()
+    const set = await db.sets.get('set-1')
+    expect(set?.status).toBe('cancelled')
+    expect(set?.error).toBe('Interrupted when the app was closed. Questions written before that were kept.')
+  })
+
+  // A second tab, opened from a page link for instance, runs this on load (LT-74).
+  it('leaves a set alone while a tab is still generating it', async () => {
+    const locks = new FakeLocks()
+    vi.stubGlobal('navigator', { locks })
+    const generation = await startPausedGeneration()
+    await markInterruptedSets()
+    expect(await db.sets.get('set-1')).toMatchObject({ status: 'generating', error: null })
+    generation.resume()
+    await generation.finished
+    // The second tab, waiting on the lock, finds the set finished.
+    await locks.settled()
+    expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
+  })
+
+  it('marks the set as interrupted once the tab generating it closes', async () => {
+    const locks = new FakeLocks()
+    vi.stubGlobal('navigator', { locks })
+    const generation = await startPausedGeneration()
+    await markInterruptedSets()
+    locks.closeTab()
+    await vi.waitFor(async () => expect((await db.sets.get('set-1'))?.status).toBe('cancelled'))
+    // Lets the paused run end, so later tests can start one.
+    generation.resume()
+    await generation.finished
   })
 })
