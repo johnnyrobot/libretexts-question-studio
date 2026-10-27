@@ -67,6 +67,7 @@ export function parseLibreTextsUrl(input: string): PageRef {
 // A page as a link to the app names it: <library>-<page id>, e.g. human-378488.
 export const PAGE_LINK = /^([a-z0-9]+)-(\d+)$/i
 
+// The page a link names, or a LibreTextsError saying what is wrong with it.
 export function parsePageLink(input: string): Extract<PageRef, { id: string }> {
   const match = input.trim().toLowerCase().match(PAGE_LINK)
   if (!match) {

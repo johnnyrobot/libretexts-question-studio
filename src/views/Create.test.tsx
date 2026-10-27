@@ -22,8 +22,10 @@ const PAGE = {
 const BOOK = { '@id': '378400', title: 'HOLA Spanish 3 (Tseng Rosales and Lemari)', path: { '#text': 'Bookshelves/Languages/Spanish' } }
 const TREE = { page: { '@id': '378488', title: PAGE.title, 'uri.ui': PAGE['uri.ui'], subpages: '' } }
 
-function libreTexts(answer: (target: string) => unknown = (target) => (target.includes('/tree') ? TREE : target.includes('/pages/=') ? BOOK : PAGE)) {
-  const fetch = vi.fn(async (url: string) => new Response(JSON.stringify(answer(url))))
+const found = (target: string) => (target.includes('/tree') ? TREE : target.includes('/pages/=') ? BOOK : PAGE)
+
+function libreTexts(answer: (target: string) => unknown = found) {
+  const fetch = vi.fn(async (url: string) => new Response(JSON.stringify(await answer(url))))
   vi.stubGlobal('fetch', fetch)
   return fetch
 }
@@ -57,6 +59,7 @@ async function openLink(pageLink: string) {
     selectedTab: () => container.querySelector('[role="tab"][aria-selected="true"]')?.textContent,
     link: () => container.querySelector<HTMLInputElement>('input[type="url"]')?.value,
     alert: () => container.querySelector('[role="alert"]')?.textContent,
+    lookUp: () => container.querySelector<HTMLButtonElement>('button[type="submit"]'),
     text: () => container.textContent ?? '',
   }
 }
@@ -74,6 +77,24 @@ describe('opening the app on a page link', () => {
     expect(view.text()).toContain('4.2: La profecía de la gitana')
     expect(view.text()).toContain('From “HOLA Spanish 3 (Tseng Rosales and Lemari)” · CC BY-NC-SA 4.0')
     expect(view.alert()).toBeUndefined()
+  })
+
+  it('keeps Look up busy until LibreTexts answers', async () => {
+    let answer = () => {}
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    libreTexts(async (target) => {
+      await answered
+      return found(target)
+    })
+    const view = await openLink('human-378488')
+    expect(view.lookUp()?.textContent).toBe('Looking up…')
+    expect(view.lookUp()?.disabled).toBe(true)
+    answer()
+    await settle()
+    expect(view.lookUp()?.textContent).toBe('Look up')
+    expect(view.lookUp()?.disabled).toBe(false)
   })
 
   it('names the libraries, and looks nothing up, for a library LibreTexts does not have', async () => {

@@ -5,27 +5,33 @@ const APP = 'https://qtistudio.libretexts.dev/'
 
 describe('a link that opens a LibreTexts page', () => {
   it.each([
-    ['?page=human-378488', '/#/page/human-378488'],
-    ['?human-378488', '/#/page/human-378488'],
-    ['?page=human-378488&utm_source=slack', '/#/page/human-378488'],
-    ['?human-378488&fbclid=IwAR0abc', '/#/page/human-378488'],
-    ['?utm_source=slack&human-378488', '/#/page/human-378488'],
-    ['?page=human-378488#/library', '/#/page/human-378488'],
-    ['?history-378488', '/#/page/history-378488'],
-    ['?page=nonsense', '/#/page/nonsense'],
-    ['?page=a%2Fb%20c', '/#/page/a%2Fb%20c'],
-  ])('moves %s to the route in %s', (query, address) => {
-    expect(pageLinkAddress(APP + query)).toBe(address)
+    ['?page=human-378488', '#/page/human-378488'],
+    ['?human-378488', '#/page/human-378488'],
+    ['?page=human-378488&utm_source=slack', '#/page/human-378488'],
+    ['?human-378488&fbclid=IwAR0abc', '#/page/human-378488'],
+    ['?utm_source=slack&human-378488', '#/page/human-378488'],
+    ['?page=human-378488#/library', '#/page/human-378488'],
+    ['?history-378488', '#/page/history-378488'],
+    ['?page=nonsense', '#/page/nonsense'],
+    ['?page=a%2Fb%20c', '#/page/a%2Fb%20c'],
+  ])('moves %s to the route in %s', (query, route) => {
+    expect(pageLinkAddress(APP + query)).toBe(APP + route)
   })
 
   it('keeps the path the app is served from', () => {
-    expect(pageLinkAddress('https://example.org/apps/qs/?human-1')).toBe('/apps/qs/#/page/human-1')
+    expect(pageLinkAddress('https://example.org/apps/qs/?human-1')).toBe('https://example.org/apps/qs/#/page/human-1')
+  })
+
+  it('stays on the same site when the address has a doubled slash', () => {
+    expect(pageLinkAddress('https://qtistudio.libretexts.dev//?page=human-1')).toBe(
+      'https://qtistudio.libretexts.dev//#/page/human-1',
+    )
   })
 
   it.each(['', '?', '?utm_source=slack', '?debug', '?human-378488=1', '?human-1&chem-2', '#/page/human-1', '#/library?page=human-1'])(
     'leaves %j alone',
-    (rest) => {
-      expect(pageLinkAddress(APP + rest)).toBeNull()
+    (suffix) => {
+      expect(pageLinkAddress(APP + suffix)).toBeNull()
     },
   )
 

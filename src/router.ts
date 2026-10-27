@@ -22,19 +22,20 @@ export function useRoute(): string {
 }
 
 // A link to the app can open a LibreTexts page: ?page=<library>-<id>, or the
-// bare ?<library>-<id> next to any other parameters. The address it should
-// have instead is the route /page/<value>, with no query and in place of any
-// hash; Create checks the value and looks the page up. A link that names no
-// page gives null.
+// bare ?<library>-<id> next to any other parameters. It gives the same address
+// with no query and the route /page/<page> as its hash, or null when the link
+// names no page. Create checks the page and looks it up.
 export function pageLinkAddress(href: string): string | null {
   const url = new URL(href)
-  let value = url.searchParams.get('page')
-  if (value === null) {
-    const bare = [...url.searchParams].filter(([key, rest]) => rest === '' && PAGE_LINK.test(key))
+  let page = url.searchParams.get('page')
+  if (page === null) {
+    const bare = [...url.searchParams].filter(([key, value]) => value === '' && PAGE_LINK.test(key))
     if (bare.length !== 1) return null
-    value = bare[0][0]
+    page = bare[0][0]
   }
-  return `${url.pathname}#/page/${encodeURIComponent(value)}`
+  url.search = ''
+  url.hash = `/page/${encodeURIComponent(page)}`
+  return url.href
 }
 
 // The page a /page/<value> route names, or undefined for any other route.
