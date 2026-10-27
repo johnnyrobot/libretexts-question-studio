@@ -49,9 +49,10 @@ check of numerical explanations, the LibreTexts page normaliser, the QTI
 exporter and export history, backup and restore, the question editor, and the
 OpenAI answer-check setting.
 
-GitHub Actions (`.github/workflows/ci.yml`) runs lint, the tests and the build.
-It does not run the ADAPT importer check, so run that locally. It checks
-exported packages against ADAPT's real importer (PHP 7.4 compiled to
+GitHub Actions (`.github/workflows/ci.yml`) runs lint, the tests and the build,
+but not the ADAPT importer check below; run that one locally.
+
+To check exported packages against ADAPT's real importer (PHP 7.4 compiled to
 WebAssembly; needs the `../adapt` checkout):
 
 ```bash
