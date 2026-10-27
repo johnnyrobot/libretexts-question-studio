@@ -24,8 +24,9 @@ const BOOK = { '@id': '378400', title: 'HOLA Spanish 3 (Tseng Rosales and Lemari
 const TREE = { page: { '@id': '378488', title: PAGE.title, 'uri.ui': PAGE['uri.ui'], subpages: '' } }
 
 const CONTENTS = { body: '<p>Melquíades llegó a Macondo con una tribu de gitanos que vendían imanes y lupas.</p>' }
-// The bundled catalog, cut down to the book above and a book listed under
-// "mixed", a code that is not a license. The app loads it once per test file.
+// The bundled catalog, cut down to the book above, a book listed under
+// "mixed", a code that is not a license, and one under CK-12's own license.
+// The app loads it once per test file.
 const CATALOG = {
   generatedAt: '2026-10-06T03:25:33.782Z',
   books: [
@@ -41,6 +42,7 @@ const CATALOG = {
       n: 1,
     },
     { id: 'human-378401', t: 'Lecturas mixtas', a: '', l: 'human', s: '', c: '', lic: 'mixed', u: 'https://human.libretexts.org/Lecturas', n: 1 },
+    { id: 'human-378402', t: 'Álgebra básica', a: 'CK12', l: 'human', s: '', c: '', lic: 'ck12', u: 'https://human.libretexts.org/Algebra', n: 1 },
   ],
 }
 
@@ -238,5 +240,12 @@ describe('crediting the book a source comes from', () => {
     await chooseInBookSearch('Continue with 1 page', 'Lecturas mixtas')
     const [source] = await db.sources.toArray()
     expect(source.license).toBeNull()
+  })
+
+  it('names CK-12’s own license for a book the catalog lists under it', async () => {
+    libreTexts()
+    await chooseInBookSearch('Continue with 1 page', 'Álgebra básica')
+    const [source] = await db.sources.toArray()
+    expect(source.license).toEqual({ code: 'ck12', label: 'CK-12 License', version: null })
   })
 })

@@ -265,6 +265,9 @@ const LICENSE_LABELS: Record<string, string> = {
   gnu: 'GNU GPL',
   gnufdl: 'GNU FDL',
   arr: 'All rights reserved',
+  // Named as LibreTexts' own pages name them.
+  ck12: 'CK-12 License',
+  caltech: 'Caltech License',
 }
 
 // The name of a LibreTexts license code, or null for a code that names no one
