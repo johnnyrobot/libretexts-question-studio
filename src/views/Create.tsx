@@ -5,7 +5,7 @@ import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
 import { TocPicker } from '../components/TocPicker'
 import { loadCatalog, searchCatalog, type CatalogBook } from '../lib/content/catalog'
-import { getTree, LIBRARIES, parsePageLink, type Library, type TocNode } from '../lib/content/libretexts'
+import { getTree, LIBRARIES, licenseLabel, parsePageLink, type Library, type TocNode } from '../lib/content/libretexts'
 import {
   buildLibreTextsSource,
   buildPastedSource,
@@ -557,20 +557,8 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function licenseFromCatalog(code: string): StoredSource['license'] {
-  if (!code) return null
-  const labels: Record<string, string> = {
-    ccby: 'CC BY',
-    ccbysa: 'CC BY-SA',
-    ccbync: 'CC BY-NC',
-    ccbyncsa: 'CC BY-NC-SA',
-    ccbynd: 'CC BY-ND',
-    ccbyncnd: 'CC BY-NC-ND',
-    publicdomain: 'Public domain',
-    gnu: 'GNU GPL',
-    gnufdl: 'GNU FDL',
-    arr: 'All rights reserved',
-  }
   // Like a page's license tags, a code with no label (such as "mixed") names
   // no one license, so it is left for the instructor to fill in.
-  return labels[code] ? { code, label: labels[code], version: null } : null
+  const label = licenseLabel(code)
+  return label ? { code, label, version: null } : null
 }

@@ -267,6 +267,12 @@ const LICENSE_LABELS: Record<string, string> = {
   arr: 'All rights reserved',
 }
 
+// The name of a LibreTexts license code, or null for a code that names no one
+// license (such as "mixed") or that the app does not know.
+export function licenseLabel(code: string): string | null {
+  return LICENSE_LABELS[code] ?? null
+}
+
 // Port of content.py::_source_license_from_tags: only an unambiguous license
 // tag is reported; anything else is left for the instructor to fill in.
 export function licenseFromTags(tags: DekiTag[]): PageInfo['license'] {

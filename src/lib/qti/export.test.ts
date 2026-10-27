@@ -98,7 +98,7 @@ describe('exportSet', () => {
     expect(meta).not.toMatch(/review/i)
   })
 
-  it('writes the same bytes as before authorship for a source with nothing new to credit and no author', async () => {
+  it('writes the same bytes as before authorship for a pasted source with no link or license, and no author', async () => {
     // Taken on main at e1f63ef, before export authorship; change only on purpose.
     for (const author of [undefined, '', '   ']) {
       const set = await exportSet('set', { includeDrafts: false, randomizeMath: false, author })
@@ -169,6 +169,11 @@ describe('the credit for the source', () => {
       'a source saved before the app kept its book',
       PAGE,
       `Questions based on 4.2: La profecía de la gitana (${URL}). License: CC BY-NC-SA 4.0.`,
+    ],
+    [
+      'a book picked when the app kept a license code with no label as its own label',
+      { ...PAGE, license: { code: 'mixed', label: 'mixed', version: null }, book: BOOK },
+      `Questions based on 4.2: La profecía de la gitana (${URL}), from Lecturas intermedias by Erica Brown &amp; Elizabeth Small.`,
     ],
   ])('credits %s with what is known', async (_, source, credit) => {
     await db.sources.put(source)

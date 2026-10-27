@@ -91,7 +91,9 @@ function sourceCredit(source: StoredSource | undefined): string {
   if (source.url) credit += ` (${source.url})`
   if (book && !wholeBook) credit += `, from ${book.title}${byAuthor}`
   credit += '.'
-  if (license) credit += ` License: ${license.label}.`
+  // Book search once kept a code it had no label for, such as "mixed", as its
+  // own label; that names no one license.
+  if (license && license.label !== license.code) credit += ` License: ${license.label}.`
   return credit
 }
 
