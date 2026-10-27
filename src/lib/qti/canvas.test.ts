@@ -51,9 +51,11 @@ describe('canvas QTI package', () => {
         {
           id: 'question-studio-import-test',
           title: 'Question Studio — ADAPT import test (safe to delete)',
+          // Shaped like an export's own: the source credit, then the author.
           description:
-            'One question of every type, exported by LibreTexts Question Studio to test ADAPT import.\n\n' +
-            'Question author: Question Studio test',
+            'Questions based on 4.2: La profecía de la gitana (https://human.libretexts.org/@go/page/378488), ' +
+            'from ¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari) by Beatrice Tseng, Karla Lemari, Lisbeth Rosales. ' +
+            'License: CC BY-NC-SA 4.0.\n\nQuestion author: Question Studio test',
           items,
         },
       ], { author: 'Question Studio test' })
@@ -69,7 +71,7 @@ describe('canvas QTI package', () => {
     expect(createHash('sha256').update(zip).digest('hex')).toBe('afc38dd1a4181f7a4c858bcf8d1dd7e90eeeecd5d74deaea60590a9935bca383')
   })
 
-  it('names the question author in the manifest metadata, as a vCard', () => {
+  it('names the question author in the manifest metadata, as a vCard 3.0 with its required N', () => {
     const zip = buildQuizPackage([{ id: 'set-1', title: 'Quiz', items }], { author: 'Ruiz, Ana <ana@example.org> & Co' })
     const manifest = strFromU8(unzipSync(zip)['imsmanifest.xml'])
     expect(manifest).toContain(' xmlns:imsmd="http://www.imsglobal.org/xsd/imsmd_v1p2" ')
@@ -86,6 +88,7 @@ describe('canvas QTI package', () => {
         '<imsmd:entity>BEGIN:VCARD',
         'VERSION:3.0',
         'FN:Ruiz\\, Ana &lt;ana@example.org&gt; &amp; Co',
+        'N:;;;;',
         'END:VCARD</imsmd:entity>',
         '</imsmd:contribute>',
         '</imsmd:lifeCycle>',

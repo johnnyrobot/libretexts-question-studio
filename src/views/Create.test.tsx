@@ -24,7 +24,8 @@ const BOOK = { '@id': '378400', title: 'HOLA Spanish 3 (Tseng Rosales and Lemari
 const TREE = { page: { '@id': '378488', title: PAGE.title, 'uri.ui': PAGE['uri.ui'], subpages: '' } }
 
 const CONTENTS = { body: '<p>Melquíades llegó a Macondo con una tribu de gitanos que vendían imanes y lupas.</p>' }
-// The bundled catalog, cut down to the book above.
+// The bundled catalog, cut down to the book above and a book listed under
+// "mixed", a code that is not a license. The app loads it once per test file.
 const CATALOG = {
   generatedAt: '2026-10-06T03:25:33.782Z',
   books: [
@@ -39,6 +40,7 @@ const CATALOG = {
       u: 'https://human.libretexts.org/Bookshelves/Languages/Spanish',
       n: 1,
     },
+    { id: 'human-378401', t: 'Lecturas mixtas', a: '', l: 'human', s: '', c: '', lic: 'mixed', u: 'https://human.libretexts.org/Lecturas', n: 1 },
   ],
 }
 
@@ -174,6 +176,29 @@ describe('opening the app with no page link', () => {
 
 const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)
 
+// Finds the book in book search, ticks its content pages and continues.
+async function chooseInBookSearch(continueLabel: string, title = '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)') {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  act(() => root.render(<Create />))
+  cleanup = () => {
+    act(() => root.unmount())
+    container.remove()
+  }
+  await settle()
+  const search = container.querySelector<HTMLInputElement>('input[type="search"]')!
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, title)
+  await act(async () => search.dispatchEvent(new Event('input', { bubbles: true })))
+  const result = container.querySelector<HTMLButtonElement>('.result-list button')!
+  expect(result.querySelector('strong')?.textContent).toBe(title)
+  await act(async () => result.click())
+  await settle()
+  await act(async () => button('Select all content')!.click())
+  await act(async () => button(continueLabel)!.click())
+  await settle()
+}
+
 describe('crediting the book a source comes from', () => {
   it('keeps the book and its authors for a page from a link', async () => {
     libreTexts()
@@ -189,29 +214,29 @@ describe('crediting the book a source comes from', () => {
 
   it('keeps the book and its authors for pages chosen in book search', async () => {
     libreTexts()
-    const container = document.createElement('div')
-    document.body.append(container)
-    const root = createRoot(container)
-    act(() => root.render(<Create />))
-    cleanup = () => {
-      act(() => root.unmount())
-      container.remove()
-    }
-    await settle()
-    const search = container.querySelector<HTMLInputElement>('input[type="search"]')!
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'HOLA')
-    await act(async () => search.dispatchEvent(new Event('input', { bubbles: true })))
-    const result = container.querySelector<HTMLButtonElement>('.result-list button')!
-    expect(result.querySelector('strong')?.textContent).toBe('¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)')
-    await act(async () => result.click())
-    await settle()
-    await act(async () => button('Select all content')!.click())
-    await act(async () => button('Continue with 1 page')!.click())
-    await settle()
+    await chooseInBookSearch('Continue with 1 page')
     const [source] = await db.sources.toArray()
     expect(source.book).toEqual({
       title: '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)',
       author: 'Beatrice Tseng, Karla Lemari, Lisbeth Rosales',
     })
+  })
+
+  it('names pages from across a book in book search by the book’s own title', async () => {
+    const chapter = (id: string) => ({ '@id': id, title: `Chapter ${id}`, 'uri.ui': `https://human.libretexts.org/${id}`, subpages: '' })
+    libreTexts((target) =>
+      target.includes('/tree') ? { page: { '@id': '378400', title: BOOK.title, subpages: { page: [chapter('1'), chapter('2')] } } } : found(target),
+    )
+    await chooseInBookSearch('Continue with 2 pages')
+    const [source] = await db.sources.toArray()
+    expect(source.title).toBe('¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)')
+    expect(source.title).toBe(source.book?.title)
+  })
+
+  it('names no license for a book the catalog lists under a code that is not a license', async () => {
+    libreTexts()
+    await chooseInBookSearch('Continue with 1 page', 'Lecturas mixtas')
+    const [source] = await db.sources.toArray()
+    expect(source.license).toBeNull()
   })
 })

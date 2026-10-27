@@ -47,9 +47,10 @@ npm run catalog        # refresh public/catalog.json from LibreTexts Commons
 `npm test` runs only the tests under `src/`: the per-type schemas, the
 generation pipeline and its answer checks (with a scripted model), model output
 parsing and its JSON-escape guard, math formulas and versions, the arithmetic
-check of numerical explanations, the LibreTexts page normaliser, the QTI
-exporter and export history, backup and restore, the question editor, the
-OpenAI answer-check setting, and links that open the app on a LibreTexts page.
+check of numerical explanations, the LibreTexts page normaliser and book
+lookup, the QTI exporter with its author name and source credit, export
+history, backup and restore, the question editor, the OpenAI answer-check
+setting, and links that open the app on a LibreTexts page.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint, the tests and the build,
 but not the ADAPT importer check below; run that one locally.

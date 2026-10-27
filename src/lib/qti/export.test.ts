@@ -39,7 +39,7 @@ async function seed(drafts = SAMPLE_DRAFTS) {
   )
 }
 
-async function files(blob: Blob) {
+async function descriptionAndManifest(blob: Blob) {
   const entries = Object.entries(unzipSync(new Uint8Array(await blob.arrayBuffer())))
   const text = (end: string) => strFromU8(entries.find(([path]) => path.endsWith(end))![1])
   // The description is HTML inside XML: undo the XML escaping to read the HTML.
@@ -98,7 +98,7 @@ describe('exportSet', () => {
     expect(meta).not.toMatch(/review/i)
   })
 
-  it('writes the same bytes as before authorship when no author is given', async () => {
+  it('writes the same bytes as before authorship for a source with nothing new to credit and no author', async () => {
     // Taken on main at e1f63ef, before export authorship; change only on purpose.
     for (const author of [undefined, '', '   ']) {
       const set = await exportSet('set', { includeDrafts: false, randomizeMath: false, author })
@@ -113,7 +113,7 @@ describe('exportSet', () => {
       await exportSet('set', { includeDrafts: false, randomizeMath: false, author: '  Ana Ruiz ' }),
       await exportMathVersions('set', false, 3, '  Ana Ruiz '),
     ]) {
-      const { description, manifest } = await files(record.zip)
+      const { description, manifest } = await descriptionAndManifest(record.zip)
       expect(description).toBe('<div><p>Questions based on Leaves.</p><p>Question author: Ana Ruiz</p></div>')
       expect(manifest).toContain('\nFN:Ana Ruiz\n')
     }
@@ -173,13 +173,13 @@ describe('the credit for the source', () => {
   ])('credits %s with what is known', async (_, source, credit) => {
     await db.sources.put(source)
     const record = await exportSet('set', { includeDrafts: false, randomizeMath: false })
-    expect((await files(record.zip)).description).toBe(`<div><p>${credit}</p></div>`)
+    expect((await descriptionAndManifest(record.zip)).description).toBe(`<div><p>${credit}</p></div>`)
   })
 
   it('puts the source credit and the question author in the zip together', async () => {
     await db.sources.put({ ...PAGE, book: BOOK })
     const record = await exportSet('set', { includeDrafts: false, randomizeMath: false, author: 'Ana Ruiz' })
-    const { description, manifest } = await files(record.zip)
+    const { description, manifest } = await descriptionAndManifest(record.zip)
     expect(description).toBe(
       `<div><p>Questions based on 4.2: La profecía de la gitana (${URL}), from Lecturas intermedias by Erica Brown &amp; Elizabeth Small. License: CC BY-NC-SA 4.0.</p><p>Question author: Ana Ruiz</p></div>`,
     )

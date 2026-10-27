@@ -116,7 +116,7 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
       onSource(
         await buildLibreTextsSource({
           library: book.library,
-          title: pages.length === 1 ? pages[0].title : (tree?.title ?? book.title),
+          title: pages.length === 1 ? pages[0].title : book.title,
           url: pages.length === 1 ? pages[0].url : book.url,
           kind: pages.length === 1 ? 'page' : 'section',
           pages,
@@ -570,5 +570,7 @@ function licenseFromCatalog(code: string): StoredSource['license'] {
     gnufdl: 'GNU FDL',
     arr: 'All rights reserved',
   }
-  return { code, label: labels[code] ?? code, version: null }
+  // Like a page's license tags, a code with no label (such as "mixed") names
+  // no one license, so it is left for the instructor to fill in.
+  return labels[code] ? { code, label: labels[code], version: null } : null
 }

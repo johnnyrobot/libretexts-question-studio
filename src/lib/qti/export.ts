@@ -36,9 +36,9 @@ export async function exportMathVersions(
   setId: string,
   includeDrafts: boolean,
   versions: number,
-  typedAuthor?: string,
+  questionAuthor?: string,
 ): Promise<StoredExport> {
-  const { set, description, author, items } = await load(setId, includeDrafts, typedAuthor)
+  const { set, description, author, items } = await load(setId, includeDrafts, questionAuthor)
   const math = items.filter((item): item is StoredItem & { draft: DraftOf<'math'> } => item.draft.item_type === 'math')
   if (math.length === 0) throw new Error('There are no math questions to export.')
   const quizzes: QuizPackageInput[] = math.map((item) => {
@@ -62,7 +62,7 @@ export async function exportMathVersions(
   return save(setId, `${slug(set.title)}-math-versions-adapt-qti.zip`, math, buildQuizPackage(quizzes, { author }))
 }
 
-async function load(setId: string, includeDrafts: boolean, typedAuthor = '') {
+async function load(setId: string, includeDrafts: boolean, questionAuthor = '') {
   const set = await db.sets.get(setId)
   if (!set) throw new Error('That question set no longer exists.')
   const source = await db.sources.get(set.sourceId)
@@ -74,7 +74,7 @@ async function load(setId: string, includeDrafts: boolean, typedAuthor = '') {
   }
   // ADAPT shows this to students as the assignment's instructions when a quiz
   // is imported into a course, so it carries no notes meant for instructors.
-  const author = typedAuthor.trim()
+  const author = questionAuthor.trim()
   const credit = sourceCredit(source)
   const description = author ? `${credit}\n\nQuestion author: ${author}` : credit
   return { set, description, author, items }

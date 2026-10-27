@@ -88,9 +88,10 @@ function buildManifestXml(identifier: string, resources: string[], author = ''):
   ].join('\n')
 }
 
-// IEEE LOM in the imsmd namespace and shape of Canvas's QTI export manifests.
-// The author is a lifeCycle contributor with the role "author", named by a
-// vCard 3.0 whose text escapes \ , and ;.
+// IEEE LOM in the imsmd namespace and lom/lifeCycle/contribute shape that
+// Canvas's exports use (Canvas names only a date there). The author is a
+// contributor with the LOM role "author", named by a vCard 3.0: FN escapes
+// \ , and ;, and the required N is left empty rather than guessed.
 function authorLom(author: string): string {
   const name = oneLine(author).replace(/[\\,;]/g, (c) => `\\${c}`)
   return [
@@ -101,7 +102,7 @@ function authorLom(author: string): string {
     '<imsmd:source>LOMv1.0</imsmd:source>',
     '<imsmd:value>author</imsmd:value>',
     '</imsmd:role>',
-    `<imsmd:entity>BEGIN:VCARD\nVERSION:3.0\nFN:${xml(name)}\nEND:VCARD</imsmd:entity>`,
+    `<imsmd:entity>BEGIN:VCARD\nVERSION:3.0\nFN:${xml(name)}\nN:;;;;\nEND:VCARD</imsmd:entity>`,
     '</imsmd:contribute>',
     '</imsmd:lifeCycle>',
     '</imsmd:lom>',

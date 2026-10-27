@@ -387,6 +387,7 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
     setAuthor(value)
     void putSetting(EXPORT_AUTHOR, value)
   }
+  const authorName = author ?? ''
 
   const running = generation.running && generation.setId === set.id
   const approved = items.filter((item) => item.status === 'approved').length
@@ -431,14 +432,14 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
                 type="button"
                 className="primary"
                 disabled={exportable === 0 || running}
-                onClick={() => download(() => exportSet(set.id, { includeDrafts, randomizeMath, author: author ?? '' }))}
+                onClick={() => download(() => exportSet(set.id, { includeDrafts, randomizeMath, author: authorName }))}
               >
                 <Icon name="download" /> Download
               </button>
             </div>
             <label>
               Author name <small>(optional)</small>
-              <input value={author ?? ''} onChange={(e) => changeAuthor(e.target.value)} autoComplete="name" />
+              <input value={authorName} onChange={(e) => changeAuthor(e.target.value)} autoComplete="name" />
               <small>
                 Named as the questions’ author in the file and in each quiz’s instructions, which students see. Remembered in
                 this browser only.
@@ -495,7 +496,7 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
                         onChange={(e) => setVersions(Math.min(MAX_VERSIONS, Math.max(2, Math.round(Number(e.target.value)) || 2)))}
                       />
                     </label>
-                    <button type="button" disabled={running} onClick={() => download(() => exportMathVersions(set.id, includeDrafts, versions, author ?? ''))}>
+                    <button type="button" disabled={running} onClick={() => download(() => exportMathVersions(set.id, includeDrafts, versions, authorName))}>
                       <Icon name="download" /> Download math versions
                     </button>
                   </div>

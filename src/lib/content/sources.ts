@@ -1,4 +1,4 @@
-import { db, newId, type SourcePage, type StoredSource } from '../storage/db'
+import { db, newId, type SourceBook, type SourcePage, type StoredSource } from '../storage/db'
 import { findCatalogBook } from './catalog'
 import {
   bookCoverPath,
@@ -20,7 +20,7 @@ export interface ResolvedUrl {
   page: PageInfo
   tree: TocNode
   // The book the page is in, with its authors when the catalog knows them.
-  book: { id: string; title: string; author: string | null } | null
+  book: (SourceBook & { id: string }) | null
 }
 
 // A pasted URL may point at a page, a chapter, or a whole book; its tree tells
@@ -67,7 +67,7 @@ export async function buildLibreTextsSource(options: {
   kind: StoredSource['kind']
   pages: TocNode[]
   license: StoredSource['license']
-  book?: StoredSource['book']
+  book?: SourceBook
   signal?: AbortSignal
   onProgress?: (done: number, total: number) => void
 }): Promise<StoredSource> {
