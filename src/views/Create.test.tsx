@@ -2,7 +2,8 @@
 import 'fake-indexeddb/auto'
 import { act, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { db } from '../lib/storage/db'
 import { Create } from './Create'
 
 declare global {
@@ -22,7 +23,35 @@ const PAGE = {
 const BOOK = { '@id': '378400', title: 'HOLA Spanish 3 (Tseng Rosales and Lemari)', path: { '#text': 'Bookshelves/Languages/Spanish' } }
 const TREE = { page: { '@id': '378488', title: PAGE.title, 'uri.ui': PAGE['uri.ui'], subpages: '' } }
 
-const found = (target: string) => (target.includes('/tree') ? TREE : target.includes('/pages/=') ? BOOK : PAGE)
+const CONTENTS = { body: '<p>Melquíades llegó a Macondo con una tribu de gitanos que vendían imanes y lupas.</p>' }
+// The bundled catalog, cut down to the book above.
+const CATALOG = {
+  generatedAt: '2026-10-06T03:25:33.782Z',
+  books: [
+    {
+      id: 'human-378400',
+      t: '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)',
+      a: 'Beatrice Tseng, Karla Lemari, Lisbeth Rosales',
+      l: 'human',
+      s: 'Languages',
+      c: '',
+      lic: 'ccbyncsa',
+      u: 'https://human.libretexts.org/Bookshelves/Languages/Spanish',
+      n: 1,
+    },
+  ],
+}
+
+const found = (target: string) =>
+  target.endsWith('catalog.json')
+    ? CATALOG
+    : target.includes('/contents')
+      ? CONTENTS
+      : target.includes('/tree')
+        ? TREE
+        : target.includes('/pages/=')
+          ? BOOK
+          : PAGE
 
 function libreTexts(answer: (target: string) => unknown = found) {
   const fetch = vi.fn(async (url: string) => new Response(JSON.stringify(await answer(url))))
@@ -34,6 +63,10 @@ let cleanup: (() => void) | null = null
 afterEach(() => {
   cleanup?.()
   vi.unstubAllGlobals()
+})
+
+beforeEach(async () => {
+  await db.sources.clear()
 })
 
 // Lets the stubbed lookups reach the page.
@@ -136,5 +169,49 @@ describe('opening the app with no page link', () => {
       container.remove()
     }
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Find a book')
+  })
+})
+
+const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)
+
+describe('crediting the book a source comes from', () => {
+  it('keeps the book and its authors for a page from a link', async () => {
+    libreTexts()
+    await openLink('human-378488')
+    await act(async () => button('Continue with 1 page')!.click())
+    await settle()
+    const [source] = await db.sources.toArray()
+    expect(source.book).toEqual({
+      title: 'HOLA Spanish 3 (Tseng Rosales and Lemari)',
+      author: 'Beatrice Tseng, Karla Lemari, Lisbeth Rosales',
+    })
+  })
+
+  it('keeps the book and its authors for pages chosen in book search', async () => {
+    libreTexts()
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => root.render(<Create />))
+    cleanup = () => {
+      act(() => root.unmount())
+      container.remove()
+    }
+    await settle()
+    const search = container.querySelector<HTMLInputElement>('input[type="search"]')!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'HOLA')
+    await act(async () => search.dispatchEvent(new Event('input', { bubbles: true })))
+    const result = container.querySelector<HTMLButtonElement>('.result-list button')!
+    expect(result.querySelector('strong')?.textContent).toBe('¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)')
+    await act(async () => result.click())
+    await settle()
+    await act(async () => button('Select all content')!.click())
+    await act(async () => button('Continue with 1 page')!.click())
+    await settle()
+    const [source] = await db.sources.toArray()
+    expect(source.book).toEqual({
+      title: '¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)',
+      author: 'Beatrice Tseng, Karla Lemari, Lisbeth Rosales',
+    })
   })
 })

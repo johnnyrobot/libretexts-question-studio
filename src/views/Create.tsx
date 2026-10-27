@@ -121,6 +121,7 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
           kind: pages.length === 1 ? 'page' : 'section',
           pages,
           license: licenseFromCatalog(book.license),
+          book: { title: book.title, author: book.author || null },
           onProgress: (done, total) => setProgress(`Loading page ${done} of ${total}…`),
         }),
       )
@@ -288,6 +289,7 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
           kind: resolved.tree.children.length === 0 ? 'page' : isBook ? 'book' : 'section',
           pages,
           license: resolved.page.license,
+          book: resolved.book ? { title: resolved.book.title, author: resolved.book.author } : undefined,
           onProgress: (done, total) => setProgress(`Loading page ${done} of ${total}…`),
         }),
       )

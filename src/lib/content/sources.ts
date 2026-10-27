@@ -67,6 +67,7 @@ export async function buildLibreTextsSource(options: {
   kind: StoredSource['kind']
   pages: TocNode[]
   license: StoredSource['license']
+  book?: StoredSource['book']
   signal?: AbortSignal
   onProgress?: (done: number, total: number) => void
 }): Promise<StoredSource> {
@@ -98,6 +99,7 @@ export async function buildLibreTextsSource(options: {
     library: options.library,
     url: options.url,
     license: options.license,
+    ...(options.book && { book: options.book }),
     pages: readable,
     createdAt: Date.now(),
   }
