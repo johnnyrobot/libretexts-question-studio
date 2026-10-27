@@ -255,14 +255,11 @@ describe('crediting the book a source comes from', () => {
   })
 
   it('credits a linked page on its own when the catalog lists no book above it', async () => {
-    const url = 'https://human.libretexts.org/Bookshelves/Languages/French/Nouveau/01/1.01'
-    const page = { ...PAGE, path: { '#text': 'Bookshelves/Languages/French/Nouveau/01/1.01' }, 'uri.ui': url }
+    const path = 'Bookshelves/Languages/French/Nouveau/01/1.01'
+    const url = `https://human.libretexts.org/${path}`
+    const page = { ...PAGE, path: { '#text': path }, 'uri.ui': url }
     libreTexts((target) =>
-      target.endsWith('catalog.json') || target.includes('/contents')
-        ? found(target)
-        : target.includes('/tree')
-          ? { page: { ...TREE.page, 'uri.ui': url } }
-          : page,
+      target.includes('/tree') ? { page: { ...TREE.page, 'uri.ui': url } } : target.includes('/pages/378488?') ? page : found(target),
     )
     const view = await openLink('human-378488')
     expect(view.text()).not.toContain('From “')

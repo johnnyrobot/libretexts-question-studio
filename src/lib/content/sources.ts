@@ -18,7 +18,8 @@ import { normalizeHtml, normalizePlainText, withPageNumbers } from './normalize'
 export interface ResolvedUrl {
   page: PageInfo
   tree: TocNode
-  // The book the page is in, with its authors when the catalog knows them.
+  // The book the page is in, with its authors when the catalog knows them, or
+  // null when the catalog does not list it for certain.
   book: (SourceBook & { id: string }) | null
 }
 
@@ -29,9 +30,8 @@ export async function resolveUrl(input: string, signal?: AbortSignal): Promise<R
   const page = await getPageInfo(ref, signal)
   const tree = await getTree(page.library, page.id, signal)
   let book: ResolvedUrl['book'] = null
-  // The book is the catalog's, which may be filed at any depth. A page whose
-  // book the catalog does not list is credited on its own rather than to a
-  // guess, which could name a shelf.
+  // Only a book the catalog lists above the page is named; otherwise the page
+  // is credited on its own.
   const cover = await catalogBookPath(page.library, page.path)
   if (cover) {
     try {
