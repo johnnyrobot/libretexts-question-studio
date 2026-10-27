@@ -1,7 +1,6 @@
 import { db, newId, type SourceBook, type SourcePage, type StoredSource } from '../storage/db'
 import { catalogBookPath, findCatalogBook } from './catalog'
 import {
-  bookCoverPath,
   getContentsHtml,
   getPageInfo,
   getTree,
@@ -19,7 +18,8 @@ import { normalizeHtml, normalizePlainText, withPageNumbers } from './normalize'
 export interface ResolvedUrl {
   page: PageInfo
   tree: TocNode
-  // The book the page is in, with its authors when the catalog knows them.
+  // The book the page is in, with its authors when the catalog knows them, or
+  // null when the catalog does not list it or its cover page could not be read.
   book: (SourceBook & { id: string }) | null
 }
 
@@ -30,9 +30,9 @@ export async function resolveUrl(input: string, signal?: AbortSignal): Promise<R
   const page = await getPageInfo(ref, signal)
   const tree = await getTree(page.library, page.id, signal)
   let book: ResolvedUrl['book'] = null
-  // A book the catalog has may be filed at any depth; otherwise assume the
-  // usual depth of three.
-  const cover = (await catalogBookPath(page.library, page.path)) ?? bookCoverPath(page.path)
+  // Only a book the catalog lists above the page is named; otherwise the page
+  // is credited on its own.
+  const cover = await catalogBookPath(page.library, page.path)
   if (cover) {
     try {
       const coverInfo = cover === page.path ? page : await getPageInfo({ library: page.library, path: cover }, signal)

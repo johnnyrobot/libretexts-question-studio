@@ -29,6 +29,25 @@ const CATALOG = {
       id: 'human-130555', t: '5.9: Wilde, Oscar', a: 'Heather Ringo', l: 'human', s: '', c: '', lic: 'ccby',
       u: 'https://human.libretexts.org/Courses/Butte_College/Critical_Thinking/05/5.09%3A_Wilde', n: null,
     },
+    // A campus listed as a book, with a book of its own listed inside it whose
+    // page count the catalog does not know.
+    {
+      id: 'human-140000', t: 'University of the Pacific', a: '', l: 'human', s: '', c: '', lic: 'ccby',
+      u: 'https://human.libretexts.org/Courses/University_of_the_Pacific', n: 644,
+    },
+    {
+      id: 'human-140001', t: 'Reading Poetry', a: 'Lia Moreno', l: 'human', s: '', c: '', lic: 'ccby',
+      u: 'https://human.libretexts.org/Courses/University_of_the_Pacific/Reading_Poetry', n: null,
+    },
+    // A book with one of its parts listed as a book too.
+    {
+      id: 'human-150000', t: 'Spiral Physics', a: 'Paul D’Alessandris', l: 'human', s: '', c: '', lic: 'ccbyncsa',
+      u: 'https://human.libretexts.org/Bookshelves/Physics/Spiral_Physics', n: 634,
+    },
+    {
+      id: 'human-150001', t: 'Spiral Mechanics', a: 'Paul D’Alessandris', l: 'human', s: '', c: '', lic: 'ccbyncsa',
+      u: 'https://human.libretexts.org/Bookshelves/Physics/Spiral_Physics/Spiral_Mechanics', n: 567,
+    },
   ],
 }
 const HOLA = 'Courses/Irvine_Valley_College/HOLA_Spanish_3_(Tseng_Rosales_and_Lemari)'
@@ -64,11 +83,16 @@ describe('looking up a pasted link', () => {
     })
   })
 
-  it('names no author for a book the catalog does not have', async () => {
-    const cover = 'Courses/Irvine_Valley_College/HOLA_Spanish_4'
-    libreTexts(`${cover}/04/4.02`, { [cover]: { id: '400000', title: 'HOLA Spanish 4' } })
+  // A book missing from the catalog may sit at any depth, so a guess could name
+  // its shelf or campus; the page is credited on its own instead (LT-75).
+  it.each([
+    ['filed on a shelf', 'Bookshelves/Languages/Spanish', 'Bookshelves/Languages/Spanish/Lecturas_nuevas/01:_Uno/1.01:_Hola'],
+    ['at the usual depth', 'Courses/Irvine_Valley_College/HOLA_Spanish_4', 'Courses/Irvine_Valley_College/HOLA_Spanish_4/04/4.02'],
+    ['in a campus the catalog lists as a book', 'Courses/University_of_the_Pacific', 'Courses/University_of_the_Pacific/Drama/01/1.01'],
+  ])('names no book for a page the catalog lists no book above for certain, %s', async (_, guess, path) => {
+    libreTexts(path, { [guess]: { id: '400000', title: guess.split('/').pop()! } })
     const { book } = await resolveUrl('https://human.libretexts.org/@go/page/378488')
-    expect(book).toEqual({ id: 'human-400000', title: 'HOLA Spanish 4', author: null })
+    expect(book).toBeNull()
   })
 
   it('finds a book filed deeper than a shelf, not the shelf', async () => {
@@ -78,6 +102,23 @@ describe('looking up a pasted link', () => {
     })
     const { book } = await resolveUrl('https://human.libretexts.org/@go/page/378488')
     expect(book).toEqual({ id: 'human-120001', title: 'On y va: French I', author: 'Ana Ruiz' })
+  })
+
+  it('finds a book listed inside a campus the catalog lists as a book', async () => {
+    libreTexts('Courses/University_of_the_Pacific/Reading_Poetry/01/1.01', {
+      'Courses/University_of_the_Pacific': { id: '140000', title: 'University of the Pacific' },
+      'Courses/University_of_the_Pacific/Reading_Poetry': { id: '140001', title: 'Reading Poetry' },
+    })
+    const { book } = await resolveUrl('https://human.libretexts.org/@go/page/378488')
+    expect(book).toEqual({ id: 'human-140001', title: 'Reading Poetry', author: 'Lia Moreno' })
+  })
+
+  it('names the book for a page outside a part of it the catalog also lists', async () => {
+    libreTexts('Bookshelves/Physics/Spiral_Physics/Spiral_Waves/1.01', {
+      'Bookshelves/Physics/Spiral_Physics': { id: '150000', title: 'Spiral Physics' },
+    })
+    const { book } = await resolveUrl('https://human.libretexts.org/@go/page/378488')
+    expect(book).toEqual({ id: 'human-150000', title: 'Spiral Physics', author: 'Paul D’Alessandris' })
   })
 
   it('names the book, not one of its pages the catalog also lists', async () => {
