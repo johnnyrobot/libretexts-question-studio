@@ -46,7 +46,13 @@ export interface QuizPackageInput {
   pointsPerItem?: number
 }
 
-export function buildQuizPackage(quizzes: QuizPackageInput[]): Uint8Array {
+export interface PackageOptions {
+  // Who wrote the questions. ADAPT ignores the manifest's metadata, so the
+  // export also names them in each quiz's description.
+  author?: string
+}
+
+export function buildQuizPackage(quizzes: QuizPackageInput[], options: PackageOptions = {}): Uint8Array {
   if (quizzes.length === 0) throw new Error('Nothing to export.')
   const files: Record<string, Uint8Array> = {}
   const resources: string[] = []
@@ -60,23 +66,45 @@ export function buildQuizPackage(quizzes: QuizPackageInput[]): Uint8Array {
       `<resource identifier="${dir}_meta" type="associatedcontent/imscc_xmlv1p1/learning-application-resource" href="${dir}/assessment_meta.xml">\n<file href="${dir}/assessment_meta.xml"/>\n</resource>`,
     )
   }
-  files['imsmanifest.xml'] = strToU8(buildManifestXml(ident(quizzes[0].id) + '_manifest', resources))
+  files['imsmanifest.xml'] = strToU8(buildManifestXml(ident(quizzes[0].id) + '_manifest', resources, options.author))
   // A fixed local-time stamp keeps the archive byte-stable for the same content
   // (zip stores local DOS time, so a UTC date would shift with the time zone).
   return zipSync(files, { level: 9, mtime: new Date(2000, 0, 1) })
 }
 
-function buildManifestXml(identifier: string, resources: string[]): string {
+function buildManifestXml(identifier: string, resources: string[], author = ''): string {
+  // With no author the manifest stays exactly as it was before authorship.
+  const lom = author.trim() ? `\n${authorLom(author)}` : ''
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<manifest identifier="${identifier}" xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1 http://www.imsglobal.org/xsd/imscp_v1p1.xsd">`,
-    '<metadata>\n<schema>IMS Content</schema>\n<schemaversion>1.1.3</schemaversion>\n</metadata>',
+    `<manifest identifier="${identifier}" xmlns="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1"${lom && ' xmlns:imsmd="http://www.imsglobal.org/xsd/imsmd_v1p2"'} xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.imsglobal.org/xsd/imsccv1p1/imscp_v1p1 http://www.imsglobal.org/xsd/imscp_v1p1.xsd">`,
+    `<metadata>\n<schema>IMS Content</schema>\n<schemaversion>1.1.3</schemaversion>${lom}\n</metadata>`,
     '<organizations/>',
     '<resources>',
     ...resources,
     '</resources>',
     '</manifest>',
     '',
+  ].join('\n')
+}
+
+// IEEE LOM in the imsmd namespace and shape of Canvas's QTI export manifests.
+// The author is a lifeCycle contributor with the role "author", named by a
+// vCard 3.0 whose text escapes \ , and ;.
+function authorLom(author: string): string {
+  const name = oneLine(author).replace(/[\\,;]/g, (c) => `\\${c}`)
+  return [
+    '<imsmd:lom>',
+    '<imsmd:lifeCycle>',
+    '<imsmd:contribute>',
+    '<imsmd:role>',
+    '<imsmd:source>LOMv1.0</imsmd:source>',
+    '<imsmd:value>author</imsmd:value>',
+    '</imsmd:role>',
+    `<imsmd:entity>BEGIN:VCARD\nVERSION:3.0\nFN:${xml(name)}\nEND:VCARD</imsmd:entity>`,
+    '</imsmd:contribute>',
+    '</imsmd:lifeCycle>',
+    '</imsmd:lom>',
   ].join('\n')
 }
 

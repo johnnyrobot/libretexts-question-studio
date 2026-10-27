@@ -1,4 +1,5 @@
 import { unzipSync, strFromU8 } from 'fflate'
+import { createHash } from 'node:crypto'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { checkModelDraft, parseDraft, typedAnswerProblem, type DraftOf, type ItemType } from '../generation/schema'
@@ -50,13 +51,48 @@ describe('canvas QTI package', () => {
         {
           id: 'question-studio-import-test',
           title: 'Question Studio — ADAPT import test (safe to delete)',
-          description: 'One question of every type, exported by LibreTexts Question Studio to test ADAPT import.',
+          description:
+            'One question of every type, exported by LibreTexts Question Studio to test ADAPT import.\n\n' +
+            'Question author: Question Studio test',
           items,
         },
-      ])
+      ], { author: 'Question Studio test' })
       writeFileSync('tests/adapt-parser/out/sample.zip', sample)
       writeFileSync('tests/adapt-parser/out/expectations.json', JSON.stringify(SAMPLE_DRAFTS.map(adaptExpectation), null, 2))
     }
+  })
+
+  it('builds the same bytes as before authorship when no author is given', () => {
+    // Taken on main at e1f63ef, before export authorship. An export with no
+    // author must stay byte-for-byte what it was; change this only on purpose.
+    const zip = buildQuizPackage([{ id: 'set-1', title: 'Chapter 1 Quiz', description: 'Questions based on Leaves.', items }])
+    expect(createHash('sha256').update(zip).digest('hex')).toBe('afc38dd1a4181f7a4c858bcf8d1dd7e90eeeecd5d74deaea60590a9935bca383')
+  })
+
+  it('names the question author in the manifest metadata, as a vCard', () => {
+    const zip = buildQuizPackage([{ id: 'set-1', title: 'Quiz', items }], { author: 'Ruiz, Ana <ana@example.org> & Co' })
+    const manifest = strFromU8(unzipSync(zip)['imsmanifest.xml'])
+    expect(manifest).toContain(' xmlns:imsmd="http://www.imsglobal.org/xsd/imsmd_v1p2" ')
+    expect(manifest).toContain(
+      [
+        '<schemaversion>1.1.3</schemaversion>',
+        '<imsmd:lom>',
+        '<imsmd:lifeCycle>',
+        '<imsmd:contribute>',
+        '<imsmd:role>',
+        '<imsmd:source>LOMv1.0</imsmd:source>',
+        '<imsmd:value>author</imsmd:value>',
+        '</imsmd:role>',
+        '<imsmd:entity>BEGIN:VCARD',
+        'VERSION:3.0',
+        'FN:Ruiz\\, Ana &lt;ana@example.org&gt; &amp; Co',
+        'END:VCARD</imsmd:entity>',
+        '</imsmd:contribute>',
+        '</imsmd:lifeCycle>',
+        '</imsmd:lom>',
+        '</metadata>',
+      ].join('\n'),
+    )
   })
 
   it('is byte-stable for the same content', () => {

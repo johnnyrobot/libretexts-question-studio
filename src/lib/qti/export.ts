@@ -1,6 +1,6 @@
 import type { DraftOf } from '../generation/schema'
 import { compileMath, MathSpecError } from '../math/spec'
-import { db, newId, type StoredExport, type StoredItem } from '../storage/db'
+import { db, newId, type StoredExport, type StoredItem, type StoredSource } from '../storage/db'
 import { buildQuizPackage, mathVersion, type QuizPackageInput } from './canvas'
 
 // Builds the ADAPT-importable QTI zips for a set and keeps a copy in IndexedDB
@@ -15,22 +15,30 @@ import { buildQuizPackage, mathVersion, type QuizPackageInput } from './canvas'
 export interface ExportOptions {
   includeDrafts: boolean
   randomizeMath: boolean
+  // Who wrote the questions, as typed at export; blank names no one.
+  author?: string
 }
 
 export async function exportSet(setId: string, options: ExportOptions): Promise<StoredExport> {
-  const { set, description, items } = await load(setId, options.includeDrafts)
+  const { set, description, author, items } = await load(setId, options.includeDrafts, options.author)
   const quizItems = options.randomizeMath ? items.filter((item) => item.draft.item_type !== 'math') : items
   if (quizItems.length === 0) {
     throw new Error('Every question to export is a math question; download them with “Download math versions”.')
   }
-  const zip = buildQuizPackage([
-    { id: set.id, title: set.title, description, items: quizItems.map((item) => ({ id: item.id, draft: item.draft })) },
-  ])
+  const zip = buildQuizPackage(
+    [{ id: set.id, title: set.title, description, items: quizItems.map((item) => ({ id: item.id, draft: item.draft })) }],
+    { author },
+  )
   return save(setId, `${slug(set.title)}-adapt-qti.zip`, quizItems, zip)
 }
 
-export async function exportMathVersions(setId: string, includeDrafts: boolean, versions: number): Promise<StoredExport> {
-  const { set, description, items } = await load(setId, includeDrafts)
+export async function exportMathVersions(
+  setId: string,
+  includeDrafts: boolean,
+  versions: number,
+  typedAuthor?: string,
+): Promise<StoredExport> {
+  const { set, description, author, items } = await load(setId, includeDrafts, typedAuthor)
   const math = items.filter((item): item is StoredItem & { draft: DraftOf<'math'> } => item.draft.item_type === 'math')
   if (math.length === 0) throw new Error('There are no math questions to export.')
   const quizzes: QuizPackageInput[] = math.map((item) => {
@@ -51,10 +59,10 @@ export async function exportMathVersions(setId: string, includeDrafts: boolean, 
       })),
     }
   })
-  return save(setId, `${slug(set.title)}-math-versions-adapt-qti.zip`, math, buildQuizPackage(quizzes))
+  return save(setId, `${slug(set.title)}-math-versions-adapt-qti.zip`, math, buildQuizPackage(quizzes, { author }))
 }
 
-async function load(setId: string, includeDrafts: boolean) {
+async function load(setId: string, includeDrafts: boolean, typedAuthor = '') {
   const set = await db.sets.get(setId)
   if (!set) throw new Error('That question set no longer exists.')
   const source = await db.sources.get(set.sourceId)
@@ -66,10 +74,25 @@ async function load(setId: string, includeDrafts: boolean) {
   }
   // ADAPT shows this to students as the assignment's instructions when a quiz
   // is imported into a course, so it carries no notes meant for instructors.
-  const description = source?.url
-    ? `Questions based on ${source.title} (${source.url}).`
-    : `Questions based on ${source?.title ?? 'a LibreTexts source'}.`
-  return { set, description, items }
+  const author = typedAuthor.trim()
+  const credit = sourceCredit(source)
+  const description = author ? `${credit}\n\nQuestion author: ${author}` : credit
+  return { set, description, author, items }
+}
+
+// Credits the source with what is known of its title, author, link and
+// license, the attribution its license asks for.
+function sourceCredit(source: StoredSource | undefined): string {
+  if (!source) return 'Questions based on a LibreTexts source.'
+  const { book, license } = source
+  const byAuthor = book?.author ? ` by ${book.author}` : ''
+  const wholeBook = book?.title === source.title
+  let credit = `Questions based on ${source.title}${wholeBook ? byAuthor : ''}`
+  if (source.url) credit += ` (${source.url})`
+  if (book && !wholeBook) credit += `, from ${book.title}${byAuthor}`
+  credit += '.'
+  if (license) credit += ` License: ${license.label}.`
+  return credit
 }
 
 async function save(setId: string, filename: string, items: StoredItem[], zip: Uint8Array): Promise<StoredExport> {

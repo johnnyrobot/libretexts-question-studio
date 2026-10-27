@@ -25,6 +25,9 @@ export interface StoredSource {
   library: string | null
   url: string | null
   license: SourceLicense | null
+  // The book a LibreTexts source comes from, for crediting it. Sources saved
+  // before the app kept it have none.
+  book?: { title: string; author: string | null }
   pages: SourcePage[]
   createdAt: number
 }
