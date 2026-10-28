@@ -93,24 +93,29 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
     [books, query, library],
   )
 
-  // Counts the books opened, so contents that arrive after the instructor has
-  // gone back and opened another book are dropped, never filed under it.
-  const opened = useRef(0)
+  // Going back, or opening another book, cancels the contents still loading,
+  // so they are never shown or saved under a book they don't belong to.
+  const loading = useRef<AbortController | null>(null)
   const open = async (choice: CatalogBook) => {
-    const request = ++opened.current
+    loading.current?.abort()
+    const { signal } = (loading.current = new AbortController())
     setBook(choice)
     setTree(null)
     setError(null)
     setBusy(true)
     try {
       const coverId = choice.id.slice(choice.id.indexOf('-') + 1)
-      const contents = await getTree(choice.library, coverId)
-      if (request === opened.current) setTree(contents)
+      const contents = await getTree(choice.library, coverId, signal)
+      if (!signal.aborted) setTree(contents)
     } catch (e) {
-      if (request === opened.current) setError(e instanceof Error ? e.message : String(e))
+      if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      if (request === opened.current) setBusy(false)
+      if (!signal.aborted) setBusy(false)
     }
+  }
+  const back = () => {
+    loading.current?.abort()
+    setBook(null)
   }
 
   const confirm = async (pages: TocNode[]) => {
@@ -141,7 +146,7 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
   if (book) {
     return (
       <div>
-        <button type="button" className="link back-link text-link" onClick={() => setBook(null)}>
+        <button type="button" className="link back-link text-link" onClick={back}>
           <Icon name="arrow-left" size={18} /> Back to search results
         </button>
         <h2>{book.title}</h2>

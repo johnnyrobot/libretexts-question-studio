@@ -246,7 +246,7 @@ describe('opening one book after another in book search', () => {
     const OTHER_TREE = { page: tocNode('378401', 'Lecturas mixtas', [tocNode('9.1', '9.1: Lectura')]) }
     let answerFirstBook = () => {}
     const firstBookAnswered = new Promise<void>((resolve) => (answerFirstBook = resolve))
-    libreTexts(async (target) => {
+    const fetch = libreTexts(async (target) => {
       if (target.includes('/378400/tree')) {
         await firstBookAnswered
         return BOOK_TREE
@@ -274,6 +274,8 @@ describe('opening one book after another in book search', () => {
     await act(async () => button('Back to search results')!.click())
     await openBook('Lecturas mixtas')
     await settle()
+    const firstBookLoad = fetch.mock.calls.find(([url]) => url.includes('/378400/tree')) as unknown as [string, RequestInit]
+    expect(firstBookLoad[1].signal?.aborted).toBe(true)
     await act(async () => answerFirstBook())
     await settle()
 
