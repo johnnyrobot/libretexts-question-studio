@@ -220,7 +220,7 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
           </button>
           {(running || elsewhere) && (
             <p className="fine" id="delete-wait">
-              Delete it once its questions are written.
+              {elsewhere && 'Being written in another tab. '}Delete it once its questions are written.
             </p>
           )}
         </div>

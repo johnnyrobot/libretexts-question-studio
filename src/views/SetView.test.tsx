@@ -150,7 +150,7 @@ describe('a set being written in another tab', () => {
     const { container, deleteButton } = await render('review')
     expect(container.textContent).toContain('Questions are being written in another tab.')
     expect(deleteButton().disabled).toBe(true)
-    expect(container.querySelector('.page-foot')?.textContent).toContain('Delete it once its questions are written.')
+    expect(container.querySelector('.page-foot')?.textContent).toContain('Being written in another tab. Delete it once its questions are written.')
     locks.closeTab()
   })
 

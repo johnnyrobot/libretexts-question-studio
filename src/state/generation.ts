@@ -51,8 +51,12 @@ export async function startGeneration(
   const { signal } = controller
   const run = async () => {
     // Marked again now the lock is held, in case another tab took the set for
-    // interrupted in the moment before.
-    await db.sets.update(setId, { status: 'generating', error: null, updatedAt: Date.now() })
+    // interrupted in the moment before. Another tab may have deleted it then.
+    if (!(await db.sets.update(setId, { status: 'generating', error: null, updatedAt: Date.now() }))) {
+      controller = null
+      update({ running: false, status: 'Stopped: the set was deleted.' })
+      return
+    }
     try {
       const result = await runGeneration(setId, source, plan, provider, signal, {
         onStatus: (status) => update({ status, detail: '' }),

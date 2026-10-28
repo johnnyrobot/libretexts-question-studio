@@ -514,7 +514,9 @@ function DataSettings() {
               if (!confirm('Delete every question set, export, and cached page from this browser?')) return
               const beingWritten = await deleteEverything()
               setDeleteRefused(
-                beingWritten && `“${beingWritten}” is still being written. Delete everything once its questions are written.`,
+                beingWritten === null
+                  ? null
+                  : `${beingWritten ? `“${beingWritten}”` : 'A set'} is still being written. Delete everything once its questions are written.`,
               )
             }}
           >

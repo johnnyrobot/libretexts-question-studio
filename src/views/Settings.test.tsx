@@ -50,14 +50,16 @@ describe('OpenAI settings', () => {
 })
 
 describe('Delete everything', () => {
-  afterEach(() => {
+  const locks = new FakeLocks()
+  afterEach(async () => {
+    locks.closeTab()
     vi.unstubAllGlobals()
+    await db.sets.clear()
   })
 
   // A tab writing a set holds its lock (LT-74); clearing under it would leave
   // its questions orphaned (LT-89).
   it('refuses while a set is being written, naming it on the page', async () => {
-    const locks = new FakeLocks()
     vi.stubGlobal('navigator', { locks })
     vi.stubGlobal('confirm', () => true)
     await db.sets.put({
@@ -70,7 +72,5 @@ describe('Delete everything', () => {
     await settle()
     expect(container.textContent).toContain('“Leaf quiz” is still being written. Delete everything once its questions are written.')
     expect(await db.sets.count()).toBe(1)
-    locks.closeTab()
-    await db.sets.clear()
   })
 })
