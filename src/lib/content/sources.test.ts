@@ -109,7 +109,7 @@ interface Above {
 // LibreTexts' proxy answering for a page under a catalog entry that is not
 // certain to be its book: the page by its id (378488), and the pages above it,
 // nearest first, by theirs. A page tagged coverpage:yes or coverpage:toc is a
-// book's cover. A page asked for by its path is found by it.
+// book's cover. Any of them can be asked for by its path too.
 // Returns the pages asked for, in order.
 function dekiById(path: string, above: Above[], options: { cover?: Above['cover']; failing?: string } = {}) {
   const tags = (cover?: Above['cover']) => ({
@@ -241,7 +241,7 @@ describe('looking up a pasted link', () => {
     expect(book).toEqual({ id: 'human-150000', title: 'Spiral Physics', author: 'Paul D’Alessandris' })
   })
 
-  it('names no cover above the catalog entry as the book, but the entry itself', async () => {
+  it('names the catalog entry, not a cover above it', async () => {
     const asked = dekiById('Bookshelves/Physics/Spiral_Physics/1.01', [
       { id: '150000', title: 'Spiral Physics' },
       { id: '149000', title: 'Physics', cover: true },
@@ -290,13 +290,14 @@ describe('looking up a pasted link', () => {
 
   it('names the real Spiral Physics for a page outside Spiral Mechanics with no cover near it', async () => {
     const spiral = 'Bookshelves/University_Physics/Book:_Spiral_Physics_-_Calculus_Based_(DAlessandris)'
-    dekiById(`${spiral}/Spiral_Electricity_and_Magnetism/01:_Electric_Charge/1.01:_Charge`, [
+    const asked = dekiById(`${spiral}/Spiral_Electricity_and_Magnetism/01:_Electric_Charge/1.01:_Charge`, [
       { id: '9901', title: '1: Electric Charge' },
       { id: '9900', title: 'Spiral Electricity and Magnetism' },
       { id: '9867', title: 'Spiral Physics - Calculus Based' },
     ])
     const { book } = await resolveUrl('https://phys.libretexts.org/@go/page/378488')
     expect(book).toEqual({ id: 'phys-9867', title: 'Spiral Physics - Calculus Based', author: "Paul D'Alessandris" })
+    expect(asked).toEqual(['378488', '9901', '9900', 'by path'])
   })
 
   it('names a pasted catalog entry as the book without asking for it again', async () => {

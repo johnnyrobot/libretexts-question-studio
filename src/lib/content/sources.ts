@@ -62,14 +62,15 @@ async function bookCover(page: PageInfo, signal?: AbortSignal): Promise<PageInfo
   const entry = listed.path.toLowerCase()
   const inside = (candidate: PageInfo) => `${candidate.path.toLowerCase()}/`.startsWith(`${entry}/`)
   const isBook = (candidate: PageInfo) => candidate.cover && !isCampus(candidate.path)
+  const isEntry = (candidate: PageInfo) => candidate.path.toLowerCase() === entry
   if (isBook(page)) return page
-  let entryPage = page.path.toLowerCase() === entry ? page : null
+  let entryPage = isEntry(page) ? page : null
   try {
     for (const id of page.ancestors.slice(0, COVER_LOOKUPS)) {
       const above = await getPageInfo({ library: page.library, id }, signal)
       if (!inside(above)) break
       if (isBook(above)) return above
-      if (above.path.toLowerCase() === entry) entryPage = above
+      if (isEntry(above)) entryPage = above
     }
   } catch (error) {
     if (signal?.aborted) throw error
