@@ -425,6 +425,7 @@ describe('switching tab while Continue loads a pasted link’s pages', () => {
     expect(await db.sources.count()).toBe(0)
     expect(window.location.hash).toBe('#/')
     expect(view.selectedTab()).toBe('Find a book')
+    expect(view.alert()).toBeUndefined()
   })
 })
 
