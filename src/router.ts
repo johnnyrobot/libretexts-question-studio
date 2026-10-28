@@ -38,6 +38,11 @@ export function pageLinkAddress(href: string): string | null {
   return url.href
 }
 
+// A link that opens the app, where it runs now, on a LibreTexts page.
+export function pageLinkFor(library: string, pageId: string): string {
+  return `${window.location.origin}/?page=${library}-${pageId}`
+}
+
 // The page a /page/<value> route names, or undefined for any other route.
 export function pageLinkFromRoute(route: string): string | undefined {
   const match = route.match(/^\/page\/(.*)$/)

@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { CopyLink } from '../components/CopyLink'
 import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
@@ -17,7 +18,7 @@ import { localModel } from '../lib/llm/local-models'
 import { db, newId, type StoredSource } from '../lib/storage/db'
 import { createEmbedder, createProvider, useEngineSettings } from '../state/engine'
 import { startGeneration, useGeneration } from '../state/generation'
-import { navigate } from '../router'
+import { navigate, pageLinkFor } from '../router'
 
 type SourceTab = 'search' | 'url' | 'paste'
 
@@ -349,7 +350,8 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
               resolved.page.license?.label,
             ]
               .filter(Boolean)
-              .join(' · ')}
+              .join(' · ')}{' '}
+            <CopyLink href={pageLinkFor(resolved.page.library, resolved.page.id)} />
           </p>
           <TocPicker key={resolved.page.id} tree={resolved.tree} selectAll busy={busy} progress={progress} onConfirm={confirm} />
         </div>

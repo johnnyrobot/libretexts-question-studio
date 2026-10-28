@@ -99,7 +99,17 @@ async function openLink(pageLink: string) {
     alert: () => container.querySelector('[role="alert"]')?.textContent,
     lookUp: () => container.querySelector<HTMLButtonElement>('button[type="submit"]'),
     text: () => container.textContent ?? '',
+    button: (label: string) => [...container.querySelectorAll('button')].find((button) => button.textContent === label),
+    copied: () => container.querySelector('[role="status"]')?.textContent,
+    shownLink: () => container.querySelector<HTMLInputElement>('input[readonly][aria-label="Link to this page"]'),
   }
+}
+
+// The browser's clipboard, or none at all where the Clipboard API is missing.
+function clipboard(available = true) {
+  const writeText = vi.fn(async (_text: string) => {})
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: available ? { writeText } : undefined })
+  return writeText
 }
 
 describe('opening the app on a page link', () => {
@@ -115,6 +125,33 @@ describe('opening the app on a page link', () => {
     expect(view.text()).toContain('4.2: La profecía de la gitana')
     expect(view.text()).toContain('From “HOLA Spanish 3 (Tseng Rosales and Lemari)” · CC BY-NC-SA 4.0')
     expect(view.alert()).toBeUndefined()
+  })
+
+  it('copies a link that opens the app on the page, and says so for a moment', async () => {
+    libreTexts()
+    const writeText = clipboard()
+    vi.useFakeTimers({ toFake: ['setTimeout'], shouldAdvanceTime: true })
+    try {
+      const view = await openLink('human-378488')
+      await act(async () => view.button('Copy link')!.click())
+      expect(writeText).toHaveBeenCalledWith(`${location.origin}/?page=human-378488`)
+      expect(view.copied()).toBe('Link copied')
+      await act(async () => vi.advanceTimersByTime(2100))
+      expect(view.copied() ?? '').toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the link, selected, where the browser cannot copy', async () => {
+    libreTexts()
+    clipboard(false)
+    const view = await openLink('human-378488')
+    await act(async () => view.button('Copy link')!.click())
+    const shown = view.shownLink()!
+    expect(shown.value).toBe(`${location.origin}/?page=human-378488`)
+    expect(document.activeElement).toBe(shown)
+    expect([shown.selectionStart, shown.selectionEnd]).toEqual([0, shown.value.length])
   })
 
   // The link cannot change under the lookup, so the page shown is always the link's.
