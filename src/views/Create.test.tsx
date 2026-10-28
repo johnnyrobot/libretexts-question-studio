@@ -461,6 +461,24 @@ describe('the link to a book opened in book search', () => {
     expect(button('Back to search results')).toBeDefined()
   })
 
+  it('leaves a search typed before the book list arrives alone', async () => {
+    libreTexts(bookTree)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => root.render(<Create bookLink="human-378400" />))
+    cleanup = () => {
+      act(() => root.unmount())
+      container.remove()
+    }
+    const search = container.querySelector<HTMLInputElement>('input[type="search"]')!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'Álgebra')
+    act(() => search.dispatchEvent(new Event('input', { bubbles: true })))
+    await settle()
+    expect(container.querySelector('h2')).toBeNull()
+    expect(container.querySelector('.result-list')?.textContent).toContain('Álgebra básica')
+  })
+
   it('looks up a book the book list no longer has on Paste a link, by its cover page', async () => {
     libreTexts()
     const view = await openBookLink('human-378488')

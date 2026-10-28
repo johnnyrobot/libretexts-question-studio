@@ -132,9 +132,10 @@ function BookSearch({
     }
   }
   // A book link opens its book once the catalog is in, or goes to Paste a link
-  // when the catalog lacks it (LT-94).
+  // when the catalog lacks it (LT-94), unless a search was typed meanwhile.
+  const searched = useRef(false)
   const followLink = useEffectEvent((catalog: CatalogBook[]) => {
-    if (bookLink === undefined) return
+    if (bookLink === undefined || searched.current) return
     const linked = catalog.find((candidate) => candidate.id === bookLink.toLowerCase())
     if (linked) open(linked)
     else onUnlisted(bookLink)
@@ -238,14 +239,23 @@ function BookSearch({
               type="search"
               placeholder="Title, subject, or author"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                searched.current = true
+                setQuery(e.target.value)
+              }}
               autoFocus={autoFocus}
             />
           </span>
         </label>
         <label>
           Library
-          <select value={library} onChange={(e) => setLibrary(e.target.value as Library | '')}>
+          <select
+            value={library}
+            onChange={(e) => {
+              searched.current = true
+              setLibrary(e.target.value as Library | '')
+            }}
+          >
             <option value="">All libraries</option>
             {Object.entries(LIBRARIES).map(([id, name]) => (
               <option key={id} value={id}>
