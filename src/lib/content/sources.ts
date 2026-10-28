@@ -1,5 +1,5 @@
 import { db, newId, type SourceBook, type SourcePage, type StoredSource } from '../storage/db'
-import { catalogBookPath, findCatalogBook } from './catalog'
+import { catalogBookPath, findCatalogBook, isCampus } from './catalog'
 import {
   getContentsHtml,
   getPageInfo,
@@ -42,21 +42,26 @@ export async function resolveUrl(input: string, signal?: AbortSignal): Promise<R
   return { page, tree, book }
 }
 
+// How many pages above a pasted one are asked whether they are a book's cover.
+const COVER_LOOKUPS = 2
+
 // The cover page of the book a page is in, or null when it cannot be told, so
 // the page is credited on its own. A book the catalog lists above the page for
-// certain is it. Otherwise, under a campus or a catalog entry that may be a
-// collection of books, Deki's own cover tag names it: the page itself or one of
-// the two pages above it, nearest first (LT-81). A guess from the path alone
-// could name a shelf or campus (LT-75).
+// certain is it. Under a catalog entry that is not certain, Deki's own cover
+// tag names it: the page itself or one of the pages above it, nearest first
+// (LT-81). A campus is never the book, even where Deki tags it as a cover, and
+// a guess from the path alone could name a shelf or campus (LT-75).
 async function bookCover(page: PageInfo, signal?: AbortSignal): Promise<PageInfo | null> {
   const listed = await catalogBookPath(page.library, page.path)
-  if (listed?.certain) {
+  if (!listed) return null
+  if (listed.certain) {
     return listed.path === page.path ? page : getPageInfo({ library: page.library, path: listed.path }, signal)
   }
-  if (page.cover) return page
-  for (const id of page.ancestors.slice(0, 2)) {
+  const isBook = (candidate: PageInfo) => candidate.cover && !isCampus(candidate.path)
+  if (isBook(page)) return page
+  for (const id of page.ancestors.slice(0, COVER_LOOKUPS)) {
     const above = await getPageInfo({ library: page.library, id }, signal)
-    if (above.cover) return above
+    if (isBook(above)) return above
   }
   return null
 }

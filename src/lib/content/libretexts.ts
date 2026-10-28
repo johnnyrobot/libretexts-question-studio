@@ -179,7 +179,7 @@ export async function getPageInfo(ref: PageRef, signal?: AbortSignal): Promise<P
   const page = await crossLibrary<DekiPage>(ref.library, `${pageSegment(ref)}?dream.out.format=json`, signal)
   if (!page['@id']) throw new LibreTextsError('LibreTexts could not find that page.')
   const path = pathText(page)
-  const tags = asArray(page.tags?.tag)
+  const tags = tagValues(asArray(page.tags?.tag))
   const ancestors: string[] = []
   for (let parent = page['page.parent']; parent?.['@id']; parent = parent['page.parent']) {
     ancestors.push(String(parent['@id']))
@@ -191,7 +191,7 @@ export async function getPageInfo(ref: PageRef, signal?: AbortSignal): Promise<P
     path,
     url: page['uri.ui'] ?? `https://${ref.library}.libretexts.org/${path}`,
     license: licenseFromTags(tags),
-    cover: tags.some((tag) => (tag['@value'] ?? tag.title ?? '').trim().toLowerCase() === 'coverpage:yes'),
+    cover: tags.has('coverpage:yes'),
     ancestors,
   }
 }
@@ -299,12 +299,12 @@ export function licenseLabel(code: string): string | null {
 
 // Port of content.py::_source_license_from_tags: only an unambiguous license
 // tag is reported; anything else is left for the instructor to fill in.
-export function licenseFromTags(tags: DekiTag[]): PageInfo['license'] {
-  const values = new Set(
-    tags
-      .map((tag) => (tag['@value'] ?? tag.title ?? '').trim().toLowerCase())
-      .filter(Boolean),
-  )
+// A page's tags as Deki names them, trimmed and lower-cased.
+function tagValues(tags: DekiTag[]): Set<string> {
+  return new Set(tags.map((tag) => (tag['@value'] ?? tag.title ?? '').trim().toLowerCase()).filter(Boolean))
+}
+
+export function licenseFromTags(values: Set<string>): PageInfo['license'] {
   const codes = [...values].filter((v) => v.startsWith('license:')).map((v) => v.slice('license:'.length))
   const versions = [...values]
     .filter((v) => v.startsWith('licenseversion:'))

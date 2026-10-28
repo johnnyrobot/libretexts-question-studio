@@ -70,15 +70,22 @@ export async function findCatalogBook(id: string): Promise<CatalogBook | null> {
   }
 }
 
+// The catalog entry above a page that is the book it is in, if certain.
+export interface CatalogMatch {
+  path: string
+  certain: boolean
+}
+
 // The start of a page's path that is the catalog book the page is in, or null
-// when the catalog lists no book above it or could not be loaded. Books sit at
+// when the catalog lists nothing above it or could not be loaded. Books sit at
 // different depths under courses and shelves. A few entries are a course with
 // books inside it, or a single page of a book, so the deepest entry of more
-// than one page wins, then the deepest of any size. A few are a whole campus
-// (Courses/<campus>), which is never taken for the book. An entry holding
-// another listed entry of more than one page is not certain: most are a book
-// with a part listed too, but some are a collection of books (LT-81).
-export async function catalogBookPath(library: Library, path: string): Promise<{ path: string; certain: boolean } | null> {
+// than one page wins, then the deepest of any size. Two kinds of match are not
+// certain (LT-81): an entry holding another listed entry of more than one page,
+// which is mostly a book with a part listed too but sometimes a collection of
+// books, and a whole campus (Courses/<campus>), which is never the book (LT-75)
+// but may hold one the catalog does not list.
+export async function catalogBookPath(library: Library, path: string): Promise<CatalogMatch | null> {
   let books: CatalogBook[]
   try {
     books = (await loadCatalog()).books
@@ -89,16 +96,18 @@ export async function catalogBookPath(library: Library, path: string): Promise<{
   const segments = path.split('/').filter(Boolean)
   const above = segments
     .map((_, index) => segments.slice(0, index + 1).join('/'))
-    .filter((prefix) => byPath.has(prefix.toLowerCase()) && !isCampus(prefix))
+    .filter((prefix) => byPath.has(prefix.toLowerCase()))
     .reverse()
-  const match = above.find((prefix) => (byPath.get(prefix.toLowerCase())!.pages ?? 0) > 1) ?? above[0]
-  if (!match) return null
+  const listed = above.filter((prefix) => !isCampus(prefix))
+  const match = listed.find((prefix) => (byPath.get(prefix.toLowerCase())!.pages ?? 0) > 1) ?? listed[0]
+  if (!match) return above[0] ? { path: above[0], certain: false } : null
   const inside = match.toLowerCase() + '/'
   const holdsBooks = [...byPath].some(([key, book]) => key.startsWith(inside) && (book.pages ?? 0) > 1)
   return { path: match, certain: !holdsBooks }
 }
 
-const isCampus = (path: string) => /^Courses\/[^/]+$/i.test(path)
+// A whole campus, under which courses file their books.
+export const isCampus = (path: string) => /^Courses\/[^/]+$/i.test(path)
 
 // A catalog URL's path as a page path names it, lower-cased: Deki matches
 // paths without regard to case.
