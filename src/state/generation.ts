@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 import { runGeneration, type GenerationPlan, type GenerationResult } from '../lib/generation/pipeline'
 import { GpuLost, type Embedder, type LLMProvider } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
-import { generationLockName, webLocks } from '../lib/storage/set-locks'
+import { generationLockName, webLocks, withGenerationLock } from '../lib/storage/set-locks'
 
 // Generation outlives any one screen: the instructor can browse the library
 // while questions are written. One run at a time (the local GPU model is a
@@ -49,10 +49,14 @@ export async function startGeneration(
   controller = new AbortController()
   update({ running: true, setId, status: 'Starting…', done: 0, written: 0, total: 0, detail: '' })
   const { signal } = controller
-  await whileGenerating(setId, async () => {
+  const run = async () => {
     // Marked again now the lock is held, in case another tab took the set for
-    // interrupted in the moment before.
-    await db.sets.update(setId, { status: 'generating', error: null, updatedAt: Date.now() })
+    // interrupted in the moment before. Another tab may have deleted it then.
+    if (!(await db.sets.update(setId, { status: 'generating', error: null, updatedAt: Date.now() }))) {
+      controller = null
+      update({ running: false, status: 'Stopped: the set was deleted.' })
+      return
+    }
     try {
       const result = await runGeneration(setId, source, plan, provider, signal, {
         onStatus: (status) => update({ status, detail: '' }),
@@ -82,7 +86,8 @@ export async function startGeneration(
     } finally {
       controller = null
     }
-  })
+  }
+  await withGenerationLock(setId, {}, run, run)
 }
 
 // Questions whose answers never passed the checks were already started over
@@ -106,23 +111,6 @@ function gpuLostMessage(written: number): string {
 
 export function cancelGeneration(): void {
   controller?.abort(new DOMException('Generation cancelled', 'AbortError'))
-}
-
-// A browser can refuse the lock outright (a document that isn't fully active,
-// say); the run then goes on unlocked, as without Web Locks.
-async function whileGenerating(setId: string, run: () => Promise<void>): Promise<void> {
-  const locks = webLocks()
-  if (!locks) return run()
-  let began = false
-  try {
-    await locks.request(generationLockName(setId), () => {
-      began = true
-      return run()
-    })
-  } catch (error) {
-    if (began) throw error
-    await run()
-  }
 }
 
 // A set still marked "generating" when the app starts was cut off by a closed

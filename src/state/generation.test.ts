@@ -55,6 +55,14 @@ describe('startGeneration', () => {
     expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
   })
 
+  // Deleted in another tab in the moment before the run took the set's lock.
+  it('writes nothing when the set is gone by the time it starts', async () => {
+    await db.sets.delete('set-1')
+    await startGeneration('set-1', source, { itemTypes: ['essay'], perPage: 1, reviewPass: false }, essayProvider())
+    expect(await db.items.count()).toBe(0)
+    expect(await db.sets.count()).toBe(0)
+  })
+
   it('reports a lost GPU as such, never as answers that failed the checks', async () => {
     let calls = 0
     // The in-browser engine as the worker reports a lost device to it.

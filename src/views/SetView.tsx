@@ -201,22 +201,29 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
         ) : (
           <span />
         )}
-        <button
-          type="button"
-          className="danger-link"
-          disabled={running || elsewhere}
-          title={elsewhere ? 'Being written in another tab' : undefined}
-          onClick={async () => {
-            if (!confirm(`Delete “${set.title}” and its ${items.length} questions from this browser?`)) return
-            if (await unlessGenerating([set.id], () => deleteSet(set.id))) {
-              setDeleteRefused(`“${set.title}” is being written in another tab. Delete it once its questions are written.`)
-              return
-            }
-            navigate('/library')
-          }}
-        >
-          Delete this set
-        </button>
+        <div className="foot-action">
+          <button
+            type="button"
+            className="danger-link"
+            disabled={running || elsewhere}
+            aria-describedby={running || elsewhere ? 'delete-wait' : undefined}
+            onClick={async () => {
+              if (!confirm(`Delete “${set.title}” and its ${items.length} questions from this browser?`)) return
+              if (await unlessGenerating([set.id], () => deleteSet(set.id))) {
+                setDeleteRefused(`“${set.title}” is being written in another tab. Delete it once its questions are written.`)
+                return
+              }
+              navigate('/library')
+            }}
+          >
+            Delete this set
+          </button>
+          {(running || elsewhere) && (
+            <p className="fine" id="delete-wait">
+              {elsewhere && 'Being written in another tab. '}Delete it once its questions are written.
+            </p>
+          )}
+        </div>
       </footer>
       {deleteRefused && (
         <p className="notice" role="status">
