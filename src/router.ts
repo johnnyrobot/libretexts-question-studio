@@ -39,6 +39,16 @@ export function pageLinkAddress(href: string): string | null {
   return url.href
 }
 
+// A link that opens the app, at the address it runs from now, on a
+// LibreTexts page: ?page=<library>-<id>, which pageLinkAddress reads back.
+export function pageLinkFor(library: string, pageId: string, here = window.location.href): string {
+  const url = new URL(here)
+  url.search = ''
+  url.hash = ''
+  url.searchParams.set('page', `${library}-${pageId}`)
+  return url.href
+}
+
 // The page a /page/<value> route names, or undefined for any other route.
 export function pageLinkFromRoute(route: string): string | undefined {
   const match = route.match(/^\/page\/(.*)$/)

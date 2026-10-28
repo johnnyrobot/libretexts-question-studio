@@ -593,6 +593,13 @@ main p {
   color: var(--text-secondary);
 }
 
+/* Shown where the browser cannot copy: the link, on a line of its own. */
+.copy-link input {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
 .meta {
   margin: 0.75rem 0 0;
   color: var(--text-secondary);

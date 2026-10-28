@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useEffect, useRef, useState } from 'react'
+import { CopyLink } from '../components/CopyLink'
 import { Icon } from '../components/Icon'
 import { ItemEditor } from '../components/ItemEditor'
 import { ItemPreview, SourceCitations } from '../components/ItemPreview'
@@ -22,7 +23,7 @@ import {
 } from '../lib/storage/db'
 import { unlessGenerating, webLocks } from '../lib/storage/set-locks'
 import { cancelGeneration, markInterruptedOnceReleased, useGeneration } from '../state/generation'
-import { navigate } from '../router'
+import { navigate, pageLinkFor } from '../router'
 
 // A set has two destinations: reviewing its questions (#/set/<id>) and
 // exporting them (#/set/<id>/export).
@@ -245,6 +246,9 @@ function focusSelectedTab() {
 
 function SourceLine({ set, source }: { set: StoredSet; source: StoredSource | null }) {
   const engine = set.provider === 'openai' ? `OpenAI ${set.model}` : `In-browser ${localModelLabel(set.model)}`
+  // A set made from one LibreTexts page can be shared as a link that opens
+  // the app on that page.
+  const pageId = source?.kind === 'page' && source.pages.length === 1 ? source.pages[0].pageId : null
   return (
     <>
       {source?.url ? (
@@ -255,6 +259,12 @@ function SourceLine({ set, source }: { set: StoredSet; source: StoredSource | nu
         source?.title
       )}
       {source?.license && <> · {source.license.label}</>} · {engine}
+      {source?.library && pageId && (
+        <>
+          {' '}
+          <CopyLink href={pageLinkFor(source.library, pageId)} />
+        </>
+      )}
     </>
   )
 }

@@ -196,3 +196,40 @@ describe('a set being written in another tab', () => {
     locks.closeTab()
   })
 })
+
+describe('the link to the source page', () => {
+  const copyLink = (container: HTMLElement) =>
+    [...container.querySelectorAll('button')].find((button) => button.textContent === 'Copy link')
+
+  it('copies a link that opens the app on a set’s one LibreTexts page', async () => {
+    await db.sources.put({
+      id: 's', kind: 'page', title: '4.2: La profecía de la gitana', library: 'human',
+      url: 'https://human.libretexts.org/Bookshelves/Languages/Spanish/04/4.02', license: null,
+      pages: [{ title: '4.2: La profecía de la gitana', url: null, pageId: '378488', paragraphs: [] }], createdAt: 1,
+    })
+    const writeText = vi.fn(async (_text: string) => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const { container } = await render('review')
+    await settle()
+    await act(async () => copyLink(container)!.click())
+    expect(writeText).toHaveBeenCalledWith(`${location.origin}/?page=human-378488`)
+  })
+
+  it.each([
+    ['pasted text', { kind: 'paste' as const, library: null, pages: [] }],
+    ['a whole chapter', {
+      kind: 'section' as const, library: 'human',
+      pages: [
+        { title: '4.1', url: null, pageId: '378487', paragraphs: [] },
+        { title: '4.2', url: null, pageId: '378488', paragraphs: [] },
+      ],
+    }],
+    ['a page with no page id', { kind: 'page' as const, library: 'human', pages: [{ title: '4.2', url: null, pageId: null, paragraphs: [] }] }],
+  ])('offers no link for %s', async (_, source) => {
+    await db.sources.put({ id: 's', title: 'Source', url: null, license: null, createdAt: 1, ...source })
+    const { container } = await render('review')
+    await settle()
+    expect(container.textContent).toContain('Source')
+    expect(copyLink(container)).toBeUndefined()
+  })
+})

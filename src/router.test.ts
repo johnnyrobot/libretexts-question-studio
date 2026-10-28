@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pageLinkAddress, pageLinkFromRoute } from './router'
+import { pageLinkAddress, pageLinkFor, pageLinkFromRoute } from './router'
 
 const APP = 'https://qtistudio.libretexts.dev/'
 
@@ -48,5 +48,19 @@ describe('a link that opens a LibreTexts page', () => {
 
   it('does not fail on a route edited by hand into bad percent-encoding', () => {
     expect(pageLinkFromRoute('/page/%E0')).toBe('%E0')
+  })
+})
+
+describe('a link to share a LibreTexts page', () => {
+  it.each([
+    [APP + '#/new', 'https://qtistudio.libretexts.dev/?page=human-378488'],
+    ['http://localhost:5173/?page=bio-1#/page/bio-1', 'http://localhost:5173/?page=human-378488'],
+    ['https://example.org/apps/qs/#/set/abc', 'https://example.org/apps/qs/?page=human-378488'],
+  ])('from %s opens the app on the page: %s', (here, link) => {
+    expect(pageLinkFor('human', '378488', here)).toBe(link)
+  })
+
+  it('is read back as the same page', () => {
+    expect(pageLinkAddress(pageLinkFor('chem', '195199', APP + '#/set/abc'))).toBe(APP + '#/page/chem-195199')
   })
 })
