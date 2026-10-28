@@ -432,7 +432,7 @@ describe('switching tab while Continue loads a pasted link’s pages', () => {
 })
 
 describe('the link to a book opened in book search', () => {
-  it('copies a link that opens the app on the book’s cover page', async () => {
+  it('copies a link that reopens the book in Find a book', async () => {
     libreTexts(bookTree)
     const writeText = clipboard()
     const container = document.createElement('div')
@@ -463,6 +463,7 @@ describe('the link to a book opened in book search', () => {
 
   it('leaves a search typed before the book list arrives alone', async () => {
     libreTexts(bookTree)
+    // Not openCreate: it waits for the book list, and this types before it arrives.
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
