@@ -210,6 +210,16 @@ describe('looking up a pasted link', () => {
     expect(book).toEqual({ id: 'human-150000', title: 'Spiral Physics', author: 'Paul D’Alessandris' })
   })
 
+  it('names no cover above the catalog entry as the book', async () => {
+    const asked = dekiById('Bookshelves/Physics/Spiral_Physics/1.01', [
+      { id: '150000', title: 'Spiral Physics' },
+      { id: '149000', title: 'Physics', cover: true },
+    ])
+    const { book } = await resolveUrl('https://human.libretexts.org/@go/page/378488')
+    expect(book).toBeNull()
+    expect(asked).toEqual(['378488', '150000', '149000'])
+  })
+
   it('finds a book the catalog does not list inside a campus it lists', async () => {
     dekiById('Courses/University_of_the_Pacific/Drama/01/1.01', [
       { id: '140500', title: '1: Acts' },

@@ -297,13 +297,13 @@ export function licenseLabel(code: string): string | null {
   return LICENSE_LABELS[code] ?? null
 }
 
-// Port of content.py::_source_license_from_tags: only an unambiguous license
-// tag is reported; anything else is left for the instructor to fill in.
 // A page's tags as Deki names them, trimmed and lower-cased.
 function tagValues(tags: DekiTag[]): Set<string> {
   return new Set(tags.map((tag) => (tag['@value'] ?? tag.title ?? '').trim().toLowerCase()).filter(Boolean))
 }
 
+// Port of content.py::_source_license_from_tags: only an unambiguous license
+// tag is reported; anything else is left for the instructor to fill in.
 export function licenseFromTags(values: Set<string>): PageInfo['license'] {
   const codes = [...values].filter((v) => v.startsWith('license:')).map((v) => v.slice('license:'.length))
   const versions = [...values]
