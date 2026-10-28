@@ -75,9 +75,10 @@ export async function findCatalogBook(id: string): Promise<CatalogBook | null> {
 // different depths under courses and shelves. A few entries are a course with
 // books inside it, or a single page of a book, so the deepest entry of more
 // than one page wins, then the deepest of any size. A few are a whole campus
-// (Courses/<campus>), which is never the book: a page under one may be in a
-// book the catalog does not list.
-export async function catalogBookPath(library: Library, path: string): Promise<string | null> {
+// (Courses/<campus>), which is never taken for the book. An entry holding
+// another listed entry of more than one page is not certain: most are a book
+// with a part listed too, but some are a collection of books (LT-81).
+export async function catalogBookPath(library: Library, path: string): Promise<{ path: string; certain: boolean } | null> {
   let books: CatalogBook[]
   try {
     books = (await loadCatalog()).books
@@ -90,7 +91,11 @@ export async function catalogBookPath(library: Library, path: string): Promise<s
     .map((_, index) => segments.slice(0, index + 1).join('/'))
     .filter((prefix) => byPath.has(prefix.toLowerCase()) && !isCampus(prefix))
     .reverse()
-  return above.find((prefix) => (byPath.get(prefix.toLowerCase())!.pages ?? 0) > 1) ?? above[0] ?? null
+  const match = above.find((prefix) => (byPath.get(prefix.toLowerCase())!.pages ?? 0) > 1) ?? above[0]
+  if (!match) return null
+  const inside = match.toLowerCase() + '/'
+  const holdsBooks = [...byPath].some(([key, book]) => key.startsWith(inside) && (book.pages ?? 0) > 1)
+  return { path: match, certain: !holdsBooks }
 }
 
 const isCampus = (path: string) => /^Courses\/[^/]+$/i.test(path)

@@ -19,7 +19,7 @@ export interface ResolvedUrl {
   page: PageInfo
   tree: TocNode
   // The book the page is in, with its authors when the catalog knows them, or
-  // null when the catalog does not list it or its cover page could not be read.
+  // null when its cover page could not be found or read.
   book: (SourceBook & { id: string }) | null
 }
 
@@ -30,19 +30,35 @@ export async function resolveUrl(input: string, signal?: AbortSignal): Promise<R
   const page = await getPageInfo(ref, signal)
   const tree = await getTree(page.library, page.id, signal)
   let book: ResolvedUrl['book'] = null
-  // Only a book the catalog lists above the page is named; otherwise the page
-  // is credited on its own.
-  const cover = await catalogBookPath(page.library, page.path)
-  if (cover) {
-    try {
-      const coverInfo = cover === page.path ? page : await getPageInfo({ library: page.library, path: cover }, signal)
-      const id = `${page.library}-${coverInfo.id}`
-      book = { id, title: coverInfo.title, author: (await findCatalogBook(id))?.author || null }
-    } catch {
-      book = null
+  try {
+    const cover = await bookCover(page, signal)
+    if (cover) {
+      const id = `${page.library}-${cover.id}`
+      book = { id, title: cover.title, author: (await findCatalogBook(id))?.author || null }
     }
+  } catch {
+    book = null
   }
   return { page, tree, book }
+}
+
+// The cover page of the book a page is in, or null when it cannot be told, so
+// the page is credited on its own. A book the catalog lists above the page for
+// certain is it. Otherwise, under a campus or a catalog entry that may be a
+// collection of books, Deki's own cover tag names it: the page itself or one of
+// the two pages above it, nearest first (LT-81). A guess from the path alone
+// could name a shelf or campus (LT-75).
+async function bookCover(page: PageInfo, signal?: AbortSignal): Promise<PageInfo | null> {
+  const listed = await catalogBookPath(page.library, page.path)
+  if (listed?.certain) {
+    return listed.path === page.path ? page : getPageInfo({ library: page.library, path: listed.path }, signal)
+  }
+  if (page.cover) return page
+  for (const id of page.ancestors.slice(0, 2)) {
+    const above = await getPageInfo({ library: page.library, id }, signal)
+    if (above.cover) return above
+  }
+  return null
 }
 
 export async function fetchPageText(
