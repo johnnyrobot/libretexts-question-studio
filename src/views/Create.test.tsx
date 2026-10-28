@@ -357,6 +357,48 @@ describe('opening one book after another in book search', () => {
   })
 })
 
+describe('going back while Continue loads a book’s pages', () => {
+  it('saves nothing and stays on the search when the pages arrive after Back', async () => {
+    let answerPage = () => {}
+    const pageAnswered = new Promise<void>((resolve) => (answerPage = resolve))
+    const fetch = libreTexts(async (target) => {
+      if (target.includes('/contents')) {
+        await pageAnswered
+        return CONTENTS
+      }
+      return bookTree(target)
+    })
+    window.location.hash = '#/'
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => root.render(<Create />))
+    cleanup = () => {
+      act(() => root.unmount())
+      container.remove()
+    }
+    await settle()
+    const search = container.querySelector<HTMLInputElement>('input[type="search"]')!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'HOLA')
+    await act(async () => search.dispatchEvent(new Event('input', { bubbles: true })))
+    await act(async () => container.querySelector<HTMLButtonElement>('.result-list button')!.click())
+    await settle()
+    await act(async () => button('Select all content')!.click())
+    await act(async () => button('Continue with 3 pages')!.click())
+    await settle()
+    await act(async () => button('Back to search results')!.click())
+    const pageLoad = fetch.mock.calls.find(([url]) => url.includes('/contents')) as unknown as [string, RequestInit]
+    expect(pageLoad[1].signal?.aborted).toBe(true)
+    await act(async () => answerPage())
+    await settle()
+
+    expect(await db.sources.count()).toBe(0)
+    expect(window.location.hash).toBe('#/')
+    expect(container.querySelector('input[type="search"]')).not.toBeNull()
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+})
+
 describe('the link to a book opened in book search', () => {
   it('copies a link that opens the app on the book’s cover page', async () => {
     libreTexts(bookTree)

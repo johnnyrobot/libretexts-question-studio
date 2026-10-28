@@ -114,6 +114,8 @@ export async function buildLibreTextsSource(options: {
     },
     options.signal,
   )
+  // Pages cancelled on their way in are never saved as a source.
+  options.signal?.throwIfAborted()
   const readable = pages.filter((page): page is SourcePage => page !== null && page.paragraphs.length > 0)
   if (readable.length === 0) {
     throw new Error('None of the selected pages had readable text.')
