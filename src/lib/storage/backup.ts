@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { parseDraft, ITEM_TYPES } from '../generation/schema'
 import { db, type StoredItem, type StoredSet, type StoredSource } from './db'
+import { unlessGenerating } from './set-locks'
 
 // Everything lives in one browser, so instructors need a way to move their
 // work to another device or keep a copy. A backup is plain JSON: sources,
@@ -59,14 +60,24 @@ export async function restoreBackup(file: File): Promise<{ sets: number; items: 
     const { item_type, ...payload } = item.draft
     return { ...item, draft: parseDraft(item_type, payload) } as unknown as StoredItem
   })
-  await db.transaction('rw', db.sources, db.sets, db.items, async () => {
-    await db.sources.bulkPut(parsed.sources as unknown as StoredSource[])
-    await db.sets.bulkPut(
-      (parsed.sets as unknown as StoredSet[]).map((set) =>
-        set.status === 'generating' ? { ...set, status: 'cancelled' as const } : set,
-      ),
-    )
-    await db.items.bulkPut(items)
-  })
+  // A set being written keeps changing until its run ends, which would undo
+  // the restore of it.
+  const beingWritten = await unlessGenerating(
+    [...parsed.sets.map((set) => set.id), ...parsed.items.map((item) => item.setId)],
+    () =>
+      db.transaction('rw', db.sources, db.sets, db.items, async () => {
+        await db.sources.bulkPut(parsed.sources as unknown as StoredSource[])
+        await db.sets.bulkPut(
+          (parsed.sets as unknown as StoredSet[]).map((set) =>
+            set.status === 'generating' ? { ...set, status: 'cancelled' as const } : set,
+          ),
+        )
+        await db.items.bulkPut(items)
+      }),
+  )
+  if (beingWritten) {
+    const title = (await db.sets.get(beingWritten))?.title ?? parsed.sets.find((set) => set.id === beingWritten)?.title
+    throw new Error(`${title ? `“${title}”` : 'A set in the backup'} is still being written. Restore the backup once its questions are written.`)
+  }
   return { sets: parsed.sets.length, items: items.length }
 }
