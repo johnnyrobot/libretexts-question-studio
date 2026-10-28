@@ -26,43 +26,41 @@ export function useRoute(): string {
 // bare ?<library>-<id> next to any other parameters. It gives the same address
 // with no query and the route /page/<page> as its hash, or null when the link
 // names no page. Create checks the page and looks it up. A link to a book in
-// book search, ?book=<catalog id>, gives the route /book/<id> instead (LT-94).
+// book search, ?book=<catalog id>, gives the route /book/<id> instead when it
+// names no page (LT-94).
 export function pageLinkAddress(href: string): string | null {
   const url = new URL(href)
-  const book = url.searchParams.get('book')
-  if (book !== null) {
-    url.search = ''
-    url.hash = `/book/${encodeURIComponent(book)}`
-    return url.href
-  }
   let page = url.searchParams.get('page')
   if (page === null) {
     const bare = [...url.searchParams].filter(([key, value]) => value === '' && PAGE_LINK.test(key))
-    if (bare.length !== 1) return null
-    page = bare[0][0]
+    if (bare.length === 1) page = bare[0][0]
   }
+  const book = url.searchParams.get('book')
+  if (page !== null) return withRoute(url, 'page', page)
+  if (book) return withRoute(url, 'book', book)
+  return null
+}
+
+function withRoute(url: URL, kind: 'page' | 'book', value: string): string {
   url.search = ''
-  url.hash = `/page/${encodeURIComponent(page)}`
+  url.hash = `/${kind}/${encodeURIComponent(value)}`
   return url.href
 }
 
 // A link that opens the app, at the address it runs from now, on a
 // LibreTexts page: ?page=<library>-<id>, which pageLinkAddress reads back.
-export function pageLinkFor(library: string, pageId: string, here = window.location.href): string {
-  const url = new URL(here)
-  url.search = ''
-  url.hash = ''
-  url.searchParams.set('page', `${library}-${pageId}`)
-  return url.href
-}
+export const pageLinkFor = (library: string, pageId: string, here = window.location.href) =>
+  appLink('page', `${library}-${pageId}`, here)
 
 // A link that opens the app, at the address it runs from now, on a book in
 // book search: ?book=<catalog id>, which pageLinkAddress reads back.
-export function bookLinkFor(bookId: string, here = window.location.href): string {
+export const bookLinkFor = (bookId: string, here = window.location.href) => appLink('book', bookId, here)
+
+function appLink(kind: 'page' | 'book', value: string, here: string): string {
   const url = new URL(here)
   url.search = ''
   url.hash = ''
-  url.searchParams.set('book', bookId)
+  url.searchParams.set(kind, value)
   return url.href
 }
 

@@ -65,13 +65,21 @@ describe('a link to share a LibreTexts page', () => {
   })
 })
 
-describe('a link that opens a book in book search (LT-94)', () => {
+describe('a link that opens a book in book search', () => {
   it.each([
     ['?book=human-378400', '#/book/human-378400'],
     ['?book=human-378400&utm_source=slack', '#/book/human-378400'],
     ['?book=human-378400#/library', '#/book/human-378400'],
   ])('moves %s to the route in %s', (query, route) => {
     expect(pageLinkAddress(APP + query)).toBe(APP + route)
+  })
+
+  it('opens the page when it names a page too', () => {
+    expect(pageLinkAddress(APP + '?page=human-378488&book=human-378400')).toBe(APP + '#/page/human-378488')
+  })
+
+  it.each(['?book=', '?book'])('leaves %j alone', (suffix) => {
+    expect(pageLinkAddress(APP + suffix)).toBeNull()
   })
 
   it('is made at the address the app runs from now and read back as the same book', () => {

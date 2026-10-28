@@ -40,15 +40,16 @@ const SOURCE_TABS = [
 
 function SourceStep({ pageLink, bookLink }: { pageLink?: string; bookLink?: string }) {
   const [tab, setTab] = useState<SourceTab>(pageLink === undefined ? 'search' : 'url')
-  // A book the book list no longer has is looked up on Paste a link by its
-  // cover page, whose page link its catalog id is.
+  // A book the book list does not have, or cannot load, is looked up on Paste a
+  // link by its cover page: a catalog id, <library>-<cover page id>, is also
+  // that page's link.
   const [link, setLink] = useState(pageLink)
   const unlisted = (bookId: string) => {
     setLink(bookId)
     setTab('url')
   }
   // Focus starts in the search box, but arrowing back to its tab later must
-  // leave focus on the tab.
+  // leave focus on the tab. A book link is followed only before any switch.
   const [switched, setSwitched] = useState(false)
   const onSource = (source: StoredSource) => navigate(`/new/${source.id}`)
   return (
@@ -130,7 +131,8 @@ function BookSearch({
       if (!signal.aborted) setBusy(false)
     }
   }
-  // A book link opens its book once the catalog is in (LT-94).
+  // A book link opens its book once the catalog is in, or goes to Paste a link
+  // when the catalog lacks it (LT-94).
   const followLink = useEffectEvent((catalog: CatalogBook[]) => {
     if (bookLink === undefined) return
     const linked = catalog.find((candidate) => candidate.id === bookLink.toLowerCase())
@@ -146,7 +148,11 @@ function BookSearch({
         setSnapshot(new Date(catalog.generatedAt).toLocaleDateString())
         followLink(catalog.books)
       })
-      .catch((e) => live && setError(e.message))
+      .catch((e) => {
+        if (!live) return
+        setError(e.message)
+        followLink([])
+      })
     return () => {
       live = false
     }
