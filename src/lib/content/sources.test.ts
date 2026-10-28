@@ -305,7 +305,7 @@ describe('looking up a pasted link', () => {
     const asked = dekiById(BT, [{ id: '114000', title: 'San Diego State University' }])
     const { book } = await resolveUrl('https://bio.libretexts.org/@go/page/378488')
     expect(book).toEqual({ id: 'bio-378488', title: 'bt@sdsu', author: null })
-    expect(asked).toEqual(['378488', '114000'])
+    expect(asked).toEqual(['378488'])
   })
 
   it('names the catalog entry when LibreTexts fails on a page above', async () => {

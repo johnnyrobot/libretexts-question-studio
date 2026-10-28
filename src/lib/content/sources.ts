@@ -66,7 +66,8 @@ async function bookCover(page: PageInfo, signal?: AbortSignal): Promise<PageInfo
   if (isBook(page)) return page
   let entryPage = isEntry(page) ? page : null
   try {
-    for (const id of page.ancestors.slice(0, COVER_LOOKUPS)) {
+    // Above the entry itself is outside it, so a pasted entry asks for nothing more.
+    for (const id of entryPage ? [] : page.ancestors.slice(0, COVER_LOOKUPS)) {
       const above = await getPageInfo({ library: page.library, id }, signal)
       if (!inside(above)) break
       if (isBook(above)) return above
