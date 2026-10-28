@@ -76,7 +76,11 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   }, [elsewhere, set.id])
   const [deleteRefused, setDeleteRefused] = useState<string | null>(null)
   // The notice above says so while the run lasts, and Delete works after it.
-  useEffect(() => setDeleteRefused(null), [set.status])
+  const [refusedAt, setRefusedAt] = useState(set.status)
+  if (refusedAt !== set.status) {
+    setRefusedAt(set.status)
+    setDeleteRefused(null)
+  }
   const visible = items.filter((item) => filter === 'all' || item.status === filter)
   const drafts = items.filter((item) => item.status === 'draft').length
   const countOf = (value: Filter) => (value === 'all' ? items.length : items.filter((i) => i.status === value).length)

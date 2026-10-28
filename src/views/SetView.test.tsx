@@ -143,12 +143,15 @@ describe('a set being written in another tab', () => {
   })
 
   it('says so and cannot be deleted', async () => {
-    vi.stubGlobal('navigator', { locks: new FakeLocks() })
+    const locks = new FakeLocks()
+    vi.stubGlobal('navigator', { locks })
+    void locks.request('generation:set', () => new Promise(() => {}))
     await db.sets.update('set', { status: 'generating' })
     const { container, deleteButton } = await render('review')
     expect(container.textContent).toContain('Questions are being written in another tab.')
     expect(deleteButton().disabled).toBe(true)
     expect(deleteButton().title).toBe('Being written in another tab')
+    locks.closeTab()
   })
 
   // As on an http address other than localhost: no tab can tell, so the page
