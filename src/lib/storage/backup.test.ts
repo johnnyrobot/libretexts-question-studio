@@ -47,8 +47,10 @@ describe('restoring while a set is being written', () => {
   it('refuses, changing nothing, while a tab writes a set in the backup', async () => {
     await Promise.all([db.items.clear(), db.sets.clear(), db.sources.clear()])
     await db.sources.put({ id: 's', kind: 'paste', title: 'T', library: null, url: null, license: null, pages: [], createdAt: 1 })
+    await db.sets.put({ ...set('complete'), id: 'first', title: 'Stems' })
     await db.sets.put(set('complete'))
     const file = new File([await (await createBackup()).text()], 'backup.json')
+    await db.sets.update('first', { title: 'Stems, renamed' })
     await db.sets.put(set('generating'))
     const locks = new FakeLocks()
     vi.stubGlobal('navigator', { locks })
@@ -58,10 +60,11 @@ describe('restoring while a set is being written', () => {
       '“Leaf quiz” is still being written. Restore the backup once its questions are written.',
     )
     expect((await db.sets.get('set'))?.status).toBe('generating')
+    expect((await db.sets.get('first'))?.title).toBe('Stems, renamed')
 
     // The run ends, or its tab closes.
     locks.closeTab()
-    expect(await restoreBackup(file)).toEqual({ sets: 1, items: 0 })
+    expect(await restoreBackup(file)).toEqual({ sets: 2, items: 0 })
     expect((await db.sets.get('set'))?.status).toBe('complete')
   })
 })

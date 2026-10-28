@@ -62,7 +62,7 @@ export async function restoreBackup(file: File): Promise<{ sets: number; items: 
   })
   // A set being written keeps changing until its run ends, which would undo
   // the restore of it.
-  const generating = await unlessGenerating(
+  const beingWritten = await unlessGenerating(
     [...parsed.sets.map((set) => set.id), ...parsed.items.map((item) => item.setId)],
     () =>
       db.transaction('rw', db.sources, db.sets, db.items, async () => {
@@ -75,8 +75,8 @@ export async function restoreBackup(file: File): Promise<{ sets: number; items: 
         await db.items.bulkPut(items)
       }),
   )
-  if (generating) {
-    const title = (await db.sets.get(generating))?.title ?? parsed.sets.find((set) => set.id === generating)?.title
+  if (beingWritten) {
+    const title = (await db.sets.get(beingWritten))?.title ?? parsed.sets.find((set) => set.id === beingWritten)?.title
     throw new Error(`${title ? `“${title}”` : 'A set in the backup'} is still being written. Restore the backup once its questions are written.`)
   }
   return { sets: parsed.sets.length, items: items.length }

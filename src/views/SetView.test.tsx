@@ -143,11 +143,22 @@ describe('a set being written in another tab', () => {
   })
 
   it('says so and cannot be deleted', async () => {
+    vi.stubGlobal('navigator', { locks: new FakeLocks() })
     await db.sets.update('set', { status: 'generating' })
     const { container, deleteButton } = await render('review')
     expect(container.textContent).toContain('Questions are being written in another tab.')
     expect(deleteButton().disabled).toBe(true)
     expect(deleteButton().title).toBe('Being written in another tab')
+  })
+
+  // As on an http address other than localhost: no tab can tell, so the page
+  // is as it was before LT-82.
+  it('can still be deleted without Web Locks', async () => {
+    vi.stubGlobal('navigator', {})
+    await db.sets.update('set', { status: 'generating' })
+    const { container, deleteButton } = await render('review')
+    expect(container.textContent).not.toContain('being written in another tab')
+    expect(deleteButton().disabled).toBe(false)
   })
 
   // The run may start after this tab opened the app, so nothing else here

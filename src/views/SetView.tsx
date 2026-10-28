@@ -20,7 +20,7 @@ import {
   type StoredSet,
   type StoredSource,
 } from '../lib/storage/db'
-import { unlessGenerating } from '../lib/storage/set-locks'
+import { unlessGenerating, webLocks } from '../lib/storage/set-locks'
 import { cancelGeneration, markInterruptedOnceReleased, useGeneration } from '../state/generation'
 import { navigate } from '../router'
 
@@ -62,9 +62,11 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   const generation = useGeneration()
   const [filter, setFilter] = useState<Filter>('all')
   const running = generation.running && generation.setId === set.id
-  // Still marked generating while this tab isn't writing it: another tab is,
+  // Still marked generating though this tab isn't writing it: another tab is,
   // as a set left so by a closed tab is marked interrupted when the app opens.
-  const elsewhere = !running && set.status === 'generating'
+  // This tab's own run keeps its setId once over, until the status arrives.
+  // Without Web Locks no tab can tell, so the page stays as it was.
+  const elsewhere = set.status === 'generating' && generation.setId !== set.id && webLocks() !== undefined
   // That tab may be closed before it finishes.
   useEffect(() => {
     if (!elsewhere) return
@@ -73,6 +75,8 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
     return () => watching.abort()
   }, [elsewhere, set.id])
   const [deleteRefused, setDeleteRefused] = useState<string | null>(null)
+  // The notice above says so while the run lasts, and Delete works after it.
+  useEffect(() => setDeleteRefused(null), [set.status])
   const visible = items.filter((item) => filter === 'all' || item.status === filter)
   const drafts = items.filter((item) => item.status === 'draft').length
   const countOf = (value: Filter) => (value === 'all' ? items.length : items.filter((i) => i.status === value).length)
