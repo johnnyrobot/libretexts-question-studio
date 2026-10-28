@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SAMPLE_DRAFTS } from '../lib/qti/fixtures'
 import { db } from '../lib/storage/db'
+import { FakeLocks } from '../lib/storage/fixtures'
 import { SetView } from './SetView'
 
 declare global {
@@ -44,11 +45,11 @@ beforeEach(async () => {
 // Lets what loads from IndexedDB reach the page.
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 50)))
 
-async function render() {
+async function render(tab: 'review' | 'export' = 'export') {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
-  act(() => root.render(<SetView setId="set" tab="export" />))
+  act(() => root.render(<SetView setId="set" tab={tab} />))
   cleanup = () => {
     act(() => root.unmount())
     container.remove()
@@ -61,7 +62,9 @@ async function render() {
       ?.querySelector('input') ?? null
   const download = () =>
     [...container.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Download')!
-  return { authorBox, download }
+  const deleteButton = () =>
+    [...container.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Delete this set')!
+  return { container, authorBox, download, deleteButton }
 }
 
 // The one file downloaded, as text by path.
@@ -129,5 +132,53 @@ describe('the author name on the Export page', () => {
     expect(files['imsmanifest.xml']).toContain('\nFN:Ana Ruiz\n')
     const meta = Object.entries(files).find(([path]) => path.endsWith('assessment_meta.xml'))![1]
     expect(meta).toContain('&lt;p&gt;Question author: Ana Ruiz&lt;/p&gt;')
+  })
+})
+
+// Another tab writes the set's questions and holds its lock meanwhile (LT-74);
+// deleting it here would leave that tab writing questions for no set (LT-82).
+describe('a set being written in another tab', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('says so and cannot be deleted', async () => {
+    await db.sets.update('set', { status: 'generating' })
+    const { container, deleteButton } = await render('review')
+    expect(container.textContent).toContain('Questions are being written in another tab.')
+    expect(deleteButton().disabled).toBe(true)
+    expect(deleteButton().title).toBe('Being written in another tab')
+  })
+
+  // The run may start after this tab opened the app, so nothing else here
+  // waits on its lock.
+  it('is marked interrupted when the tab writing it closes', async () => {
+    const locks = new FakeLocks()
+    vi.stubGlobal('navigator', { locks })
+    void locks.request('generation:set', () => new Promise(() => {}))
+    await db.sets.update('set', { status: 'generating' })
+    const { container, deleteButton } = await render('review')
+    expect(deleteButton().disabled).toBe(true)
+    locks.closeTab()
+    await settle()
+    expect(container.textContent).toContain('Interrupted when the app was closed.')
+    expect(container.textContent).not.toContain('being written in another tab')
+    expect(deleteButton().disabled).toBe(false)
+  })
+
+  // The run starts in the other tab as this one shows the set, before the
+  // set's new status reaches this page.
+  it('is kept when Delete is pressed just as the run starts', async () => {
+    const locks = new FakeLocks()
+    vi.stubGlobal('navigator', { locks })
+    void locks.request('generation:set', () => new Promise(() => {}))
+    vi.stubGlobal('confirm', () => true)
+    const { container, deleteButton } = await render('review')
+    await act(async () => deleteButton().click())
+    await settle()
+    expect(container.textContent).toContain('“Leaf quiz” is being written in another tab. Delete it once its questions are written.')
+    expect(await db.sets.get('set')).toBeDefined()
+    expect(await db.items.get('item')).toBeDefined()
+    locks.closeTab()
   })
 })

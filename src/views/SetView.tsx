@@ -20,7 +20,8 @@ import {
   type StoredSet,
   type StoredSource,
 } from '../lib/storage/db'
-import { cancelGeneration, useGeneration } from '../state/generation'
+import { unlessGenerating } from '../lib/storage/set-locks'
+import { cancelGeneration, markInterruptedOnceReleased, useGeneration } from '../state/generation'
 import { navigate } from '../router'
 
 // A set has two destinations: reviewing its questions (#/set/<id>) and
@@ -61,6 +62,17 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   const generation = useGeneration()
   const [filter, setFilter] = useState<Filter>('all')
   const running = generation.running && generation.setId === set.id
+  // Still marked generating while this tab isn't writing it: another tab is,
+  // as a set left so by a closed tab is marked interrupted when the app opens.
+  const elsewhere = !running && set.status === 'generating'
+  // That tab may be closed before it finishes.
+  useEffect(() => {
+    if (!elsewhere) return
+    const watching = new AbortController()
+    markInterruptedOnceReleased(set.id, watching.signal)
+    return () => watching.abort()
+  }, [elsewhere, set.id])
+  const [deleteRefused, setDeleteRefused] = useState<string | null>(null)
   const visible = items.filter((item) => filter === 'all' || item.status === filter)
   const drafts = items.filter((item) => item.status === 'draft').length
   const countOf = (value: Filter) => (value === 'all' ? items.length : items.filter((i) => i.status === value).length)
@@ -99,6 +111,11 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
             </details>
           )}
         </section>
+      )}
+      {elsewhere && (
+        <p className="notice" role="status">
+          Questions are being written in another tab. They appear here as each one is written.
+        </p>
       )}
       {!running && set.error && (
         <div className={`${set.status === 'failed' ? 'error' : 'notice'} dismissible`}>
@@ -144,7 +161,7 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
         </div>
       )}
 
-      {items.length === 0 && !running && <p className="muted">This set has no questions.</p>}
+      {items.length === 0 && !running && !elsewhere && <p className="muted">This set has no questions.</p>}
       {items.length > 0 && (
         <TabPanel panelId="question-list" selected={filter}>
           {visible.length === 0 && <p className="muted">No questions here.</p>}
@@ -179,16 +196,25 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
         <button
           type="button"
           className="danger-link"
-          disabled={running}
+          disabled={running || elsewhere}
+          title={elsewhere ? 'Being written in another tab' : undefined}
           onClick={async () => {
             if (!confirm(`Delete “${set.title}” and its ${items.length} questions from this browser?`)) return
-            await deleteSet(set.id)
+            if (await unlessGenerating([set.id], () => deleteSet(set.id))) {
+              setDeleteRefused(`“${set.title}” is being written in another tab. Delete it once its questions are written.`)
+              return
+            }
             navigate('/library')
           }}
         >
           Delete this set
         </button>
       </footer>
+      {deleteRefused && (
+        <p className="notice" role="status">
+          {deleteRefused}
+        </p>
+      )}
     </>
   )
 }

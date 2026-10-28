@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 import { runGeneration, type GenerationPlan, type GenerationResult } from '../lib/generation/pipeline'
 import { GpuLost, type Embedder, type LLMProvider } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
+import { generationLockName, webLocks } from '../lib/storage/set-locks'
 
 // Generation outlives any one screen: the instructor can browse the library
 // while questions are written. One run at a time (the local GPU model is a
@@ -107,12 +108,6 @@ export function cancelGeneration(): void {
   controller?.abort(new DOMException('Generation cancelled', 'AbortError'))
 }
 
-// A set's generation holds this lock from start to finish, in whichever tab
-// runs it: Web Locks are shared by every tab of the app. Browsers offer them
-// only on https and localhost.
-const generationLockName = (setId: string) => `generation:${setId}`
-const webLocks = (): LockManager | undefined => navigator.locks ?? undefined
-
 // A browser can refuse the lock outright (a document that isn't fully active,
 // say); the run then goes on unlocked, as without Web Locks.
 async function whileGenerating(setId: string, run: () => Promise<void>): Promise<void> {
@@ -146,11 +141,19 @@ export async function markInterruptedSets(): Promise<void> {
             if (lock) return markInterrupted(set.id)
             // Not awaited: the app waits for this function before its first
             // render (main.tsx), and the other tab may write for minutes.
-            void locks.request(generationLockName(set.id), () => markInterrupted(set.id)).catch(() => undefined)
+            markInterruptedOnceReleased(set.id)
           })
         : markInterrupted(set.id),
     ),
   )
+}
+
+// Waits for the tab writing a set to let go of its lock, then marks the set
+// interrupted if it is still generating: that tab was closed mid-run.
+export function markInterruptedOnceReleased(setId: string, signal?: AbortSignal): void {
+  void webLocks()
+    ?.request(generationLockName(setId), { signal }, () => markInterrupted(setId))
+    .catch(() => undefined)
 }
 
 // Checks the status again in the same transaction: the tab that held the
