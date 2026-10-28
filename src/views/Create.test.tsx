@@ -170,6 +170,18 @@ describe('opening the app on a page link', () => {
     expect([shown.selectionStart, shown.selectionEnd]).toEqual([0, shown.value.length])
   })
 
+  it('selects the shown link again when Copy link is pressed again', async () => {
+    libreTexts()
+    clipboard(false)
+    const view = await openLink('human-378488')
+    await act(async () => view.button('Copy link')!.click())
+    view.button('Copy link')!.focus()
+    await act(async () => view.button('Copy link')!.click())
+    const shown = view.shownLink()!
+    expect(document.activeElement).toBe(shown)
+    expect([shown.selectionStart, shown.selectionEnd]).toEqual([0, shown.value.length])
+  })
+
   // The link cannot change under the lookup, so the page shown is always the link's.
   it('keeps Look up busy, and the link fixed, until LibreTexts answers', async () => {
     let answer = () => {}

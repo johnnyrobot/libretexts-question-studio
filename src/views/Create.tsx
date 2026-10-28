@@ -354,7 +354,7 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
             ]
               .filter(Boolean)
               .join(' · ')}{' '}
-            <CopyLink href={pageLinkFor(resolved.page.library, resolved.page.id)} />
+            <CopyLink key={resolved.page.id} href={pageLinkFor(resolved.page.library, resolved.page.id)} />
           </p>
           <TocPicker key={resolved.page.id} tree={resolved.tree} selectAll busy={busy} progress={progress} onConfirm={confirm} />
         </div>

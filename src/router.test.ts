@@ -59,4 +59,8 @@ describe('a link to share a LibreTexts page', () => {
   ])('from %s opens the app on the page: %s', (here, link) => {
     expect(pageLinkFor('human', '378488', here)).toBe(link)
   })
+
+  it('is read back as the same page', () => {
+    expect(pageLinkAddress(pageLinkFor('chem', '195199', APP + '#/set/abc'))).toBe(APP + '#/page/chem-195199')
+  })
 })

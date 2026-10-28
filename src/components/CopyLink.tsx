@@ -7,7 +7,7 @@ export function CopyLink({ href }: { href: string }) {
   // How many copies the note is showing for (0 when hidden): each copy
   // changes it, so a second copy shows the note for the full time again.
   const [copies, setCopies] = useState(0)
-  const [shown, setShown] = useState(false)
+  const [showField, setShowField] = useState(false)
   const field = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -16,19 +16,24 @@ export function CopyLink({ href }: { href: string }) {
     return () => clearTimeout(timer)
   }, [copies])
 
-  useEffect(() => {
-    if (!shown) return
+  const selectField = () => {
     field.current?.focus()
     field.current?.select()
-  }, [shown, href])
+  }
+
+  useEffect(() => {
+    if (showField) selectField()
+  }, [showField, href])
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(href)
-      setShown(false)
+      setShowField(false)
       setCopies((n) => n + 1)
     } catch {
-      setShown(true)
+      setShowField(true)
+      // Already showing: select it again, since the click moved focus.
+      selectField()
     }
   }
 
@@ -40,7 +45,7 @@ export function CopyLink({ href }: { href: string }) {
       <span role="status" className="fine">
         {copies > 0 ? 'Link copied' : ''}
       </span>
-      {shown && <input ref={field} readOnly aria-label="Link to this page" value={href} onFocus={(e) => e.target.select()} />}
+      {showField && <input ref={field} readOnly aria-label="Link to this page" value={href} onFocus={(e) => e.target.select()} />}
     </span>
   )
 }

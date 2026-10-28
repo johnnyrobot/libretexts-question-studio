@@ -240,7 +240,7 @@ function focusSelectedTab() {
 function SourceLine({ set, source }: { set: StoredSet; source: StoredSource | null }) {
   const engine = set.provider === 'openai' ? `OpenAI ${set.model}` : `In-browser ${localModelLabel(set.model)}`
   // A set made from one LibreTexts page can be shared as a link that opens
-  // the app on that page (LT-87).
+  // the app on that page.
   const pageId = source?.kind === 'page' && source.pages.length === 1 ? source.pages[0].pageId : null
   return (
     <>
