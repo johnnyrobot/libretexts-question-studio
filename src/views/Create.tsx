@@ -299,27 +299,37 @@ function UrlSource({ onSource, pageLink }: { onSource: (source: StoredSource) =>
     }
   }
 
+  // Switching tab or leaving Create cancels the pages still loading, so pages
+  // picked before the switch are never saved (LT-91).
+  const loading = useRef<AbortController | null>(null)
+  useEffect(() => () => loading.current?.abort(), [])
   const confirm = async (pages: TocNode[]) => {
     if (!resolved) return
+    loading.current?.abort()
+    const { signal } = (loading.current = new AbortController())
     setBusy(true)
     setError(null)
     try {
       const isBook = resolved.book?.id === `${resolved.page.library}-${resolved.page.id}`
-      onSource(
-        await buildLibreTextsSource({
-          library: resolved.page.library,
-          ...creditFor(resolved.tree, pages, { title: resolved.page.title, url: resolved.page.url, isBook }),
-          pages,
-          license: resolved.page.license,
-          book: resolved.book ? { title: resolved.book.title, author: resolved.book.author } : undefined,
-          onProgress: (done, total) => setProgress(`Loading page ${done} of ${total}…`),
-        }),
-      )
+      const source = await buildLibreTextsSource({
+        library: resolved.page.library,
+        ...creditFor(resolved.tree, pages, { title: resolved.page.title, url: resolved.page.url, isBook }),
+        pages,
+        license: resolved.page.license,
+        book: resolved.book ? { title: resolved.book.title, author: resolved.book.author } : undefined,
+        signal,
+        onProgress: (done, total) => {
+          if (!signal.aborted) setProgress(`Loading page ${done} of ${total}…`)
+        },
+      })
+      if (!signal.aborted) onSource(source)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setBusy(false)
-      setProgress('')
+      if (!signal.aborted) {
+        setBusy(false)
+        setProgress('')
+      }
     }
   }
 
