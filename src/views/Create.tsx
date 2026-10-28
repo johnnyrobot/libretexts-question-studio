@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import { CopyLink } from '../components/CopyLink'
 import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/Page'
@@ -18,15 +18,16 @@ import { localModel } from '../lib/llm/local-models'
 import { db, newId, type StoredSource } from '../lib/storage/db'
 import { createEmbedder, createProvider, useEngineSettings } from '../state/engine'
 import { startGeneration, useGeneration } from '../state/generation'
-import { navigate, pageLinkFor } from '../router'
+import { bookLinkFor, navigate, pageLinkFor } from '../router'
 
 type SourceTab = 'search' | 'url' | 'paste'
 
 // Step 1 lives at #/, step 2 at #/new/<sourceId>, so Back returns to the
 // source choice and a saved source can be reused for a fresh set. A link to
-// the app that names a page (#/page/<library>-<id>) opens step 1 on that page.
-export function Create({ sourceId, pageLink }: { sourceId?: string; pageLink?: string }) {
-  return sourceId ? <ConfigureStep sourceId={sourceId} /> : <SourceStep pageLink={pageLink} />
+// the app that names a page (#/page/<library>-<id>) opens step 1 on that page,
+// and one that names a book (#/book/<catalog id>) opens that book in book search.
+export function Create({ sourceId, pageLink, bookLink }: { sourceId?: string; pageLink?: string; bookLink?: string }) {
+  return sourceId ? <ConfigureStep sourceId={sourceId} /> : <SourceStep pageLink={pageLink} bookLink={bookLink} />
 }
 
 // ---------------------------------------------------------------- step 1
@@ -37,10 +38,18 @@ const SOURCE_TABS = [
   ['paste', 'Paste text'],
 ] as const
 
-function SourceStep({ pageLink }: { pageLink?: string }) {
+function SourceStep({ pageLink, bookLink }: { pageLink?: string; bookLink?: string }) {
   const [tab, setTab] = useState<SourceTab>(pageLink === undefined ? 'search' : 'url')
+  // A book the book list does not have, or cannot load, is looked up on Paste a
+  // link by its cover page: a catalog id, <library>-<cover page id>, is also
+  // that page's link.
+  const [link, setLink] = useState(pageLink)
+  const unlisted = (bookId: string) => {
+    setLink(bookId)
+    setTab('url')
+  }
   // Focus starts in the search box, but arrowing back to its tab later must
-  // leave focus on the tab.
+  // leave focus on the tab. A book link is followed only before any switch.
   const [switched, setSwitched] = useState(false)
   const onSource = (source: StoredSource) => navigate(`/new/${source.id}`)
   return (
@@ -61,8 +70,10 @@ function SourceStep({ pageLink }: { pageLink?: string }) {
         panelId="source-panel"
       />
       <TabPanel className="tab-panel" panelId="source-panel" selected={tab}>
-        {tab === 'search' && <BookSearch onSource={onSource} autoFocus={!switched} />}
-        {tab === 'url' && <UrlSource onSource={onSource} pageLink={pageLink} />}
+        {tab === 'search' && (
+          <BookSearch onSource={onSource} autoFocus={!switched} bookLink={switched ? undefined : bookLink} onUnlisted={unlisted} />
+        )}
+        {tab === 'url' && <UrlSource onSource={onSource} pageLink={link} />}
         {tab === 'paste' && <PasteSource onSource={onSource} />}
       </TabPanel>
     </>
@@ -72,7 +83,18 @@ function SourceStep({ pageLink }: { pageLink?: string }) {
 // The page id of a catalog book's cover: its id is <library>-<page id>.
 const coverIdOf = (book: CatalogBook) => book.id.slice(book.id.indexOf('-') + 1)
 
-function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) => void; autoFocus: boolean }) {
+function BookSearch({
+  onSource,
+  autoFocus,
+  bookLink,
+  onUnlisted,
+}: {
+  onSource: (source: StoredSource) => void
+  autoFocus: boolean
+  // The catalog id of a book to open once the catalog loads (LT-94).
+  bookLink?: string
+  onUnlisted: (bookId: string) => void
+}) {
   const [books, setBooks] = useState<CatalogBook[] | null>(null)
   const [snapshot, setSnapshot] = useState('')
   const [query, setQuery] = useState('')
@@ -82,15 +104,6 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState('')
-
-  useEffect(() => {
-    loadCatalog()
-      .then((catalog) => {
-        setBooks(catalog.books)
-        setSnapshot(new Date(catalog.generatedAt).toLocaleDateString())
-      })
-      .catch((e) => setError(e.message))
-  }, [])
 
   const results = useMemo(
     () => (books && (query.trim() || library) ? searchCatalog(books, query, library) : []),
@@ -118,6 +131,34 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
       if (!signal.aborted) setBusy(false)
     }
   }
+  // A book link opens its book once the catalog is in, or goes to Paste a link
+  // when the catalog lacks it (LT-94), unless a search was typed meanwhile.
+  const searched = useRef(false)
+  const followLink = useEffectEvent((catalog: CatalogBook[]) => {
+    if (bookLink === undefined || searched.current) return
+    const linked = catalog.find((candidate) => candidate.id === bookLink.toLowerCase())
+    if (linked) open(linked)
+    else onUnlisted(bookLink)
+  })
+  useEffect(() => {
+    let live = true
+    loadCatalog()
+      .then((catalog) => {
+        if (!live) return
+        setBooks(catalog.books)
+        setSnapshot(new Date(catalog.generatedAt).toLocaleDateString())
+        followLink(catalog.books)
+      })
+      .catch((e) => {
+        if (!live) return
+        setError(e.message)
+        followLink([])
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
   const back = () => {
     loading.current?.abort()
     setBook(null)
@@ -169,7 +210,7 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
           <a href={book.url} target="_blank" rel="noreferrer">
             Open on LibreTexts
           </a>{' '}
-          <CopyLink href={pageLinkFor(book.library, coverIdOf(book))} />
+          <CopyLink href={bookLinkFor(book.id)} />
         </p>
         {error && (
         <p className="error" role="alert">
@@ -198,14 +239,23 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
               type="search"
               placeholder="Title, subject, or author"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                searched.current = true
+                setQuery(e.target.value)
+              }}
               autoFocus={autoFocus}
             />
           </span>
         </label>
         <label>
           Library
-          <select value={library} onChange={(e) => setLibrary(e.target.value as Library | '')}>
+          <select
+            value={library}
+            onChange={(e) => {
+              searched.current = true
+              setLibrary(e.target.value as Library | '')
+            }}
+          >
             <option value="">All libraries</option>
             {Object.entries(LIBRARIES).map(([id, name]) => (
               <option key={id} value={id}>

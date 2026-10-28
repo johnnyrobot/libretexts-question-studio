@@ -32,8 +32,9 @@ function Root() {
 
 await Promise.all([markInterruptedSets(), loadRememberedKey()]).catch(() => undefined)
 
-// A link such as ?page=human-378488 opens Create on that page. The query leaves
-// the address bar, and the page link wins over any route in the hash.
+// A link such as ?page=human-378488 opens Create on that page, and one such as
+// ?book=human-378400 opens that book in book search. The query leaves the
+// address bar, and the link wins over any route in the hash.
 const pageLinkTarget = pageLinkAddress(location.href)
 if (pageLinkTarget) history.replaceState(null, '', pageLinkTarget)
 

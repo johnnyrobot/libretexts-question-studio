@@ -76,14 +76,17 @@ beforeEach(async () => {
 // Lets the stubbed lookups reach the page.
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 20)))
 
-async function openLink(pageLink: string) {
+const openLink = (pageLink: string) => openCreate({ pageLink })
+const openBookLink = (bookLink: string) => openCreate({ bookLink })
+
+async function openCreate(link: { pageLink?: string; bookLink?: string }) {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
   act(() =>
     root.render(
       <StrictMode>
-        <Create pageLink={pageLink} />
+        <Create {...link} />
       </StrictMode>,
     ),
   )
@@ -429,7 +432,7 @@ describe('switching tab while Continue loads a pasted link’s pages', () => {
 })
 
 describe('the link to a book opened in book search', () => {
-  it('copies a link that opens the app on the book’s cover page', async () => {
+  it('copies a link that reopens the book in Find a book', async () => {
     libreTexts(bookTree)
     const writeText = clipboard()
     const container = document.createElement('div')
@@ -446,7 +449,43 @@ describe('the link to a book opened in book search', () => {
     await act(async () => search.dispatchEvent(new Event('input', { bubbles: true })))
     await act(async () => container.querySelector<HTMLButtonElement>('.result-list button')!.click())
     await act(async () => button('Copy link')!.click())
-    expect(writeText).toHaveBeenCalledWith(`${location.origin}/?page=human-378400`)
+    expect(writeText).toHaveBeenCalledWith(`${location.origin}/?book=human-378400`)
+  })
+
+  it('opens book search on that book', async () => {
+    libreTexts(bookTree)
+    const view = await openBookLink('human-378400')
+    expect(view.selectedTab()).toBe('Find a book')
+    expect(document.querySelector('h2')?.textContent).toBe('¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)')
+    expect(view.text()).toContain('1: Saludos')
+    expect(button('Back to search results')).toBeDefined()
+  })
+
+  it('leaves a search typed before the book list arrives alone', async () => {
+    libreTexts(bookTree)
+    // Not openCreate: it waits for the book list, and this types before it arrives.
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => root.render(<Create bookLink="human-378400" />))
+    cleanup = () => {
+      act(() => root.unmount())
+      container.remove()
+    }
+    const search = container.querySelector<HTMLInputElement>('input[type="search"]')!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'Álgebra')
+    act(() => search.dispatchEvent(new Event('input', { bubbles: true })))
+    await settle()
+    expect(container.querySelector('h2')).toBeNull()
+    expect(container.querySelector('.result-list')?.textContent).toContain('Álgebra básica')
+  })
+
+  it('looks up a book the book list no longer has on Paste a link, by its cover page', async () => {
+    libreTexts()
+    const view = await openBookLink('human-378488')
+    expect(view.selectedTab()).toBe('Paste a link')
+    expect(view.link()).toBe('https://human.libretexts.org/@go/page/378488')
+    expect(view.text()).toContain('4.2: La profecía de la gitana')
   })
 })
 
