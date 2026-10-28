@@ -63,7 +63,7 @@ describe('opening the app on a book link when the book list cannot load', () => 
     expect(container.querySelector<HTMLInputElement>('input[type="url"]')?.value).toBe(
       'https://human.libretexts.org/@go/page/378400',
     )
-    expect(fetch.mock.calls.some(([url]) => url.includes('/pages/378400'))).toBe(true)
+    expect(fetch.mock.calls.some(([url]) => url.includes('/pages/378400?'))).toBe(true)
     expect(container.textContent).toContain(BOOK_COVER.title)
   })
 })
