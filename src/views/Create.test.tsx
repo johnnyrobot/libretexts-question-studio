@@ -240,6 +240,58 @@ const COVER = {
 const bookTree = (target: string) =>
   target.includes('/tree') ? BOOK_TREE : target.includes('/pages/378400?') ? COVER : found(target)
 
+describe('opening one book after another in book search', () => {
+  it('shows and saves the pages of the book open now when an earlier book’s contents arrive late', async () => {
+    // 378401 is "Lecturas mixtas", with a page of its own.
+    const OTHER_TREE = { page: tocNode('378401', 'Lecturas mixtas', [tocNode('9.1', '9.1: Lectura')]) }
+    let answerFirstBook = () => {}
+    const firstBookAnswered = new Promise<void>((resolve) => (answerFirstBook = resolve))
+    const fetch = libreTexts(async (target) => {
+      if (target.includes('/378400/tree')) {
+        await firstBookAnswered
+        return BOOK_TREE
+      }
+      if (target.includes('/378401/tree')) return OTHER_TREE
+      return found(target)
+    })
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => root.render(<Create />))
+    cleanup = () => {
+      act(() => root.unmount())
+      container.remove()
+    }
+    await settle()
+    // Going back draws the search field again, so it is looked up each time.
+    const openBook = async (title: string) => {
+      const search = container.querySelector<HTMLInputElement>('input[type="search"]')!
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, title)
+      await act(async () => search.dispatchEvent(new Event('input', { bubbles: true })))
+      await act(async () => container.querySelector<HTMLButtonElement>('.result-list button')!.click())
+    }
+    await openBook('¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)')
+    await act(async () => button('Back to search results')!.click())
+    await openBook('Lecturas mixtas')
+    await settle()
+    const firstBookLoad = fetch.mock.calls.find(([url]) => url.includes('/378400/tree')) as unknown as [string, RequestInit]
+    expect(firstBookLoad[1].signal?.aborted).toBe(true)
+    await act(async () => answerFirstBook())
+    await settle()
+
+    expect(container.querySelector('h2')?.textContent).toBe('Lecturas mixtas')
+    const shown = [...container.querySelectorAll('.toc-label span')].map((span) => span.firstChild?.textContent)
+    expect(shown).toContain('9.1: Lectura')
+    expect(shown).not.toContain('1: Saludos')
+    await act(async () => button('Select all content')!.click())
+    await act(async () => button('Continue with 1 page')!.click())
+    await settle()
+    const [source] = await db.sources.toArray()
+    expect(source.pages.map((page) => page.title)).toEqual(['9.1: Lectura'])
+    expect(source.book?.title).toBe('Lecturas mixtas')
+  })
+})
+
 describe('crediting the book a source comes from', () => {
   it('keeps the book and its authors for a page from a link', async () => {
     libreTexts()

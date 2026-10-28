@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
@@ -93,19 +93,31 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
     [books, query, library],
   )
 
+  // Going back, opening another book or leaving cancels the contents still
+  // loading, so they never land under a book they don't belong to.
+  const loading = useRef<AbortController | null>(null)
+  useEffect(() => () => loading.current?.abort(), [])
   const open = async (choice: CatalogBook) => {
+    loading.current?.abort()
+    const { signal } = (loading.current = new AbortController())
     setBook(choice)
     setTree(null)
     setError(null)
     setBusy(true)
     try {
       const coverId = choice.id.slice(choice.id.indexOf('-') + 1)
-      setTree(await getTree(choice.library, coverId))
+      const contents = await getTree(choice.library, coverId, signal)
+      if (!signal.aborted) setTree(contents)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setBusy(false)
+      if (!signal.aborted) setBusy(false)
     }
+  }
+  const back = () => {
+    loading.current?.abort()
+    setBook(null)
+    setBusy(false)
   }
 
   const confirm = async (pages: TocNode[]) => {
@@ -136,7 +148,7 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
   if (book) {
     return (
       <div>
-        <button type="button" className="link back-link text-link" onClick={() => setBook(null)}>
+        <button type="button" className="link back-link text-link" onClick={back}>
           <Icon name="arrow-left" size={18} /> Back to search results
         </button>
         <h2>{book.title}</h2>
