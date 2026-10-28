@@ -402,6 +402,32 @@ describe('going back while Continue loads a book’s pages', () => {
   })
 })
 
+describe('switching tab while Continue loads a pasted link’s pages', () => {
+  it('saves nothing and stays on the tab chosen when the pages arrive after the switch', async () => {
+    let answerPage = () => {}
+    const pageAnswered = new Promise<void>((resolve) => (answerPage = resolve))
+    const fetch = libreTexts(async (target) => {
+      if (target.includes('/contents')) {
+        await pageAnswered
+      }
+      return found(target)
+    })
+    window.location.hash = '#/'
+    const view = await openLink('human-378488')
+    await act(async () => view.button('Continue with 1 page')!.click())
+    await settle()
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent === 'Find a book')!.click())
+    const pageLoad = fetch.mock.calls.find(([url]) => url.includes('/contents')) as unknown as [string, RequestInit]
+    expect(pageLoad[1].signal?.aborted).toBe(true)
+    await act(async () => answerPage())
+    await settle()
+
+    expect(await db.sources.count()).toBe(0)
+    expect(window.location.hash).toBe('#/')
+    expect(view.selectedTab()).toBe('Find a book')
+  })
+})
+
 describe('the link to a book opened in book search', () => {
   it('copies a link that opens the app on the book’s cover page', async () => {
     libreTexts(bookTree)
