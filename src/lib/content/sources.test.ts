@@ -90,15 +90,19 @@ function dekiByPath(path: string, covers: Record<string, { id: string; title: st
 interface Above {
   id: string
   title: string
-  cover?: boolean
+  // A cover is tagged coverpage:yes, or coverpage:toc on some books.
+  cover?: boolean | 'toc'
 }
 
 // LibreTexts' proxy answering for a page under a catalog entry that is not
 // certain to be its book: the page by its id (378488), and the pages above it,
-// nearest first, by theirs. A page tagged coverpage:yes is a book's cover.
+// nearest first, by theirs. A page tagged coverpage:yes or coverpage:toc is a
+// book's cover.
 // Returns the pages asked for, in order.
-function dekiById(path: string, above: Above[], options: { cover?: boolean; failing?: string } = {}) {
-  const tags = (cover?: boolean) => ({ tag: [{ '@value': 'article:topic' }, ...(cover ? [{ '@value': 'coverpage:yes' }] : [])] })
+function dekiById(path: string, above: Above[], options: { cover?: Above['cover']; failing?: string } = {}) {
+  const tags = (cover?: Above['cover']) => ({
+    tag: [{ '@value': 'article:topic' }, ...(cover ? [{ '@value': cover === 'toc' ? 'coverpage:toc' : 'coverpage:yes' }] : [])],
+  })
   const parents = above.reduceRight<object | undefined>(
     (parent, { id }) => ({ '@id': id, ...(parent && { 'page.parent': parent }) }),
     undefined,
@@ -205,6 +209,15 @@ describe('looking up a pasted link', () => {
     dekiById('Bookshelves/Physics/Spiral_Physics/Spiral_Waves/1.01', [
       { id: '150100', title: 'Spiral Waves' },
       { id: '150000', title: 'Spiral Physics', cover: true },
+    ])
+    const { book } = await resolveUrl('https://human.libretexts.org/@go/page/378488')
+    expect(book).toEqual({ id: 'human-150000', title: 'Spiral Physics', author: 'Paul D’Alessandris' })
+  })
+
+  it('names a book whose cover is tagged coverpage:toc', async () => {
+    dekiById('Bookshelves/Physics/Spiral_Physics/Spiral_Waves/1.01', [
+      { id: '150100', title: 'Spiral Waves' },
+      { id: '150000', title: 'Spiral Physics', cover: 'toc' },
     ])
     const { book } = await resolveUrl('https://human.libretexts.org/@go/page/378488')
     expect(book).toEqual({ id: 'human-150000', title: 'Spiral Physics', author: 'Paul D’Alessandris' })

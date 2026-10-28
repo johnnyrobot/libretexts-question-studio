@@ -140,7 +140,8 @@ export interface PageInfo {
   path: string
   url: string
   license: { code: string; label: string; version: string | null } | null
-  // Whether the page is a book's cover, as Deki tags it (coverpage:yes).
+  // Whether the page is a book's cover, as Deki tags it: coverpage:yes, or
+  // coverpage:toc on some books (Conductor counts both).
   cover: boolean
   // The ids of the pages above it, nearest first.
   ancestors: string[]
@@ -191,7 +192,7 @@ export async function getPageInfo(ref: PageRef, signal?: AbortSignal): Promise<P
     path,
     url: page['uri.ui'] ?? `https://${ref.library}.libretexts.org/${path}`,
     license: licenseFromTags(tags),
-    cover: tags.has('coverpage:yes'),
+    cover: tags.has('coverpage:yes') || tags.has('coverpage:toc'),
     ancestors,
   }
 }
