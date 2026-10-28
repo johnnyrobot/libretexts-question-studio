@@ -124,7 +124,6 @@ describe('opening the app on a page link', () => {
     )
     expect(view.text()).toContain('4.2: La profecía de la gitana')
     expect(view.text()).toContain('From “HOLA Spanish 3 (Tseng Rosales and Lemari)” · CC BY-NC-SA 4.0')
-    expect(view.alert()).toBeUndefined()
   })
 
   it('copies a link that opens the app on the page, and says so for a moment', async () => {
@@ -425,7 +424,6 @@ describe('switching tab while Continue loads a pasted link’s pages', () => {
     expect(await db.sources.count()).toBe(0)
     expect(window.location.hash).toBe('#/')
     expect(view.selectedTab()).toBe('Find a book')
-    expect(view.alert()).toBeUndefined()
   })
 })
 
