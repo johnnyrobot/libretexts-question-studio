@@ -76,14 +76,17 @@ beforeEach(async () => {
 // Lets the stubbed lookups reach the page.
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 20)))
 
-async function openLink(pageLink: string) {
+const openLink = (pageLink: string) => openCreate({ pageLink })
+const openBookLink = (bookLink: string) => openCreate({ bookLink })
+
+async function openCreate(link: { pageLink?: string; bookLink?: string }) {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
   act(() =>
     root.render(
       <StrictMode>
-        <Create pageLink={pageLink} />
+        <Create {...link} />
       </StrictMode>,
     ),
   )
@@ -446,7 +449,24 @@ describe('the link to a book opened in book search', () => {
     await act(async () => search.dispatchEvent(new Event('input', { bubbles: true })))
     await act(async () => container.querySelector<HTMLButtonElement>('.result-list button')!.click())
     await act(async () => button('Copy link')!.click())
-    expect(writeText).toHaveBeenCalledWith(`${location.origin}/?page=human-378400`)
+    expect(writeText).toHaveBeenCalledWith(`${location.origin}/?book=human-378400`)
+  })
+
+  it('opens book search on that book', async () => {
+    libreTexts(bookTree)
+    const view = await openBookLink('human-378400')
+    expect(view.selectedTab()).toBe('Find a book')
+    expect(document.querySelector('h2')?.textContent).toBe('¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari)')
+    expect(view.text()).toContain('1: Saludos')
+    expect(button('Back to search results')).toBeDefined()
+  })
+
+  it('looks up a book the book list no longer has on Paste a link, by its cover page', async () => {
+    libreTexts()
+    const view = await openBookLink('human-378488')
+    expect(view.selectedTab()).toBe('Paste a link')
+    expect(view.link()).toBe('https://human.libretexts.org/@go/page/378488')
+    expect(view.text()).toContain('4.2: La profecía de la gitana')
   })
 })
 

@@ -4,7 +4,7 @@ import { Icon } from './components/Icon'
 import { localModel, useLoadedLocalModel } from './lib/llm/local-models'
 import { db } from './lib/storage/db'
 import { useSessionKey } from './lib/storage/secrets'
-import { pageLinkFromRoute, useRoute } from './router'
+import { bookLinkFromRoute, pageLinkFromRoute, useRoute } from './router'
 import { localModelId, useEngineSettings } from './state/engine'
 import { useGeneration } from './state/generation'
 import { TEXT_SIZES, setTextSize, useNarrowLayout, useTextSize } from './state/text-size'
@@ -19,7 +19,7 @@ interface InstallPromptEvent extends Event {
 }
 
 type Page =
-  | { name: 'create'; sourceId?: string; pageLink?: string }
+  | { name: 'create'; sourceId?: string; pageLink?: string; bookLink?: string }
   | { name: 'library' }
   | { name: 'set'; setId: string; tab: 'review' | 'export' }
   | { name: 'settings'; section: SettingsSection }
@@ -32,6 +32,8 @@ function pageFor(route: string): Page {
   if (route === '/settings/data') return { name: 'settings', section: 'data' }
   const pageLink = pageLinkFromRoute(route)
   if (pageLink !== undefined) return { name: 'create', pageLink }
+  const bookLink = bookLinkFromRoute(route)
+  if (bookLink !== undefined) return { name: 'create', bookLink }
   return { name: 'create', sourceId: route.match(/^\/new\/([\w-]+)$/)?.[1] }
 }
 
@@ -103,9 +105,11 @@ export default function App({ updateReady, applyUpdate }: { updateReady: boolean
   else if (page.name === 'library') view = <Library />
   else if (page.name === 'settings') view = <Settings section={page.section} />
   else {
-    // A page link gets its own key, so leaving it for #/ starts afresh.
-    const key = page.sourceId ?? (page.pageLink === undefined ? 'new' : `page:${page.pageLink}`)
-    view = <Create key={key} sourceId={page.sourceId} pageLink={page.pageLink} />
+    // A page or book link gets its own key, so leaving it for #/ starts afresh.
+    const key =
+      page.sourceId ??
+      (page.pageLink !== undefined ? `page:${page.pageLink}` : page.bookLink !== undefined ? `book:${page.bookLink}` : 'new')
+    view = <Create key={key} sourceId={page.sourceId} pageLink={page.pageLink} bookLink={page.bookLink} />
   }
 
   const watchingRun = page.name === 'set' && page.setId === generation.setId

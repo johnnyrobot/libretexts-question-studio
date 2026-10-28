@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pageLinkAddress, pageLinkFor, pageLinkFromRoute } from './router'
+import { bookLinkFor, bookLinkFromRoute, pageLinkAddress, pageLinkFor, pageLinkFromRoute } from './router'
 
 const APP = 'https://qtistudio.libretexts.dev/'
 
@@ -62,5 +62,27 @@ describe('a link to share a LibreTexts page', () => {
 
   it('is read back as the same page', () => {
     expect(pageLinkAddress(pageLinkFor('chem', '195199', APP + '#/set/abc'))).toBe(APP + '#/page/chem-195199')
+  })
+})
+
+describe('a link that opens a book in book search (LT-94)', () => {
+  it.each([
+    ['?book=human-378400', '#/book/human-378400'],
+    ['?book=human-378400&utm_source=slack', '#/book/human-378400'],
+    ['?book=human-378400#/library', '#/book/human-378400'],
+  ])('moves %s to the route in %s', (query, route) => {
+    expect(pageLinkAddress(APP + query)).toBe(APP + route)
+  })
+
+  it('is made at the address the app runs from now and read back as the same book', () => {
+    const link = bookLinkFor('human-378400', APP + '#/set/abc')
+    expect(link).toBe('https://qtistudio.libretexts.dev/?book=human-378400')
+    expect(pageLinkAddress(link)).toBe(APP + '#/book/human-378400')
+    expect(bookLinkFromRoute('/book/human-378400')).toBe('human-378400')
+  })
+
+  it('finds no book in other routes', () => {
+    expect(bookLinkFromRoute('/page/human-378400')).toBeUndefined()
+    expect(bookLinkFromRoute('/')).toBeUndefined()
   })
 })
