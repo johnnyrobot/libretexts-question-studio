@@ -396,6 +396,9 @@ describe('going back while Continue loads a book’s pages', () => {
     expect(window.location.hash).toBe('#/')
     expect(container.querySelector('input[type="search"]')).not.toBeNull()
     expect(container.querySelector('[role="alert"]')).toBeNull()
+    await act(async () => container.querySelector<HTMLButtonElement>('.result-list button')!.click())
+    await settle()
+    expect(container.textContent).not.toContain('Loading page')
   })
 })
 

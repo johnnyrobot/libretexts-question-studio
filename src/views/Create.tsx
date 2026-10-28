@@ -141,7 +141,9 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
         license: licenseFromCatalog(book.license),
         book: { title: book.title, author: book.author || null },
         signal,
-        onProgress: (done, total) => setProgress(`Loading page ${done} of ${total}…`),
+        onProgress: (done, total) => {
+          if (!signal.aborted) setProgress(`Loading page ${done} of ${total}…`)
+        },
       })
       if (!signal.aborted) onSource(source)
     } catch (e) {

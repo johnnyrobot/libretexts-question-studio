@@ -132,6 +132,11 @@ export async function buildLibreTextsSource(options: {
     createdAt: Date.now(),
   }
   await db.sources.add(source)
+  if (options.signal?.aborted) {
+    // Cancelled while it was being written: take it back out.
+    await db.sources.delete(source.id)
+    options.signal.throwIfAborted()
+  }
   return source
 }
 
