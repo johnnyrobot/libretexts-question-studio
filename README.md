@@ -113,8 +113,8 @@ outside this repository.
 ## Deploying
 
 `npm run build` produces a static site in `dist/`. It can be hosted anywhere that
-serves static files over HTTPS, from the root of a site: the built pages load
-their scripts, styles and icons from the site root.
+serves static files over HTTPS. Serve it from the root of a site: the built
+pages load all their files from there.
 
 - **Public site:** https://qtistudio.libretexts.dev, static files in `/opt/libretexts/qtistudio/` on the libretexts.dev VPS, served by Caddy. `/assets/*` is cached for a year and everything else is `no-cache`, so a new service worker and catalog reach users. Redeploy with `npm run build && rsync -a --delete dist/ <vps>:/opt/libretexts/qtistudio/`; Caddy needs no reload. Browsers keep downloaded models per site, so the first visit downloads the model again even if it was loaded on localhost.
 
