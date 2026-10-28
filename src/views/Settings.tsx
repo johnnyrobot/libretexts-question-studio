@@ -1,3 +1,4 @@
+import { useLiveQuery } from 'dexie-react-hooks'
 import { useEffect, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/Page'
@@ -15,7 +16,7 @@ import {
 } from '../lib/llm/local-models'
 import { checkOpenAIKey, OPENAI_MODELS, type ReasoningEffort } from '../lib/llm/openai'
 import { createBackup, restoreBackup } from '../lib/storage/backup'
-import { deleteEverything, requestPersistentStorage } from '../lib/storage/db'
+import { db, deleteEverything, requestPersistentStorage } from '../lib/storage/db'
 import { downloadBlob } from '../lib/qti/export'
 import { forgetKey, getSessionKey, hasRememberedKey, rememberKey, setSessionKey } from '../lib/storage/secrets'
 import { localModelId, saveEngineSettings, useEngineSettings } from '../state/engine'
@@ -441,6 +442,9 @@ function DataSettings() {
   const [persisted, setPersisted] = useState<boolean | null>(null)
   const [backupStatus, setBackupStatus] = useState<string | null>(null)
   const [deleteRefused, setDeleteRefused] = useState<string | null>(null)
+  // A refusal holds only while some set is still being written, in any tab.
+  const writing = useLiveQuery(() => db.sets.filter((set) => set.status === 'generating').count(), [])
+  if (writing === 0 && deleteRefused !== null) setDeleteRefused(null)
   useEffect(() => {
     navigator.storage?.estimate?.().then((e) => setEstimate({ usage: e.usage ?? 0, quota: e.quota ?? 0 }))
     navigator.storage?.persisted?.().then(setPersisted)

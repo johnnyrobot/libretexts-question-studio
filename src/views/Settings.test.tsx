@@ -73,4 +73,21 @@ describe('Delete everything', () => {
     expect(container.textContent).toContain('“Leaf quiz” is still being written. Delete everything once its questions are written.')
     expect(await db.sets.count()).toBe(1)
   })
+
+  it('takes the refusal down once no set is being written', async () => {
+    vi.stubGlobal('navigator', { locks })
+    vi.stubGlobal('confirm', () => true)
+    await db.sets.put({
+      id: 'set', title: 'Leaf quiz', sourceId: 's', provider: 'local', model: 'm', status: 'generating', error: null,
+      requested: { itemTypes: [], count: 1 }, createdAt: 1, updatedAt: 1,
+    })
+    void locks.request('generation:set', () => new Promise(() => {}))
+    const { button, container } = await render('data')
+    act(() => button('Delete all question sets and saved pages').click())
+    await settle()
+    expect(container.textContent).toContain('is still being written')
+    await db.sets.update('set', { status: 'complete' })
+    await settle()
+    expect(container.textContent).not.toContain('is still being written')
+  })
 })

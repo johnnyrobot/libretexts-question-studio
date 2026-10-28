@@ -52,7 +52,8 @@ lookup, the QTI exporter with its author name and source credit, export
 history, backup and restore, the question editor, the OpenAI answer-check
 setting, links that open the app on a LibreTexts page, and a second tab
 leaving a set alone while another tab is still writing it, then marking it
-interrupted if that tab closes first.
+interrupted if that tab closes first, and Delete everything refusing while any
+set is being written.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint, the tests and the build,
 but not the ADAPT importer check below; run that one locally.
