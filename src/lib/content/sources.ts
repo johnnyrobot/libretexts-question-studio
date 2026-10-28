@@ -49,10 +49,10 @@ const COVER_LOOKUPS = 2
 // the page is credited on its own. A book the catalog lists above the page for
 // certain is it. Under a catalog entry that is not certain, Deki's own cover
 // tag names it: the page itself or one of the pages above it inside that
-// entry, nearest first (LT-81). When none is tagged, or Deki fails on the way
-// up, the entry is credited as before (LT-93). A campus is never the book, even
-// where Deki tags it as a cover, and a guess from the path alone could name a
-// shelf or campus (LT-75).
+// entry, nearest first (LT-81). When none is tagged, or Deki fails on a page
+// above, the catalog entry is credited as before (LT-93). A campus is never
+// the book, even where Deki tags it as a cover, and a guess from the path alone
+// could name a shelf or campus (LT-75).
 async function bookCover(page: PageInfo, signal?: AbortSignal): Promise<PageInfo | null> {
   const listed = await catalogMatch(page.library, page.path)
   if (!listed) return null
@@ -63,7 +63,7 @@ async function bookCover(page: PageInfo, signal?: AbortSignal): Promise<PageInfo
   const inside = (candidate: PageInfo) => `${candidate.path.toLowerCase()}/`.startsWith(`${entry}/`)
   const isBook = (candidate: PageInfo) => candidate.cover && !isCampus(candidate.path)
   if (isBook(page)) return page
-  let entryPage: PageInfo | null = null
+  let entryPage = page.path.toLowerCase() === entry ? page : null
   try {
     for (const id of page.ancestors.slice(0, COVER_LOOKUPS)) {
       const above = await getPageInfo({ library: page.library, id }, signal)

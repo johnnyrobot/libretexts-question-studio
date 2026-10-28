@@ -299,6 +299,14 @@ describe('looking up a pasted link', () => {
     expect(book).toEqual({ id: 'phys-9867', title: 'Spiral Physics - Calculus Based', author: "Paul D'Alessandris" })
   })
 
+  it('names a pasted catalog entry as the book without asking for it again', async () => {
+    // The pasted page is always 378488 here, so it stands in for BT's own id.
+    const asked = dekiById(BT, [{ id: '114000', title: 'San Diego State University' }])
+    const { book } = await resolveUrl('https://bio.libretexts.org/@go/page/378488')
+    expect(book).toEqual({ id: 'bio-378488', title: 'bt@sdsu', author: null })
+    expect(asked).toEqual(['378488', '114000'])
+  })
+
   it('names the catalog entry when LibreTexts fails on a page above', async () => {
     dekiById(`${BT}/3.1:_Genetics/01`, [
       { id: '114800', title: '3.1: Genetics', cover: true },
