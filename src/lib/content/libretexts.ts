@@ -140,6 +140,16 @@ export interface PageInfo {
   path: string
   url: string
   license: { code: string; label: string; version: string | null } | null
+  // Whether the page is a book's cover, as Deki tags it: coverpage:yes, or
+  // coverpage:toc on some books (Conductor counts both).
+  cover: boolean
+  // The ids of the pages above it, nearest first.
+  ancestors: string[]
+}
+
+interface DekiParent {
+  '@id'?: string
+  'page.parent'?: DekiParent
 }
 
 interface DekiPage {
@@ -148,6 +158,7 @@ interface DekiPage {
   path?: { '#text'?: string } | string
   'uri.ui'?: string
   tags?: { tag?: DekiTag | DekiTag[] }
+  'page.parent'?: DekiParent
   subpages?: { page?: DekiPage | DekiPage[] } | ''
 }
 
@@ -169,13 +180,20 @@ export async function getPageInfo(ref: PageRef, signal?: AbortSignal): Promise<P
   const page = await crossLibrary<DekiPage>(ref.library, `${pageSegment(ref)}?dream.out.format=json`, signal)
   if (!page['@id']) throw new LibreTextsError('LibreTexts could not find that page.')
   const path = pathText(page)
+  const tags = tagValues(asArray(page.tags?.tag))
+  const ancestors: string[] = []
+  for (let parent = page['page.parent']; parent?.['@id']; parent = parent['page.parent']) {
+    ancestors.push(String(parent['@id']))
+  }
   return {
     library: ref.library,
     id: String(page['@id']),
     title: page.title ?? path.split('/').pop() ?? 'Untitled page',
     path,
     url: page['uri.ui'] ?? `https://${ref.library}.libretexts.org/${path}`,
-    license: licenseFromTags(asArray(page.tags?.tag)),
+    license: licenseFromTags(tags),
+    cover: tags.has('coverpage:yes') || tags.has('coverpage:toc'),
+    ancestors,
   }
 }
 
@@ -280,14 +298,14 @@ export function licenseLabel(code: string): string | null {
   return LICENSE_LABELS[code] ?? null
 }
 
+// A page's tags as Deki names them, trimmed and lower-cased.
+function tagValues(tags: DekiTag[]): Set<string> {
+  return new Set(tags.map((tag) => (tag['@value'] ?? tag.title ?? '').trim().toLowerCase()).filter(Boolean))
+}
+
 // Port of content.py::_source_license_from_tags: only an unambiguous license
 // tag is reported; anything else is left for the instructor to fill in.
-export function licenseFromTags(tags: DekiTag[]): PageInfo['license'] {
-  const values = new Set(
-    tags
-      .map((tag) => (tag['@value'] ?? tag.title ?? '').trim().toLowerCase())
-      .filter(Boolean),
-  )
+export function licenseFromTags(values: Set<string>): PageInfo['license'] {
   const codes = [...values].filter((v) => v.startsWith('license:')).map((v) => v.slice('license:'.length))
   const versions = [...values]
     .filter((v) => v.startsWith('licenseversion:'))
