@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import { PAGE_LINK } from './lib/content/libretexts'
 
-// Hash routing: the app is a static PWA and must work from any host path.
+// Hash routing: every route is the one index.html, so a static host needs no
+// rewrite rules.
 
 export function navigate(path: string): void {
   window.location.hash = path
