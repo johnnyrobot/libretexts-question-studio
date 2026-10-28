@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
@@ -93,18 +93,23 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
     [books, query, library],
   )
 
+  // Counts the books opened, so contents that arrive after the instructor has
+  // gone back and opened another book are dropped, never filed under it.
+  const opened = useRef(0)
   const open = async (choice: CatalogBook) => {
+    const request = ++opened.current
     setBook(choice)
     setTree(null)
     setError(null)
     setBusy(true)
     try {
       const coverId = choice.id.slice(choice.id.indexOf('-') + 1)
-      setTree(await getTree(choice.library, coverId))
+      const contents = await getTree(choice.library, coverId)
+      if (request === opened.current) setTree(contents)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (request === opened.current) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setBusy(false)
+      if (request === opened.current) setBusy(false)
     }
   }
 
