@@ -4,15 +4,17 @@ import { useEffect, useRef, useState } from 'react'
 // cannot copy (no Clipboard API, or permission refused), it shows the link
 // selected instead, for the person to copy themselves.
 export function CopyLink({ href }: { href: string }) {
-  const [copied, setCopied] = useState(false)
+  // How many copies the note is showing for (0 when hidden): each copy
+  // changes it, so a second copy shows the note for the full time again.
+  const [copies, setCopies] = useState(0)
   const [shown, setShown] = useState(false)
   const field = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (!copied) return
-    const timer = setTimeout(() => setCopied(false), 2000)
+    if (copies === 0) return
+    const timer = setTimeout(() => setCopies(0), 2000)
     return () => clearTimeout(timer)
-  }, [copied])
+  }, [copies])
 
   useEffect(() => {
     if (!shown) return
@@ -23,7 +25,8 @@ export function CopyLink({ href }: { href: string }) {
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(href)
-      setCopied(true)
+      setShown(false)
+      setCopies((n) => n + 1)
     } catch {
       setShown(true)
     }
@@ -35,7 +38,7 @@ export function CopyLink({ href }: { href: string }) {
         Copy link
       </button>{' '}
       <span role="status" className="fine">
-        {copied ? 'Link copied' : ''}
+        {copies > 0 ? 'Link copied' : ''}
       </span>
       {shown && <input ref={field} readOnly aria-label="Link to this page" value={href} onFocus={(e) => e.target.select()} />}
     </span>

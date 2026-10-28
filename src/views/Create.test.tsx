@@ -130,7 +130,7 @@ describe('opening the app on a page link', () => {
   it('copies a link that opens the app on the page, and says so for a moment', async () => {
     libreTexts()
     const writeText = clipboard()
-    vi.useFakeTimers({ toFake: ['setTimeout'], shouldAdvanceTime: true })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true })
     try {
       const view = await openLink('human-378488')
       await act(async () => view.button('Copy link')!.click())
@@ -138,6 +138,22 @@ describe('opening the app on a page link', () => {
       expect(view.copied()).toBe('Link copied')
       await act(async () => vi.advanceTimersByTime(2100))
       expect(view.copied() ?? '').toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the note for the full two seconds again after a second copy', async () => {
+    libreTexts()
+    clipboard()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true })
+    try {
+      const view = await openLink('human-378488')
+      await act(async () => view.button('Copy link')!.click())
+      await act(async () => vi.advanceTimersByTime(1500))
+      await act(async () => view.button('Copy link')!.click())
+      await act(async () => vi.advanceTimersByTime(1500))
+      expect(view.copied()).toBe('Link copied')
     } finally {
       vi.useRealTimers()
     }
@@ -326,6 +342,28 @@ describe('opening one book after another in book search', () => {
     const [source] = await db.sources.toArray()
     expect(source.pages.map((page) => page.title)).toEqual(['9.1: Lectura'])
     expect(source.book?.title).toBe('Lecturas mixtas')
+  })
+})
+
+describe('the link to a book opened in book search', () => {
+  it('copies a link that opens the app on the book’s cover page', async () => {
+    libreTexts(bookTree)
+    const writeText = clipboard()
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => root.render(<Create />))
+    cleanup = () => {
+      act(() => root.unmount())
+      container.remove()
+    }
+    await settle()
+    const search = container.querySelector<HTMLInputElement>('input[type="search"]')!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'HOLA')
+    await act(async () => search.dispatchEvent(new Event('input', { bubbles: true })))
+    await act(async () => container.querySelector<HTMLButtonElement>('.result-list button')!.click())
+    await act(async () => button('Copy link')!.click())
+    expect(writeText).toHaveBeenCalledWith(`${location.origin}/?page=human-378400`)
   })
 })
 

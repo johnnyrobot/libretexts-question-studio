@@ -69,6 +69,9 @@ function SourceStep({ pageLink }: { pageLink?: string }) {
   )
 }
 
+// The page id of a catalog book's cover: its id is <library>-<page id>.
+const coverIdOf = (book: CatalogBook) => book.id.slice(book.id.indexOf('-') + 1)
+
 function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) => void; autoFocus: boolean }) {
   const [books, setBooks] = useState<CatalogBook[] | null>(null)
   const [snapshot, setSnapshot] = useState('')
@@ -106,8 +109,7 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
     setError(null)
     setBusy(true)
     try {
-      const coverId = choice.id.slice(choice.id.indexOf('-') + 1)
-      const contents = await getTree(choice.library, coverId, signal)
+      const contents = await getTree(choice.library, coverIdOf(choice), signal)
       if (!signal.aborted) setTree(contents)
     } catch (e) {
       if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
@@ -158,7 +160,8 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
           {LIBRARIES[book.library]} ·{' '}
           <a href={book.url} target="_blank" rel="noreferrer">
             Open on LibreTexts
-          </a>
+          </a>{' '}
+          <CopyLink href={pageLinkFor(book.library, coverIdOf(book))} />
         </p>
         {error && (
         <p className="error" role="alert">
