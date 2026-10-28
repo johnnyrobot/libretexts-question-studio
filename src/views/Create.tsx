@@ -93,9 +93,10 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
     [books, query, library],
   )
 
-  // Going back, or opening another book, cancels the contents still loading,
-  // so they are never shown or saved under a book they don't belong to.
+  // Going back, opening another book or leaving cancels the contents still
+  // loading, so they never land under a book they don't belong to.
   const loading = useRef<AbortController | null>(null)
+  useEffect(() => () => loading.current?.abort(), [])
   const open = async (choice: CatalogBook) => {
     loading.current?.abort()
     const { signal } = (loading.current = new AbortController())
@@ -116,6 +117,7 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
   const back = () => {
     loading.current?.abort()
     setBook(null)
+    setBusy(false)
   }
 
   const confirm = async (pages: TocNode[]) => {
