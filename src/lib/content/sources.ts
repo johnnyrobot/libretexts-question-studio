@@ -114,6 +114,8 @@ export async function buildLibreTextsSource(options: {
     },
     options.signal,
   )
+  // Pages cancelled on their way in are never saved as a source.
+  options.signal?.throwIfAborted()
   const readable = pages.filter((page): page is SourcePage => page !== null && page.paragraphs.length > 0)
   if (readable.length === 0) {
     throw new Error('None of the selected pages had readable text.')
@@ -130,6 +132,11 @@ export async function buildLibreTextsSource(options: {
     createdAt: Date.now(),
   }
   await db.sources.add(source)
+  if (options.signal?.aborted) {
+    // Cancelled while it was being written: take it back out.
+    await db.sources.delete(source.id)
+    options.signal.throwIfAborted()
+  }
   return source
 }
 

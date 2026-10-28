@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { resolveUrl } from './sources'
+import { db } from '../storage/db'
+import { buildLibreTextsSource, resolveUrl } from './sources'
 
 // The bundled catalog, cut down to the books these tests need. The app loads
 // it once per test file, so every test shares it.
@@ -298,5 +299,33 @@ describe('looking up a pasted link', () => {
     })
     const { book } = await resolveUrl('https://bio.libretexts.org/@go/page/378488')
     expect(book).toEqual({ id: 'bio-114717', title: '2.1: Bio-OER (CUNY)', author: 'Malgorzata Kopacz' })
+  })
+})
+
+describe('cancelling a source while it is being written', () => {
+  it('takes the source back out and reports the cancel', async () => {
+    const node = { id: '378488', title: 'Capítulo 1', url: 'https://human.libretexts.org/x', children: [] }
+    const paragraphs = [{ index: 0, text: 'Hola.', start: 0, end: 5 }]
+    await db.pages.put({ key: 'human-378488', title: node.title, url: node.url, paragraphs, fetchedAt: 0 })
+    const back = new AbortController()
+    const add = db.sources.add.bind(db.sources)
+    const writing = vi.spyOn(db.sources, 'add').mockImplementation((source) =>
+      add(source).then((key) => {
+        back.abort()
+        return key
+      }),
+    )
+    const build = buildLibreTextsSource({
+      library: 'human',
+      title: node.title,
+      url: node.url,
+      kind: 'page',
+      pages: [node],
+      license: null,
+      signal: back.signal,
+    })
+    await expect(build).rejects.toThrow()
+    writing.mockRestore()
+    expect(await db.sources.count()).toBe(0)
   })
 })

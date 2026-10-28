@@ -97,8 +97,9 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
     [books, query, library],
   )
 
-  // Going back, opening another book or leaving cancels the contents still
-  // loading, so they never land under a book they don't belong to.
+  // Going back, opening another book or leaving cancels the contents or pages
+  // still loading, so they never land under a book they don't belong to, and
+  // pages picked before Back are never saved (LT-90).
   const loading = useRef<AbortController | null>(null)
   useEffect(() => () => loading.current?.abort(), [])
   const open = async (choice: CatalogBook) => {
@@ -121,30 +122,37 @@ function BookSearch({ onSource, autoFocus }: { onSource: (source: StoredSource) 
     loading.current?.abort()
     setBook(null)
     setBusy(false)
+    setProgress('')
   }
 
   const confirm = async (pages: TocNode[]) => {
     if (!book || !tree) return
+    loading.current?.abort()
+    const { signal } = (loading.current = new AbortController())
     setBusy(true)
     setError(null)
     try {
-      onSource(
-        await buildLibreTextsSource({
-          library: book.library,
-          // Pages from across the book are credited to it under the title the
-          // catalog gives it.
-          ...creditFor(tree, pages, { title: book.title, url: book.url, isBook: true }),
-          pages,
-          license: licenseFromCatalog(book.license),
-          book: { title: book.title, author: book.author || null },
-          onProgress: (done, total) => setProgress(`Loading page ${done} of ${total}…`),
-        }),
-      )
+      const source = await buildLibreTextsSource({
+        library: book.library,
+        // Pages from across the book are credited to it under the title the
+        // catalog gives it.
+        ...creditFor(tree, pages, { title: book.title, url: book.url, isBook: true }),
+        pages,
+        license: licenseFromCatalog(book.license),
+        book: { title: book.title, author: book.author || null },
+        signal,
+        onProgress: (done, total) => {
+          if (!signal.aborted) setProgress(`Loading page ${done} of ${total}…`)
+        },
+      })
+      if (!signal.aborted) onSource(source)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (!signal.aborted) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setBusy(false)
-      setProgress('')
+      if (!signal.aborted) {
+        setBusy(false)
+        setProgress('')
+      }
     }
   }
 
