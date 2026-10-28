@@ -49,8 +49,10 @@ const COVER_LOOKUPS = 2
 // the page is credited on its own. A book the catalog lists above the page for
 // certain is it. Under a catalog entry that is not certain, Deki's own cover
 // tag names it: the page itself or one of the pages above it inside that
-// entry, nearest first (LT-81). A campus is never the book, even where Deki tags it as a cover, and
-// a guess from the path alone could name a shelf or campus (LT-75).
+// entry, nearest first (LT-81). When none is tagged, or Deki fails on a page
+// above, the catalog entry is credited as before (LT-93). A campus is never
+// the book, even where Deki tags it as a cover, and a guess from the path alone
+// could name a shelf or campus (LT-75).
 async function bookCover(page: PageInfo, signal?: AbortSignal): Promise<PageInfo | null> {
   const listed = await catalogMatch(page.library, page.path)
   if (!listed) return null
@@ -60,13 +62,22 @@ async function bookCover(page: PageInfo, signal?: AbortSignal): Promise<PageInfo
   const entry = listed.path.toLowerCase()
   const inside = (candidate: PageInfo) => `${candidate.path.toLowerCase()}/`.startsWith(`${entry}/`)
   const isBook = (candidate: PageInfo) => candidate.cover && !isCampus(candidate.path)
+  const isEntry = (candidate: PageInfo) => candidate.path.toLowerCase() === entry
   if (isBook(page)) return page
-  for (const id of page.ancestors.slice(0, COVER_LOOKUPS)) {
-    const above = await getPageInfo({ library: page.library, id }, signal)
-    if (!inside(above)) break
-    if (isBook(above)) return above
+  let entryPage = isEntry(page) ? page : null
+  try {
+    // Above the entry itself is outside it, so a pasted entry asks for nothing more.
+    for (const id of entryPage ? [] : page.ancestors.slice(0, COVER_LOOKUPS)) {
+      const above = await getPageInfo({ library: page.library, id }, signal)
+      if (!inside(above)) break
+      if (isBook(above)) return above
+      if (isEntry(above)) entryPage = above
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error
   }
-  return null
+  if (isCampus(listed.path)) return null
+  return entryPage ?? getPageInfo({ library: page.library, path: listed.path }, signal)
 }
 
 export async function fetchPageText(

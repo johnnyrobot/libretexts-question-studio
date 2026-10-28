@@ -58,6 +58,17 @@ const CATALOG = {
       id: 'bio-114717', t: '2.1: Bio-OER (CUNY)', a: 'Malgorzata Kopacz', l: 'bio', s: '', c: '', lic: 'ccby',
       u: 'https://bio.libretexts.org/Courses/San_Diego_State_University/bt%40sdsu/2.1%3A_Bio-OER', n: 120,
     },
+    // A real book that holds one of its parts listed as a book too (LT-93).
+    {
+      id: 'phys-9867', t: 'Spiral Physics - Calculus Based', a: "Paul D'Alessandris", l: 'phys', s: 'University Physics',
+      c: '', lic: 'ccbyncsa', n: 634,
+      u: 'https://phys.libretexts.org/Bookshelves/University_Physics/Book%3A_Spiral_Physics_-_Calculus_Based_(DAlessandris)',
+    },
+    {
+      id: 'phys-11499', t: 'Spiral Mechanics (Calculus-Based)', a: "Paul D'Alessandris", l: 'phys', s: 'University Physics',
+      c: '', lic: 'ccbyncsa', n: 567,
+      u: 'https://phys.libretexts.org/Bookshelves/University_Physics/Book%3A_Spiral_Physics_-_Calculus_Based_(DAlessandris)/Spiral_Mechanics_(Calculus-Based)',
+    },
     // Two campuses the catalog titles like books. Each wraps one book that is
     // listed on its own (LT-81).
     {
@@ -98,7 +109,7 @@ interface Above {
 // LibreTexts' proxy answering for a page under a catalog entry that is not
 // certain to be its book: the page by its id (378488), and the pages above it,
 // nearest first, by theirs. A page tagged coverpage:yes or coverpage:toc is a
-// book's cover.
+// book's cover. Any of them can be asked for by its path too.
 // Returns the pages asked for, in order.
 function dekiById(path: string, above: Above[], options: { cover?: Above['cover']; failing?: string } = {}) {
   const tags = (cover?: Above['cover']) => ({
@@ -123,6 +134,12 @@ function dekiById(path: string, above: Above[], options: { cover?: Above['cover'
     const id = /\/pages\/(\d+)\?/.exec(url)?.[1] ?? 'by path'
     asked.push(id)
     if (id === options.failing) return { exception: 'MindTouch.Deki.Exceptions.InternalError', status: 500 }
+    const byPath = /\/pages\/=([^?]+)/.exec(url)
+    if (byPath) {
+      const wanted = decodeURIComponent(decodeURIComponent(byPath[1])).toLowerCase()
+      return [...pages.values()].find((page) => (page as { path: { '#text': string } }).path['#text'].toLowerCase() === wanted)
+        ?? { error: 'not found', status: 404 }
+    }
     return pages.get(id) ?? { error: 'not found', status: 404 }
   }
   vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(answer(url)))))
@@ -224,13 +241,13 @@ describe('looking up a pasted link', () => {
     expect(book).toEqual({ id: 'human-150000', title: 'Spiral Physics', author: 'Paul D’Alessandris' })
   })
 
-  it('names no cover above the catalog entry as the book', async () => {
+  it('names the catalog entry, not a cover above it', async () => {
     const asked = dekiById('Bookshelves/Physics/Spiral_Physics/1.01', [
       { id: '150000', title: 'Spiral Physics' },
       { id: '149000', title: 'Physics', cover: true },
     ])
     const { book } = await resolveUrl('https://human.libretexts.org/@go/page/378488')
-    expect(book).toBeNull()
+    expect(book).toEqual({ id: 'human-150000', title: 'Spiral Physics', author: 'Paul D’Alessandris' })
     expect(asked).toEqual(['378488', '150000', '149000'])
   })
 
@@ -258,23 +275,46 @@ describe('looking up a pasted link', () => {
     expect(asked).toEqual(['378488', '125100', '125057'])
   })
 
-  it('names no book when no cover is within two pages up', async () => {
+  // The catalog's own credit, as before LT-81, when Deki names no cover (LT-93).
+  it('names the catalog entry when no cover is within two pages up', async () => {
     const asked = dekiById(`${BT}/3.1:_Genetics/01/1.01/Notes`, [
       { id: '114901', title: '1.1: Genes' },
       { id: '114900', title: '1: Genes' },
       { id: '114800', title: '3.1: Genetics', cover: true },
+      { id: '114696', title: 'BT' },
     ])
     const { book } = await resolveUrl('https://bio.libretexts.org/@go/page/378488')
-    expect(book).toBeNull()
-    expect(asked).toEqual(['378488', '114901', '114900'])
+    expect(book).toEqual({ id: 'bio-114696', title: 'BT', author: null })
+    expect(asked).toEqual(['378488', '114901', '114900', 'by path'])
   })
 
-  it('credits the page on its own when LibreTexts fails on a page above', async () => {
+  it('names the real Spiral Physics for a page outside Spiral Mechanics with no cover near it', async () => {
+    const spiral = 'Bookshelves/University_Physics/Book:_Spiral_Physics_-_Calculus_Based_(DAlessandris)'
+    const asked = dekiById(`${spiral}/Spiral_Electricity_and_Magnetism/01:_Electric_Charge/1.01:_Charge`, [
+      { id: '9901', title: '1: Electric Charge' },
+      { id: '9900', title: 'Spiral Electricity and Magnetism' },
+      { id: '9867', title: 'Spiral Physics - Calculus Based' },
+    ])
+    const { book } = await resolveUrl('https://phys.libretexts.org/@go/page/378488')
+    expect(book).toEqual({ id: 'phys-9867', title: 'Spiral Physics - Calculus Based', author: "Paul D'Alessandris" })
+    expect(asked).toEqual(['378488', '9901', '9900', 'by path'])
+  })
+
+  it('names a pasted catalog entry as the book without asking for it again', async () => {
+    // The pasted page is always 378488 here, so it stands in for BT's own id.
+    const asked = dekiById(BT, [{ id: '114000', title: 'San Diego State University' }])
+    const { book } = await resolveUrl('https://bio.libretexts.org/@go/page/378488')
+    expect(book).toEqual({ id: 'bio-378488', title: 'bt@sdsu', author: null })
+    expect(asked).toEqual(['378488'])
+  })
+
+  it('names the catalog entry when LibreTexts fails on a page above', async () => {
     dekiById(`${BT}/3.1:_Genetics/01`, [
       { id: '114800', title: '3.1: Genetics', cover: true },
+      { id: '114696', title: 'BT' },
     ], { failing: '114800' })
     const { book } = await resolveUrl('https://bio.libretexts.org/@go/page/378488')
-    expect(book).toBeNull()
+    expect(book).toEqual({ id: 'bio-114696', title: 'BT', author: null })
   })
 
   it('asks for nothing above a page in a book the catalog lists for certain', async () => {
