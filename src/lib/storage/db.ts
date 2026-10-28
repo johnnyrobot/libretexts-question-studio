@@ -1,6 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie'
 import type { Paragraph } from '../content/normalize'
 import type { QuestionDraft } from '../generation/schema'
+import { unlessGenerating } from './set-locks'
 
 // Everything the app knows lives in this browser's IndexedDB. There is no
 // account and no server copy, so closing the tab never loses a question set.
@@ -132,6 +133,27 @@ export async function deleteSet(setId: string): Promise<void> {
     await db.exports.where('setId').equals(setId).delete()
     await db.sets.delete(setId)
   })
+}
+
+// Clears every set, question, source, export and saved page, unless a tab is
+// writing a set: gives back that set's title, having changed nothing, or null.
+// Without Web Locks no tab can tell, so it just clears.
+export async function deleteEverything(): Promise<string | null> {
+  const generating = await db.sets.filter((set) => set.status === 'generating').toArray()
+  let started: StoredSet | undefined
+  const beingWritten = await unlessGenerating(
+    generating.map((set) => set.id),
+    () =>
+      db.transaction('rw', [db.items, db.sets, db.sources, db.exports, db.pages], async () => {
+        // A run started in the moment before the locks were taken.
+        const ids = new Set(generating.map((set) => set.id))
+        started = await db.sets.filter((set) => set.status === 'generating' && !ids.has(set.id)).first()
+        if (started) return
+        await Promise.all([db.items.clear(), db.sets.clear(), db.sources.clear(), db.exports.clear(), db.pages.clear()])
+      }),
+  )
+  if (beingWritten) return generating.find((set) => set.id === beingWritten)!.title
+  return started?.title ?? null
 }
 
 // Ask the browser not to evict our data under storage pressure. Model weights

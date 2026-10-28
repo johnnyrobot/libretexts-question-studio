@@ -15,7 +15,7 @@ import {
 } from '../lib/llm/local-models'
 import { checkOpenAIKey, OPENAI_MODELS, type ReasoningEffort } from '../lib/llm/openai'
 import { createBackup, restoreBackup } from '../lib/storage/backup'
-import { db, requestPersistentStorage } from '../lib/storage/db'
+import { deleteEverything, requestPersistentStorage } from '../lib/storage/db'
 import { downloadBlob } from '../lib/qti/export'
 import { forgetKey, getSessionKey, hasRememberedKey, rememberKey, setSessionKey } from '../lib/storage/secrets'
 import { localModelId, saveEngineSettings, useEngineSettings } from '../state/engine'
@@ -440,6 +440,7 @@ function DataSettings() {
   const [estimate, setEstimate] = useState<{ usage: number; quota: number } | null>(null)
   const [persisted, setPersisted] = useState<boolean | null>(null)
   const [backupStatus, setBackupStatus] = useState<string | null>(null)
+  const [deleteRefused, setDeleteRefused] = useState<string | null>(null)
   useEffect(() => {
     navigator.storage?.estimate?.().then((e) => setEstimate({ usage: e.usage ?? 0, quota: e.quota ?? 0 }))
     navigator.storage?.persisted?.().then(setPersisted)
@@ -511,11 +512,19 @@ function DataSettings() {
             className="danger"
             onClick={async () => {
               if (!confirm('Delete every question set, export, and cached page from this browser?')) return
-              await Promise.all([db.items.clear(), db.sets.clear(), db.sources.clear(), db.exports.clear(), db.pages.clear()])
+              const beingWritten = await deleteEverything()
+              setDeleteRefused(
+                beingWritten && `“${beingWritten}” is still being written. Delete everything once its questions are written.`,
+              )
             }}
           >
             Delete all question sets and saved pages
           </button>
+          {deleteRefused && (
+            <p className="notice mt" role="status">
+              {deleteRefused}
+            </p>
+          )}
         </section>
       </div>
     </>
