@@ -233,3 +233,84 @@ describe('the link to the source page', () => {
     expect(copyLink(container)).toBeUndefined()
   })
 })
+
+describe('the answer keys to check', () => {
+  const KEY_NOTE = 'An automatic answer check disagrees with the answer key: it judged the statement false.'
+  const BLANK_NOTE = 'An automatic check filled the blank with “chloroplast”, not “chlorophyll”: students may give an answer other than the key and be marked wrong.'
+  const REVIEWER_NOTE = 'The stem could name the pigment.'
+  const MATCHING_NOTE = 'Matching answer keys from the in-browser model are often wrong: check each pair.'
+  const draftOf = (type: string) => SAMPLE_DRAFTS.find((draft) => draft.item_type === type)!
+
+  async function show(questions: { type: string; critique?: string[] }[], provider?: 'local' | 'openai') {
+    await db.items.clear()
+    const set = await db.sets.get('set')
+    await db.sets.put({ ...set!, provider: provider as 'local' })
+    await db.items.bulkPut(
+      questions.map(({ type, critique = [] }, position) => ({
+        id: `item-${position}`, setId: 'set', position, status: 'draft' as const, draft: draftOf(type), sourcePageIndex: 0,
+        critique, createdAt: 1, updatedAt: 1,
+      })),
+    )
+    const { container } = await render('review')
+    await settle()
+    const cards = [...container.querySelectorAll<HTMLElement>('li.item')]
+    return { container, cards }
+  }
+  const keyChecks = (card: HTMLElement) =>
+    card.querySelector('.key-check') ? [...card.querySelectorAll('.key-check li')].map((li) => li.textContent) : null
+
+  it('lists the answer check’s notes first and unfolded, and the other notes folded under Notes', async () => {
+    const { cards } = await show([{ type: 'true_false', critique: [REVIEWER_NOTE, KEY_NOTE] }], 'local')
+    const [card] = cards
+    expect(card.querySelector('.item-head')!.textContent).toContain('Check the answer key')
+    expect(keyChecks(card)).toEqual([KEY_NOTE])
+    expect(card.querySelector('.key-check')!.closest('details')).toBeNull()
+    const notes = card.querySelector('details.critique')!
+    expect(notes.querySelector('summary')!.textContent).toBe('Notes (1)')
+    expect(notes.hasAttribute('open')).toBe(false)
+    expect([...notes.querySelectorAll('li')].map((li) => li.textContent)).toEqual([REVIEWER_NOTE])
+    expect(card.querySelector('.key-check')!.compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('shows no badge or Notes for a question without notes', async () => {
+    const { cards } = await show([{ type: 'fill_in_blank' }], 'local')
+    expect(cards[0].textContent).not.toContain('Check the answer key')
+    expect(keyChecks(cards[0])).toBeNull()
+    expect(cards[0].querySelector('details.critique')).toBeNull()
+  })
+
+  it.each([
+    ['in the browser', 'local' as const, [MATCHING_NOTE]],
+    ['by an unrecorded engine', undefined, [MATCHING_NOTE]],
+    ['on OpenAI', 'openai' as const, null],
+  ])('marks a matching question written %s by its type alone', async (_, provider, expected) => {
+    const { cards } = await show([{ type: 'matching' }], provider)
+    expect(keyChecks(cards[0])).toEqual(expected)
+  })
+
+  it('does not mark a dropdowns question by its type', async () => {
+    const { cards } = await show([{ type: 'dropdowns' }], 'local')
+    expect(keyChecks(cards[0])).toBeNull()
+  })
+
+  it('counts the marked questions in the set, saying every key still needs checking', async () => {
+    const { container } = await show(
+      [{ type: 'fill_in_blank', critique: [BLANK_NOTE] }, { type: 'matching' }, { type: 'true_false', critique: [REVIEWER_NOTE] }],
+      'local',
+    )
+    const count = container.querySelector('.key-check-count')!.textContent
+    expect(count).toContain('2 of 3 questions are marked “Check the answer key”')
+    expect(count).toContain('check every answer key before you export')
+  })
+
+  it('counts one marked question in the singular', async () => {
+    const { container } = await show([{ type: 'matching' }, { type: 'essay' }], 'local')
+    expect(container.querySelector('.key-check-count')!.textContent).toContain('1 of 2 questions is marked')
+  })
+
+  it('says nothing about marked questions when none is marked', async () => {
+    const { container } = await show([{ type: 'true_false', critique: [REVIEWER_NOTE] }], 'openai')
+    expect(container.querySelector('.key-check-count')).toBeNull()
+    expect(container.textContent).not.toContain('Check the answer key')
+  })
+})

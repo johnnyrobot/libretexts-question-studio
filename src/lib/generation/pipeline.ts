@@ -6,6 +6,7 @@ import { CONSTANT_NAMES, FUNCTION_NAMES } from '../math/expr'
 import { formatComputed, formatNumber, formatUnits } from '../math/format'
 import { checkWorkedExample, VARIABLE_NAME } from '../math/spec'
 import { db, newId, type StoredItem, type StoredSource } from '../storage/db'
+import { ARITHMETIC_CHECK_OPENING, BLANK_CHECK_OPENING, KEY_CHECK_OPENING } from './key-notes'
 import {
   blankCheckPrompt,
   conceptPrompt,
@@ -1096,7 +1097,7 @@ export function sameAnswer(a: string, b: string): boolean {
 }
 
 function blankNote(filled: string, key: string): string {
-  return `An automatic check filled the blank with “${clip(filled, 80)}”, not “${clip(key, 80)}”: students may give an answer other than the key and be marked wrong.`
+  return `${BLANK_CHECK_OPENING}${clip(filled, 80)}”, not “${clip(key, 80)}”: students may give an answer other than the key and be marked wrong.`
 }
 
 function escapeRegExp(text: string): string {
@@ -1135,10 +1136,10 @@ function keyNote(itemType: ItemType, disagreements: KeyDisagreement[]): string {
         ? `“${clip(d.written, 100)}” is ${formatComputed(d.value)}, not ${formatComputed(d.nextValue)}`
         : `it never arrives at the answer ${formatNumber(d.key)}`,
     )
-    return `An automatic arithmetic check disagrees with the explanation: ${found.join('; ')}.`
+    return `${ARITHMETIC_CHECK_OPENING}: ${found.join('; ')}.`
   }
   if (itemType === 'true_false') {
-    return `An automatic answer check disagrees with the answer key: it judged the statement ${choices[0].checkSaysCorrect ? 'true' : 'false'}.`
+    return `${KEY_CHECK_OPENING}: it judged the statement ${choices[0].checkSaysCorrect ? 'true' : 'false'}.`
   }
   if (parts.length) {
     const answered = parts.map(({ part, key, check }) =>
@@ -1146,10 +1147,10 @@ function keyNote(itemType: ItemType, disagreements: KeyDisagreement[]): string {
         ? `“${clip(part, 100)}” to “${clip(check, 100)}”, not “${clip(key, 100)}”`
         : `“${clip(check, 100)}” for [${part}], not “${clip(key, 100)}”`,
     )
-    return `An automatic answer check disagrees with the answer key: it ${itemType === 'matching' ? 'matched' : 'chose'} ${answered.join('; ')}.`
+    return `${KEY_CHECK_OPENING}: it ${itemType === 'matching' ? 'matched' : 'chose'} ${answered.join('; ')}.`
   }
   const judged = choices.map(({ choice, checkSaysCorrect }) => `“${clip(choice, 100)}” is ${checkSaysCorrect ? 'also correct' : 'not correct'}`)
-  return `An automatic answer check disagrees with the answer key: it judged that ${judged.join('; ')}.`
+  return `${KEY_CHECK_OPENING}: it judged that ${judged.join('; ')}.`
 }
 
 // The instructor reads the reviewer's notes on the question card. Gemma 4 E4B

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SAMPLE_DRAFTS } from '../qti/fixtures'
 import { DEVICE_LOST_ERROR } from '../llm/fixtures'
 import { completeWithRetries, GpuLost, LLMError, repairLatexEscapes, type CompletionRequest, type Embedder, type LLMProvider } from '../llm/types'
-import { db, type StoredSource } from '../storage/db'
+import { db, type StoredItem, type StoredSource } from '../storage/db'
 import { checkWorkedExample } from '../math/spec'
 import {
   bareLatexToMath,
@@ -26,6 +26,7 @@ import {
   WordIndex,
 } from './pipeline'
 import { checkModelDraft, parseDraft, type DraftOf, type ItemType } from './schema'
+import { splitNotes } from './key-notes'
 
 const source: StoredSource = {
   id: 'src-1',
@@ -56,6 +57,11 @@ const mathPayload = (patch: Record<string, unknown> = {}) => {
   const worked_example = { values: [{ name: 'v', value: 6 }, { name: 't', value: 12 }], working: '6 mL / 12 min = 0.5 mL/min', answer: 0.5 }
   return { ...payload, worked_example, ...patch }
 }
+
+// Every note the answer check writes is shown under "Check the answer key"
+// (SetView), not with the other notes.
+const expectKeyChecks = (item: StoredItem) =>
+  expect(splitNotes(item, 'openai')).toEqual({ keyChecks: item.critique, notes: [] })
 
 // Answers concept prompts with one concept and item prompts with the fixture
 // of the requested type, citing the paragraphs the prompt shows; optionally
@@ -436,6 +442,7 @@ describe('runGeneration', () => {
     expect(item.critique).toEqual([
       'An automatic answer check disagrees with the answer key: it judged that “Oxygen” is also correct; “Carbon dioxide” is not correct.',
     ])
+    expectKeyChecks(item)
   })
 
   it('blanks another word when the check fills the blank differently, keeping the sentence', async () => {
@@ -463,6 +470,7 @@ describe('runGeneration', () => {
     expect(unfixed.item.critique).toEqual([
       'An automatic check filled the blank with “chloroplast”, not “chlorophyll”: students may give an answer other than the key and be marked wrong.',
     ])
+    expectKeyChecks(unfixed.item)
   })
 
   it('drops the reviewer’s notes on a blank that is replaced', async () => {
@@ -623,6 +631,7 @@ describe('runGeneration', () => {
     expect(provider.reviews[0]).toContain('"H2O" is matched to "Water", but an expert may match it to "Nitrogen"')
     const [item] = await db.items.where('setId').equals('set-1').toArray()
     expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it matched “H2O” to “Nitrogen”, not “Water”.'])
+    expectKeyChecks(item)
   })
 
   it('asks the matching check again when it gives one option to two terms', async () => {
@@ -655,6 +664,7 @@ describe('runGeneration', () => {
     await runGeneration('set-1', source, { itemTypes: ['dropdowns'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
     const [item] = await db.items.where('setId').equals('set-1').toArray()
     expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it chose “oxygen” for [gasin], not “carbon dioxide”.'])
+    expectKeyChecks(item)
   })
 
   it('sends back a numerical explanation whose arithmetic is wrong, and notes it if it stays wrong', async () => {
@@ -668,6 +678,7 @@ describe('runGeneration', () => {
     expect(provider.reviews[0]).toContain('In the explanation, "6 * 2" is 12, not 6: redo the arithmetic from there')
     const [item] = await db.items.where('setId').equals('set-1').toArray()
     expect(item.critique).toEqual(['An automatic arithmetic check disagrees with the explanation: “6 * 2” is 12, not 6.'])
+    expectKeyChecks(item)
   })
 
   it('sends back a numerical answer the explanation never arrives at, with no note once it does', async () => {
@@ -706,6 +717,7 @@ describe('runGeneration', () => {
     const [item] = await db.items.where('setId').equals('set-1').toArray()
     expect((item.draft as DraftOf<'true_false'>).answer).toBe(true)
     expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it judged the statement false.'])
+    expectKeyChecks(item)
   })
 
   it('asks the reviewer to fix a fill-in-the-blank answer students cannot type exactly, and notes it if it stays', async () => {
