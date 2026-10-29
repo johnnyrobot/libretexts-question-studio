@@ -85,8 +85,8 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   }
   const visible = items.filter((item) => filter === 'all' || item.status === filter)
   const countOf = (value: Filter) => (value === 'all' ? items.length : items.filter((i) => i.status === value).length)
-  // Approved questions are already cleared by splitNotes; rejected ones won't be exported (LT-141).
   const isMarked = (item: StoredItem) => splitNotes(item, set.provider).keyChecks.length > 0
+  // Approved questions are already cleared by splitNotes; rejected ones won't be exported (LT-141).
   const draftItems = items.filter((item) => item.status === 'draft')
   const markedDrafts = draftItems.filter(isMarked).length
   // Approving all would clear every mark unread, so marked questions are
@@ -314,7 +314,7 @@ function ItemCard({
   const { keyChecks, notes } = splitNotes(item, provider)
   // Shown while editing too, above the fields: fixing a key starts from why
   // it was marked (LT-145).
-  const keyCheckBox = keyChecks.length > 0 && (
+  const keyCheckNotice = keyChecks.length > 0 && (
     <section className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
       <h3 id={`key-check-${item.id}`} className="label">
         Check the answer key
@@ -374,7 +374,7 @@ function ItemCard({
           {STATUS_LABELS[item.status]}
         </span>
       </header>
-      {editing && keyCheckBox}
+      {editing && keyCheckNotice}
       {editing ? (
         <ItemEditor
           draft={draft}
@@ -392,7 +392,7 @@ function ItemCard({
       ) : (
         <ItemPreview draft={draft} />
       )}
-      {!editing && keyCheckBox}
+      {!editing && keyCheckNotice}
       {notes.length > 0 && (
         <details className="critique">
           <summary>Notes ({notes.length})</summary>
