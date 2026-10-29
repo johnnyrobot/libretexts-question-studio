@@ -87,6 +87,9 @@ describe('checkModelDraft', () => {
     expect(blank('1,000 J', ['1000 J'])).toThrow('same number')
     expect(blank('\\(\\frac{1}{4}\\)', ['0.25'])).toThrow('same number')
     expect(blank('-3', ['−3.0'])).toThrow('same number')
+    expect(blank('1000 J', ['1e3 J'])).toThrow('same number')
+    expect(blank('2.5E-3', ['0.0025'])).toThrow('same number')
+    expect(blank('0.1', ['\\(\\frac{0.3}{3}\\)'])).toThrow('same number')
     // Different numbers, units or text.
     expect(blank('10', ['100', '1', '0.1'])).not.toThrow()
     expect(blank('10 m', ['10 s', '10 kg'])).not.toThrow()
@@ -95,6 +98,8 @@ describe('checkModelDraft', () => {
     expect(blank('50%', ['0.5'])).not.toThrow()
     expect(blank('1,5', ['15'])).not.toThrow()
     expect(blank('0.000000001', ['0.000000002'])).not.toThrow()
+    expect(blank('1000000000', ['1000000001'])).not.toThrow()
+    expect(blank('5 eV', ['5e1 V'])).not.toThrow()
     expect(blank('oxygen', ['10', 'carbon dioxide'])).not.toThrow()
 
     const choices = (draft: DraftOf<'multiple_choice' | 'multiple_answers'>, texts: string[]) => () =>

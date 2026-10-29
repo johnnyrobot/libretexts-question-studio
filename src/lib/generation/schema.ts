@@ -396,23 +396,26 @@ function optionLists(draft: QuestionDraft): { keys: string[]; wrong: string[] }[
 // in-browser models gave a blank the key "10.00" and the wrong option "10",
 // and a probability the key "2/3" and the wrong choice "4/6". Of 16,399 saved
 // drafts with options (LT-195, 2026-10-29), these 2 are the only ones with
-// such a pair. Read as numbers: a decimal, with commas only between thousands,
-// or a fraction, written plain or as \frac in \( \), and then the same unit,
-// if any.
+// such a pair. Read as numbers: a decimal, with commas only between thousands
+// and an optional exponent such as 1e3, or a fraction, written plain or as
+// \frac in \( \), and then the same unit, if any. Parsing and one division
+// each round correctly, so equal values differ by at most a few units in the
+// last place, and different integers such as 1000000000 and 1000000001 stay
+// apart.
 function sameNumber(keys: string[], wrong: string[]): [string, string] | null {
-  const read = (texts: string[]) => texts.flatMap((text) => {
+  const numbers = (texts: string[]) => texts.flatMap((text) => {
     const parsed = asNumber(text)
     return parsed ? [{ text, ...parsed }] : []
   })
-  const others = read(wrong)
-  for (const key of read(keys)) {
-    const twin = others.find((o) => o.text !== key.text && o.unit === key.unit && Math.abs(o.value - key.value) <= 1e-9 * Math.max(Math.abs(o.value), Math.abs(key.value)))
+  const others = numbers(wrong)
+  for (const key of numbers(keys)) {
+    const twin = others.find((o) => o.text !== key.text && o.unit === key.unit && Math.abs(o.value - key.value) <= 4 * Number.EPSILON * Math.max(Math.abs(o.value), Math.abs(key.value)))
     if (twin) return [key.text, twin.text]
   }
   return null
 }
 
-const DECIMAL = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+`
+const DECIMAL = String.raw`(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?`
 const NUMBER = new RegExp(String.raw`^([-+]?)(?:(${DECIMAL})(?:\s*/\s*(${DECIMAL}))?|\\frac\{\s*(${DECIMAL})\s*\}\{\s*(${DECIMAL})\s*\})(.*)$`)
 
 function asNumber(text: string): { value: number; unit: string } | null {
