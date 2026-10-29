@@ -369,6 +369,43 @@ describe('the answer keys to check', () => {
     expect(container.querySelector('.key-check-count')).toBeNull()
   })
 
+  const statuses = (container: HTMLElement) => cardsIn(container).map((card) => card.querySelector('.status')!.textContent)
+  const bulkButton = (container: HTMLElement) =>
+    [...container.querySelectorAll<HTMLButtonElement>('.review-toolbar button')].find((b) => b.textContent!.startsWith('Approve '))
+
+  it('approves only the unmarked questions that need review, and says so', async () => {
+    const { container } = await show(
+      [{ type: 'matching' }, { type: 'essay' }, { type: 'true_false', critique: [KEY_NOTE] }, { type: 'fill_in_blank' }],
+      'local',
+    )
+    expect(bulkButton(container)!.textContent).toBe('Approve 2 unmarked')
+    await act(async () => bulkButton(container)!.click())
+    await settle()
+    expect(statuses(container)).toEqual(['Needs review', 'Approved', 'Needs review', 'Approved'])
+    expect(bulkButton(container)).toBeUndefined()
+    expect(document.activeElement!.getAttribute('role')).toBe('tab')
+    expect(container.querySelector('.key-check-count')!.textContent).toContain('2 questions that need review are marked')
+  })
+
+  it('approves all the questions that need review when none is marked', async () => {
+    const { container } = await show([{ type: 'essay' }, { type: 'fill_in_blank' }, { type: 'true_false' }], 'local')
+    expect(bulkButton(container)!.textContent).toBe('Approve all 3')
+  })
+
+  it('offers no bulk approval when it would approve fewer than two questions', async () => {
+    const { container } = await show([{ type: 'matching' }, { type: 'essay' }, { type: 'matching' }], 'local')
+    expect(bulkButton(container)).toBeUndefined()
+  })
+
+  it('shows the reasons above the editor while a marked question is edited', async () => {
+    const { container, cards } = await show([{ type: 'true_false', critique: [KEY_NOTE] }], 'local')
+    await act(async () => button(cards[0], 'Edit').click())
+    await settle()
+    const [card] = cardsIn(container)
+    const firstField = card.querySelector('input, textarea, select')!
+    expect(card.querySelector('.key-check')!.compareDocumentPosition(firstField) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('says nothing about marked questions when none is marked', async () => {
     const { container } = await show([{ type: 'true_false', critique: [REVIEWER_NOTE] }], 'openai')
     expect(container.querySelector('.key-check-count')).toBeNull()
