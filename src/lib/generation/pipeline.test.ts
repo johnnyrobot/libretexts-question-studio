@@ -95,6 +95,8 @@ class FakeProvider implements LLMProvider {
   revisions: Record<string, unknown>[] = []
   // The prompts the reviewer was sent.
   reviews: string[] = []
+  // The prompts the matching check was sent.
+  matchingChecks: string[] = []
 
   constructor(id: LLMProvider['id'] = 'openai') {
     this.id = id
@@ -122,6 +124,7 @@ class FakeProvider implements LLMProvider {
       }
       if (request.schemaName === 'matching_check' || request.schemaName === 'dropdowns_check') {
         const matching = request.schemaName === 'matching_check'
+        if (matching) this.matchingChecks.push(prompt)
         const fixture = SAMPLE_DRAFTS.find((d) => d.item_type === (matching ? 'matching' : 'dropdowns'))!
         const keys = fixture.item_type === 'matching' ? fixture.pairs.map((p) => p.match) : fixture.item_type === 'dropdowns' ? fixture.blanks.map((b) => b.correct) : []
         const chosen = (matching ? this.matchingAnswers : this.dropdownAnswers).shift() ?? keys
@@ -631,6 +634,8 @@ describe('runGeneration', () => {
     const [item] = await db.items.where('setId').equals('set-1').toArray()
     expect((item.draft as DraftOf<'matching'>).distractors).toEqual([])
     expect((item.draft as DraftOf<'matching'>).pairs).toHaveLength(3)
+    // With an option per term, the check is not told some match no term.
+    expect(provider.matchingChecks[0]).toContain('Each option matches exactly one term.')
   })
 
   it('keeps distractor matches with an OpenAI key', async () => {
