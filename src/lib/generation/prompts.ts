@@ -140,10 +140,11 @@ ${untrusted(`${draft.stem}\n${choices}`)}
 // Matching and dropdowns questions get the same check, one answer per term or
 // blank. The options are lettered in alphabetical order (pipeline.ts orders
 // them): the question itself stores each match beside its term and a
-// dropdown's right option first.
+// dropdown's right option first. On the in-browser model a matching question
+// has no distractor matches (pipeline.ts), so every option is used.
 export function matchingCheckPrompt(unit: SourceUnit, stem: string, terms: string[], options: string[]): string {
   const question = `${stem}\nTerms:\n${terms.map((term, i) => `${i + 1}. ${term}`).join('\n')}\nOptions:\n${lettered(options)}`
-  return `Answer this matching quiz question the way an expert in the subject would: match each numbered term to one lettered option. You are not told the answer key. Each option matches at most one term, and some options match no term.
+  return `Answer this matching quiz question the way an expert in the subject would: match each numbered term to one lettered option. You are not told the answer key. ${options.length > terms.length ? 'Each option matches at most one term, and some options match no term.' : 'Each option matches exactly one term.'}
 In working, write one line per term, in order, and nothing else: its number, the letter of its match, then a reason of at most 12 words, for example: "1 C: a larger mass gives a smaller acceleration."
 Then list in answers, for each term in order, the letter of its match.
 Judge by the facts of the subject. The textbook excerpt is a reference: a match is still right when the excerpt does not say it in those words.
