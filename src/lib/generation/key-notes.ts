@@ -23,7 +23,7 @@ export interface SplitNotes {
 // The set records the engine that wrote it, its questions don't; a set
 // without one is taken as written in the browser. Approving a question is
 // the teacher saying its key is checked, so its reasons join the other notes
-// until it goes back to draft (LT-141).
+// for as long as it stays approved (LT-141).
 export function splitNotes(
   item: Pick<StoredItem, 'draft' | 'critique' | 'status'>,
   provider: StoredSet['provider'] | undefined,

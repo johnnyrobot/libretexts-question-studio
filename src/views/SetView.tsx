@@ -86,8 +86,8 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   const visible = items.filter((item) => filter === 'all' || item.status === filter)
   const drafts = items.filter((item) => item.status === 'draft').length
   const countOf = (value: Filter) => (value === 'all' ? items.length : items.filter((i) => i.status === value).length)
-  // Approved questions are checked and rejected ones won't be exported (LT-141).
-  const markedCount = items.filter((item) => item.status === 'draft' && splitNotes(item, set.provider).keyChecks.length > 0).length
+  // Rejected questions won't be exported (LT-141).
+  const markedDrafts = items.filter((item) => item.status === 'draft' && splitNotes(item, set.provider).keyChecks.length > 0).length
 
   return (
     <>
@@ -173,11 +173,11 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
         </div>
       )}
       {/* About half the wrong keys in testing had no such mark (LT-136). */}
-      {markedCount > 0 && (
+      {markedDrafts > 0 && (
         <p className="key-check-count">
           <Icon name="alert" size={18} />
           <span>
-            {markedCount} {markedCount === 1 ? 'question that needs review is' : 'questions that need review are'} marked “Check the answer key”:
+            {markedDrafts} {markedDrafts === 1 ? 'question that needs review is' : 'questions that need review are'} marked “Check the answer key”:
             these are the answer keys most likely to be wrong. Unmarked keys can be wrong too, so check every answer key
             before you export.
           </span>
@@ -373,7 +373,7 @@ function ItemCard({
       ) : (
         <ItemPreview draft={draft} />
       )}
-      {/* Shown while editing too: fixing a key starts from why it was marked. */}
+      {/* Both shown while editing too: fixing a key starts from why it was marked. */}
       {keyChecks.length > 0 && (
         <section className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
           <h3 id={`key-check-${item.id}`} className="label">
@@ -386,7 +386,7 @@ function ItemCard({
           </ul>
         </section>
       )}
-      {notes.length > 0 && !editing && (
+      {notes.length > 0 && (
         <details className="critique">
           <summary>Notes ({notes.length})</summary>
           <ul>

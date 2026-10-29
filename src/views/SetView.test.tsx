@@ -293,13 +293,24 @@ describe('the answer keys to check', () => {
     expect(card.querySelector('.item-head')!.textContent).toContain('Check the answer key')
   })
 
-  it('keeps the reasons in view while the question is edited', async () => {
+  it('keeps the reasons in view while the question is edited, and the mark once it is saved', async () => {
     const { container, cards } = await show([{ type: 'true_false', critique: [REVIEWER_NOTE, KEY_NOTE] }], 'local')
     await act(async () => button(cards[0], 'Edit').click())
     await settle()
     const [card] = cardsIn(container)
-    expect(card.querySelector('form, .editor, textarea, input')).not.toBeNull()
+    expect(button(card, 'Save changes')).toBeDefined()
     expect(keyChecks(card)).toEqual([KEY_NOTE])
+    await act(async () => button(card, 'Save changes').click())
+    await settle()
+    expect(keyChecks(cardsIn(container)[0])).toEqual([KEY_NOTE])
+  })
+
+  it('keeps an approved question’s reasons in its Notes while it is edited', async () => {
+    const { container, cards } = await show([{ type: 'true_false', critique: [KEY_NOTE], status: 'approved' }], 'local')
+    await act(async () => button(cards[0], 'Edit').click())
+    await settle()
+    const [card] = cardsIn(container)
+    expect([...card.querySelectorAll('details.critique li')].map((li) => li.textContent)).toEqual([KEY_NOTE])
   })
 
   it('shows no badge or Notes for a question without notes', async () => {
