@@ -86,7 +86,7 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   const visible = items.filter((item) => filter === 'all' || item.status === filter)
   const drafts = items.filter((item) => item.status === 'draft').length
   const countOf = (value: Filter) => (value === 'all' ? items.length : items.filter((i) => i.status === value).length)
-  // Rejected questions won't be exported (LT-141).
+  // Approved questions are already cleared by splitNotes; rejected ones won't be exported (LT-141).
   const markedDrafts = items.filter((item) => item.status === 'draft' && splitNotes(item, set.provider).keyChecks.length > 0).length
 
   return (

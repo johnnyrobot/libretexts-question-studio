@@ -273,7 +273,7 @@ describe('the answer keys to check', () => {
   })
 
   const button = (card: HTMLElement, label: string) =>
-    [...card.querySelectorAll('button')].find((button) => button.textContent === label)!
+    [...card.querySelectorAll('button')].find((candidate) => candidate.textContent === label)!
   const cardsIn = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('li.item')]
 
   it('moves the reasons into Notes once the question is approved, and back when it is not', async () => {
