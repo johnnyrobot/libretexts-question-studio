@@ -520,6 +520,11 @@ function Configure({ source }: { source: StoredSource }) {
   const keyChecks =
     answerCheck && types.length ? Math.round((total * types.filter((t) => CHECKED_TYPES.has(t)).length) / types.length) : 0
   const calls = total + reviews + keyChecks + source.pages.length
+  // In testing, about 2 in 5 of Gemma 4 E4B's matching questions had a wrong
+  // answer key, with the newer checks too (README, Question quality). Shown on
+  // either in-browser model, since Qwen3.5 4B has not been measured. Warned
+  // about, not blocked.
+  const warnMatching = engine.provider === 'local' && types.includes('matching')
 
   const start = async () => {
     setError(null)
@@ -583,6 +588,7 @@ function Configure({ source }: { source: StoredSource }) {
                   <input
                     type="checkbox"
                     checked={types.includes(type)}
+                    aria-describedby={type === 'matching' && warnMatching ? 'matching-note' : undefined}
                     onChange={(e) =>
                       setTypes((current) => (e.target.checked ? [...current, type] : current.filter((t) => t !== type)))
                     }
@@ -590,6 +596,14 @@ function Configure({ source }: { source: StoredSource }) {
                   {ITEM_TYPE_LABELS[type]}
                 </label>
               ))}
+            </div>
+            <div role="status">
+              {warnMatching && (
+                <p id="matching-note" className="notice">
+                  In testing, about 2 in 5 matching questions from Gemma 4 E4B, the default in-browser model, had a wrong answer
+                  key. On the OpenAI engine, GPT-6 Luna wrote them much better.
+                </p>
+              )}
             </div>
           </fieldset>
           <label className="narrow-field">

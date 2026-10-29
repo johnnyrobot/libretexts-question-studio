@@ -4,6 +4,7 @@ import { act, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { db } from '../lib/storage/db'
+import { saveEngineSettings } from '../state/engine'
 import { Create } from './Create'
 
 declare global {
@@ -577,5 +578,97 @@ describe('crediting the book a source comes from', () => {
     await chooseInBookSearch('Continue with 1 page', 'Álgebra básica')
     const [source] = await db.sources.toArray()
     expect(source.license).toEqual({ code: 'ck12', label: 'CK-12 License', version: null })
+  })
+})
+
+describe('ticking Matching on Choose the questions', () => {
+  // A saved source to open step 2 on.
+  async function openConfigure() {
+    await db.sources.put({
+      id: 'source-1',
+      kind: 'page',
+      title: PAGE.title,
+      library: 'human',
+      url: PAGE['uri.ui'],
+      license: null,
+      pages: [{ title: PAGE.title, url: PAGE['uri.ui'], pageId: '378488', paragraphs: [] }],
+      createdAt: 0,
+    })
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() =>
+      root.render(
+        <StrictMode>
+          <Create sourceId="source-1" />
+        </StrictMode>,
+      ),
+    )
+    cleanup = () => {
+      act(() => root.unmount())
+      container.remove()
+    }
+    await settle()
+    const box = (label: string) =>
+      [...container.querySelectorAll('label')].find((l) => l.textContent === label)?.querySelector('input') ?? null
+    return {
+      tick: async (label: string) => {
+        act(() => box(label)!.click())
+        await settle()
+      },
+      ticked: (label: string) => box(label)?.checked,
+      // What a screen reader announces, and what it reads with the Matching box.
+      note: () => container.querySelector('fieldset [role="status"]')?.textContent || null,
+      description: (label: string) => {
+        const id = box(label)?.getAttribute('aria-describedby')
+        return id ? (container.querySelector(`#${id}`)?.textContent ?? null) : null
+      },
+      start: () => [...container.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Write')),
+    }
+  }
+
+  beforeEach(async () => {
+    await db.settings.clear()
+  })
+
+  const WARNING =
+    'In testing, about 2 in 5 matching questions from Gemma 4 E4B, the default in-browser model, had a wrong answer key. On the OpenAI engine, GPT-6 Luna wrote them much better.'
+
+  it('warns about wrong answer keys on the in-browser model', async () => {
+    const view = await openConfigure()
+    await view.tick('Matching')
+    expect(view.note()).toBe(WARNING)
+    expect(view.description('Matching')).toBe(WARNING)
+  })
+
+  it('warns on the in-browser Qwen3.5 4B too', async () => {
+    await saveEngineSettings({ localModel: 'qwen3.5-4b' })
+    const view = await openConfigure()
+    await view.tick('Matching')
+    expect(view.note()).toBe(WARNING)
+  })
+
+  it('still lets matching be written on the in-browser model', async () => {
+    const view = await openConfigure()
+    await view.tick('Matching')
+    expect(view.ticked('Matching')).toBe(true)
+    expect(view.start()?.disabled).toBe(false)
+  })
+
+  it('takes the warning away when Matching is unticked', async () => {
+    const view = await openConfigure()
+    expect(view.note()).toBeNull()
+    await view.tick('Matching')
+    await view.tick('Matching')
+    expect(view.note()).toBeNull()
+    expect(view.description('Matching')).toBeNull()
+  })
+
+  it('does not warn on the OpenAI engine', async () => {
+    await saveEngineSettings({ provider: 'openai' })
+    const view = await openConfigure()
+    await view.tick('Matching')
+    expect(view.ticked('Matching')).toBe(true)
+    expect(view.note()).toBeNull()
   })
 })
