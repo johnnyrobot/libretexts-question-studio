@@ -8,6 +8,7 @@ import { PageHeader } from '../components/Page'
 import { TabPanel, Tabs } from '../components/Tabs'
 import { withPageNumbers } from '../lib/content/normalize'
 import { localModelLabel } from '../lib/llm/local-models'
+import { splitNotes } from '../lib/generation/key-notes'
 import { ITEM_TYPE_LABELS } from '../lib/generation/schema'
 import { DEFAULT_VERSIONS, MAX_VERSIONS } from '../lib/math/spec'
 import { downloadBlob, exportMathVersions, exportSet } from '../lib/qti/export'
@@ -85,6 +86,7 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   const visible = items.filter((item) => filter === 'all' || item.status === filter)
   const drafts = items.filter((item) => item.status === 'draft').length
   const countOf = (value: Filter) => (value === 'all' ? items.length : items.filter((i) => i.status === value).length)
+  const markedCount = items.filter((item) => splitNotes(item, set.provider).keyChecks.length > 0).length
 
   return (
     <>
@@ -169,6 +171,17 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
           )}
         </div>
       )}
+      {/* About half the wrong keys in testing had no such mark (LT-136). */}
+      {markedCount > 0 && (
+        <p className="key-check-count">
+          <Icon name="alert" size={18} />
+          <span>
+            {markedCount} of {items.length} {items.length === 1 ? 'question' : 'questions'} {markedCount === 1 ? 'is' : 'are'} marked “Check the answer key”:
+            these are the answer keys most likely to be wrong. Unmarked keys can be wrong too, so check every answer key
+            before you export.
+          </span>
+        </p>
+      )}
 
       {items.length === 0 && !running && !elsewhere && <p className="muted">This set has no questions.</p>}
       {items.length > 0 && (
@@ -179,6 +192,7 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
               <ItemCard
                 key={item.id}
                 item={item}
+                provider={set.provider}
                 number={items.indexOf(item) + 1}
                 source={source}
                 leavesView={(status) => filter !== 'all' && status !== filter}
@@ -273,12 +287,14 @@ const STATUS_LABELS: Record<ItemStatus, string> = { draft: 'Needs review', appro
 
 function ItemCard({
   item,
+  provider,
   number,
   source,
   leavesView,
   focusNext,
 }: {
   item: StoredItem
+  provider: StoredSet['provider'] | undefined
   number: number
   source: StoredSource | null
   leavesView: (status: ItemStatus) => boolean
@@ -290,6 +306,7 @@ function ItemCard({
   const returnFocus = useRef(false)
   const page = source?.pages[item.sourcePageIndex]
   const { draft } = item
+  const { keyChecks, notes } = splitNotes(item, provider)
 
   // Closing the editor puts focus back on the Edit button that opened it.
   useEffect(() => {
@@ -326,6 +343,11 @@ function ItemCard({
           <p>
             {ITEM_TYPE_LABELS[draft.item_type]} · {capitalize(draft.bloom)} · {capitalize(draft.difficulty)}
           </p>
+          {keyChecks.length > 0 && (
+            <p className="key-check-badge">
+              <Icon name="alert" size={16} /> Check the answer key
+            </p>
+          )}
         </div>
         <span className={`status ${item.status}`}>
           {item.status === 'approved' && <Icon name="check" size={18} />}
@@ -350,11 +372,23 @@ function ItemCard({
       ) : (
         <ItemPreview draft={draft} />
       )}
-      {item.critique.length > 0 && !editing && (
-        <details className="critique">
-          <summary>Reviewer notes ({item.critique.length})</summary>
+      {keyChecks.length > 0 && !editing && (
+        <section className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
+          <h3 id={`key-check-${item.id}`} className="label">
+            Check the answer key
+          </h3>
           <ul>
-            {item.critique.map((note, index) => (
+            {keyChecks.map((note, index) => (
+              <li key={index}>{note}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {notes.length > 0 && !editing && (
+        <details className="critique">
+          <summary>Notes ({notes.length})</summary>
+          <ul>
+            {notes.map((note, index) => (
               <li key={index}>{note}</li>
             ))}
           </ul>
