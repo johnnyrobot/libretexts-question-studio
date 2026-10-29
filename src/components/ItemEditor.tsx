@@ -31,7 +31,7 @@ export function ItemEditor({
   onSave: (draft: QuestionDraft) => void
   onCancel: () => void
   onDelete?: () => void
-  // The Title field takes focus, so anything shown above the editor is read through it.
+  // Id of what describes the Title field, which takes focus when the editor opens.
   titleDescribedBy?: string
 }) {
   const [value, setValue] = useState<QuestionDraft>(() => structuredClone(draft))

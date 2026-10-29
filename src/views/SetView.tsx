@@ -314,8 +314,9 @@ function ItemCard({
   const { keyChecks, notes } = splitNotes(item, provider)
   // Shown while editing too, above the fields: fixing a key starts from why
   // it was marked (LT-145).
+  const keyCheckNoticeId = `key-check-notice-${item.id}`
   const keyCheckNotice = keyChecks.length > 0 && (
-    <section id={`key-check-notice-${item.id}`} className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
+    <section id={keyCheckNoticeId} className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
       <h3 id={`key-check-${item.id}`} className="label">
         Check the answer key
       </h3>
@@ -378,7 +379,7 @@ function ItemCard({
       {editing ? (
         <ItemEditor
           draft={draft}
-          titleDescribedBy={keyCheckNotice ? `key-check-notice-${item.id}` : undefined}
+          titleDescribedBy={keyCheckNotice ? keyCheckNoticeId : undefined}
           onCancel={closeEditor}
           onSave={async (next) => {
             await db.items.update(item.id, { draft: next, updatedAt: Date.now() })
