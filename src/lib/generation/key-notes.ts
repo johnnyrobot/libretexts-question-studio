@@ -21,10 +21,16 @@ export interface SplitNotes {
 }
 
 // The set records the engine that wrote it, its questions don't; a set
-// without one is taken as written in the browser.
-export function splitNotes(item: Pick<StoredItem, 'draft' | 'critique'>, provider: StoredSet['provider'] | undefined): SplitNotes {
+// without one is taken as written in the browser. Approving a question is
+// the teacher saying its key is checked, so its reasons join the other notes
+// until it goes back to draft (LT-141).
+export function splitNotes(
+  item: Pick<StoredItem, 'draft' | 'critique' | 'status'>,
+  provider: StoredSet['provider'] | undefined,
+): SplitNotes {
   const isKeyCheck = (note: string) => OPENINGS.some((opening) => note.startsWith(opening))
   const keyChecks = item.critique.filter(isKeyCheck)
   if (item.draft.item_type === 'matching' && provider !== 'openai') keyChecks.push(MATCHING_IN_BROWSER_NOTE)
-  return { keyChecks, notes: item.critique.filter((note) => !isKeyCheck(note)) }
+  const notes = item.critique.filter((note) => !isKeyCheck(note))
+  return item.status === 'approved' ? { keyChecks: [], notes: [...keyChecks, ...notes] } : { keyChecks, notes }
 }

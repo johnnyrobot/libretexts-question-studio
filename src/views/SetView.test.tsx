@@ -5,7 +5,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SAMPLE_DRAFTS } from '../lib/qti/fixtures'
-import { db } from '../lib/storage/db'
+import { db, type ItemStatus } from '../lib/storage/db'
 import { FakeLocks } from '../lib/storage/fixtures'
 import { SetView } from './SetView'
 
@@ -241,13 +241,13 @@ describe('the answer keys to check', () => {
   const MATCHING_NOTE = 'Matching answer keys from the in-browser model are often wrong: check each pair.'
   const draftOf = (type: string) => SAMPLE_DRAFTS.find((draft) => draft.item_type === type)!
 
-  async function show(questions: { type: string; critique?: string[] }[], provider?: 'local' | 'openai') {
+  async function show(questions: { type: string; critique?: string[]; status?: ItemStatus }[], provider?: 'local' | 'openai') {
     await db.items.clear()
     const set = await db.sets.get('set')
     await db.sets.put({ ...set!, provider: provider as 'local' })
     await db.items.bulkPut(
-      questions.map(({ type, critique = [] }, position) => ({
-        id: `item-${position}`, setId: 'set', position, status: 'draft' as const, draft: draftOf(type), sourcePageIndex: 0,
+      questions.map(({ type, critique = [], status = 'draft' }, position) => ({
+        id: `item-${position}`, setId: 'set', position, status, draft: draftOf(type), sourcePageIndex: 0,
         critique, createdAt: 1, updatedAt: 1,
       })),
     )
@@ -270,6 +270,36 @@ describe('the answer keys to check', () => {
     expect(notes.hasAttribute('open')).toBe(false)
     expect([...notes.querySelectorAll('li')].map((li) => li.textContent)).toEqual([REVIEWER_NOTE])
     expect(card.querySelector('.key-check')!.compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  const button = (card: HTMLElement, label: string) =>
+    [...card.querySelectorAll('button')].find((button) => button.textContent === label)!
+  const cardsIn = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('li.item')]
+
+  it('moves the reasons into Notes once the question is approved, and back when it is not', async () => {
+    const { container, cards } = await show([{ type: 'true_false', critique: [REVIEWER_NOTE, KEY_NOTE] }], 'local')
+    await act(async () => button(cards[0], 'Approve').click())
+    await settle()
+    let [card] = cardsIn(container)
+    expect(card.textContent).not.toContain('Check the answer key')
+    expect(keyChecks(card)).toBeNull()
+    const notes = card.querySelector('details.critique')!
+    expect(notes.querySelector('summary')!.textContent).toBe('Notes (2)')
+    expect([...notes.querySelectorAll('li')].map((li) => li.textContent)).toEqual([KEY_NOTE, REVIEWER_NOTE])
+    await act(async () => button(card, 'Approve').click())
+    await settle()
+    ;[card] = cardsIn(container)
+    expect(keyChecks(card)).toEqual([KEY_NOTE])
+    expect(card.querySelector('.item-head')!.textContent).toContain('Check the answer key')
+  })
+
+  it('keeps the reasons in view while the question is edited', async () => {
+    const { container, cards } = await show([{ type: 'true_false', critique: [REVIEWER_NOTE, KEY_NOTE] }], 'local')
+    await act(async () => button(cards[0], 'Edit').click())
+    await settle()
+    const [card] = cardsIn(container)
+    expect(card.querySelector('form, .editor, textarea, input')).not.toBeNull()
+    expect(keyChecks(card)).toEqual([KEY_NOTE])
   })
 
   it('shows no badge or Notes for a question without notes', async () => {
@@ -299,13 +329,33 @@ describe('the answer keys to check', () => {
       'local',
     )
     const count = container.querySelector('.key-check-count')!.textContent
-    expect(count).toContain('2 of 3 questions are marked “Check the answer key”')
+    expect(count).toContain('2 questions that need review are marked “Check the answer key”')
     expect(count).toContain('check every answer key before you export')
   })
 
   it('counts one marked question in the singular', async () => {
     const { container } = await show([{ type: 'matching' }, { type: 'essay' }], 'local')
-    expect(container.querySelector('.key-check-count')!.textContent).toContain('1 of 2 questions is marked')
+    expect(container.querySelector('.key-check-count')!.textContent).toContain('1 question that needs review is marked')
+  })
+
+  it('counts only the marked questions that still need review', async () => {
+    const { container } = await show(
+      [
+        { type: 'matching' },
+        { type: 'matching', status: 'approved' },
+        { type: 'true_false', critique: [KEY_NOTE], status: 'rejected' },
+      ],
+      'local',
+    )
+    expect(container.querySelector('.key-check-count')!.textContent).toContain('1 question that needs review is marked')
+  })
+
+  it('says nothing about marked questions once none still needs review', async () => {
+    const { container } = await show(
+      [{ type: 'matching', status: 'approved' }, { type: 'true_false', critique: [KEY_NOTE], status: 'rejected' }],
+      'local',
+    )
+    expect(container.querySelector('.key-check-count')).toBeNull()
   })
 
   it('says nothing about marked questions when none is marked', async () => {
