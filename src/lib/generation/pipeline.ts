@@ -494,7 +494,7 @@ export async function draftItem(
     onProgress: callbacks.onModelEvent,
     validate: (value) => {
       checkSymbols(value, sourceText(unit))
-      const repaired = repairDraft(itemType, value)
+      const repaired = withoutExtraMatches(provider, itemType, repairDraft(itemType, value))
       const draft = parseDraft(itemType, repaired, allowed)
       checkModelDraft(draft)
       if (draft.item_type === 'math') {
@@ -536,7 +536,8 @@ export async function reviewItem(
         const record = value as { issues?: unknown; revised?: unknown }
         const issues = z.array(z.string()).max(8).safeParse(record?.issues)
         checkSymbols(record?.revised, sourceText(unit))
-        const revised = parseDraft(draft.item_type, repairDraft(draft.item_type, keepComputation(draft, record?.revised)), allowed)
+        const repaired = repairDraft(draft.item_type, keepComputation(draft, record?.revised))
+        const revised = parseDraft(draft.item_type, withoutExtraMatches(provider, draft.item_type, repaired), allowed)
         checkModelDraft(revised)
         return { issues: issues.success ? cleanReviewNotes(issues.data, draft) : [], draft: revised }
       } catch (error) {
@@ -551,6 +552,17 @@ export async function reviewItem(
   // 2026-10-09).
   const repeats = (note: string) => sentBack.some((problem) => problem.includes(note.toLowerCase().replace(/[.\s]+$/, '')))
   return { ...result.value, issues: result.value.issues.filter((note) => !repeats(note)) }
+}
+
+// On the in-browser model a matching question has no distractor matches.
+// Gemma 4 E4B's extras often fit a term as well as its key: dropping them
+// fixed 9 of the 78 wrong keys in 506 saved drafts and spoiled no right one
+// (LT-172, 2026-10-29). The last pair can then be had by elimination, which
+// makes a question easier, not wrong; the instructor can add distractors. They
+// are dropped before the draft is checked, so a bad extra is not sent back.
+function withoutExtraMatches(provider: LLMProvider, itemType: ItemType, value: unknown): unknown {
+  if (provider.id !== 'local' || itemType !== 'matching' || !value || typeof value !== 'object') return value
+  return { ...value, distractors: [] }
 }
 
 // The text of the source section, whose symbols a question may use.

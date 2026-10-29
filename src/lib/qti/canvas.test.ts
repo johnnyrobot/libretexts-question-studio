@@ -23,6 +23,12 @@ const items = SAMPLE_DRAFTS.map((draft, index) => ({
   draft,
 }))
 
+// What the in-browser model writes: a matching question with no distractors.
+const noDistractors = {
+  id: '00000000-0000-4000-8000-100000000000',
+  draft: { ...(items[4].draft as DraftOf<'matching'>), title: 'Match the molecules, no distractors', distractors: [] },
+}
+
 describe('canvas QTI package', () => {
   it('fixtures satisfy the item schemas', () => {
     for (const draft of SAMPLE_DRAFTS) {
@@ -56,11 +62,11 @@ describe('canvas QTI package', () => {
             'Questions based on 4.2: La profecía de la gitana (https://human.libretexts.org/@go/page/378488), ' +
             'from ¡HOLA! Spanish 3 (Tseng, Rosales, and Lemari) by Beatrice Tseng, Karla Lemari, Lisbeth Rosales. ' +
             'License: CC BY-NC-SA 4.0.\n\nQuestion author: Question Studio test',
-          items,
+          items: [...items, noDistractors],
         },
       ], { author: 'Question Studio test' })
       writeFileSync('tests/adapt-parser/out/sample.zip', sample)
-      writeFileSync('tests/adapt-parser/out/expectations.json', JSON.stringify(SAMPLE_DRAFTS.map(adaptExpectation), null, 2))
+      writeFileSync('tests/adapt-parser/out/expectations.json', JSON.stringify([...SAMPLE_DRAFTS, noDistractors.draft].map(adaptExpectation), null, 2))
     }
   })
 
@@ -150,6 +156,18 @@ describe('canvas QTI package', () => {
     expect(xml.match(/<response_lid ident="response_\d+">/g)).toHaveLength(3)
     expect(xml.match(/<varequal /g)).toHaveLength(3)
     expect(xml).toMatch(/<render_choice>\n/)
+  })
+
+  it('exports a matching question with no distractors: each term offers exactly the matches', () => {
+    const xml = buildItemXml(noDistractors)
+    const terms = xml.match(/<response_lid ident="response_\d+">[\s\S]*?<\/response_lid>/g)!
+    expect(terms).toHaveLength(3)
+    for (const term of terms) {
+      const options = [...term.matchAll(/<mattext texttype="text\/html">([^<]*)</g)].map((m) => m[1])
+      expect(options.slice(1).sort()).toEqual(['Carbon dioxide', 'Oxygen', 'Water'])
+    }
+    expect(xml).not.toContain('Nitrogen')
+    expect(xml.match(/<varequal /g)).toHaveLength(3)
   })
 
   it('gives the parts of a matching or dropdowns question shares that add up to exactly 100', () => {

@@ -619,18 +619,39 @@ describe('runGeneration', () => {
     expect((item.draft as DraftOf<'fill_in_blank'>).answer).toBe('captures')
   })
 
+  it('writes matching questions with no distractor matches on the in-browser model', async () => {
+    const provider = new FakeProvider('local')
+    // The draft has "Nitrogen"; the reviewer adds "Water", which repeats a match.
+    provider.revisions = [{ distractors: ['Water', 'Helium'] }]
+    await runGeneration('set-1', source, { itemTypes: ['matching'], perPage: 1, reviewPass: true }, provider, new AbortController().signal, callbacks)
+    // Neither is sent back: the extras are dropped before the draft is checked.
+    expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['matching_item', 'item_review', 'matching_check'])
+    expect(provider.reviews[0]).toContain('"distractors": []')
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect((item.draft as DraftOf<'matching'>).distractors).toEqual([])
+    expect((item.draft as DraftOf<'matching'>).pairs).toHaveLength(3)
+  })
+
+  it('keeps distractor matches with an OpenAI key', async () => {
+    const provider = new FakeProvider('openai')
+    provider.revisions = [{ distractors: ['Nitrogen', 'Helium'] }]
+    await runGeneration('set-1', source, { itemTypes: ['matching'], perPage: 1, reviewPass: true }, provider, new AbortController().signal, callbacks)
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect((item.draft as DraftOf<'matching'>).distractors).toEqual(['Nitrogen', 'Helium'])
+  })
+
   it('sends back a matching pair the check matches differently, and notes it if the check still does', async () => {
     const provider = new FakeProvider('local')
-    // H2O matched to Nitrogen, before and after the review.
+    // H2O and O2 swapped, before and after the review.
     provider.matchingAnswers = [
-      ['Carbon dioxide', 'Nitrogen', 'Oxygen'],
-      ['Carbon dioxide', 'Nitrogen', 'Oxygen'],
+      ['Carbon dioxide', 'Oxygen', 'Water'],
+      ['Carbon dioxide', 'Oxygen', 'Water'],
     ]
     await runGeneration('set-1', source, { itemTypes: ['matching'], perPage: 1, reviewPass: false }, provider, new AbortController().signal, callbacks)
     expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['matching_item', 'matching_check', 'item_review', 'matching_check'])
-    expect(provider.reviews[0]).toContain('"H2O" is matched to "Water", but an expert may match it to "Nitrogen"')
+    expect(provider.reviews[0]).toContain('"H2O" is matched to "Water", but an expert may match it to "Oxygen"')
     const [item] = await db.items.where('setId').equals('set-1').toArray()
-    expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it matched “H2O” to “Nitrogen”, not “Water”.'])
+    expect(item.critique).toEqual(['An automatic answer check disagrees with the answer key: it matched “H2O” to “Oxygen”, not “Water”; “O2” to “Water”, not “Oxygen”.'])
     expectKeyChecks(item)
   })
 
@@ -703,8 +724,8 @@ describe('runGeneration', () => {
     }
     await runGeneration('set-1', source, { itemTypes: ['matching', 'dropdowns'], perPage: 2, reviewPass: false }, provider, new AbortController().signal, callbacks)
     const [matching, dropdowns] = prompts
-    // Stored as CO2 → Carbon dioxide, H2O → Water, O2 → Oxygen, plus Nitrogen.
-    expect(matching).toContain('Options:\nA. Carbon dioxide\nB. Nitrogen\nC. Oxygen\nD. Water')
+    // Stored as CO2 → Carbon dioxide, H2O → Water, O2 → Oxygen.
+    expect(matching).toContain('Options:\nA. Carbon dioxide\nB. Oxygen\nC. Water')
     // Stored with the right option first: oxygen, then carbon dioxide.
     expect(dropdowns).toContain('[gasout]:\nA. carbon dioxide\nB. oxygen')
   })

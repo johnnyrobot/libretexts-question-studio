@@ -367,6 +367,63 @@ export function checkModelDraft(draft: QuestionDraft): void {
       `"${draft.answer}" is a function word, not a term: keep it in the sentence and blank a word that carries the idea the sentence teaches`,
     )
   }
+  for (const { keys, wrong } of optionLists(draft)) {
+    const same = sameNumber(keys, wrong)
+    if (same) throw new Error(`"${same[0]}" and "${same[1]}" are the same number, so both would be right: make every wrong option a different value`)
+  }
+}
+
+// The right options of each choice a student makes and the options that are
+// wrong for it. Each match of a matching question is wrong for the other
+// terms.
+function optionLists(draft: QuestionDraft): { keys: string[]; wrong: string[] }[] {
+  switch (draft.item_type) {
+    case 'multiple_choice':
+    case 'multiple_answers':
+      return [{ keys: draft.choices.filter((c) => c.correct).map((c) => c.text), wrong: draft.choices.filter((c) => !c.correct).map((c) => c.text) }]
+    case 'matching': {
+      const matches = draft.pairs.map((p) => p.match)
+      return [{ keys: matches, wrong: [...matches, ...draft.distractors] }]
+    }
+    case 'dropdowns':
+      return draft.blanks.map((b) => ({ keys: [b.correct], wrong: b.distractors }))
+    default:
+      return []
+  }
+}
+
+// A wrong option that differs from the key as text can be the same number:
+// in-browser models gave a blank the key "10.00" and the wrong option "10",
+// and a probability the key "2/3" and the wrong choice "4/6". Of 16,399 saved
+// drafts with options (LT-195, 2026-10-29), these 2 are the only ones with
+// such a pair. Read as numbers: a decimal, with commas only
+// between thousands, or a fraction, written plain or as \frac in \( \),
+// and then the same unit, if any.
+function sameNumber(keys: string[], wrong: string[]): [string, string] | null {
+  const read = (texts: string[]) => texts.flatMap((text) => {
+    const parsed = asNumber(text)
+    return parsed ? [{ text, ...parsed }] : []
+  })
+  const others = read(wrong)
+  for (const key of read(keys)) {
+    const twin = others.find((o) => o.text !== key.text && o.unit === key.unit && Math.abs(o.value - key.value) <= 1e-9 * Math.max(1, Math.abs(key.value)))
+    if (twin) return [key.text, twin.text]
+  }
+  return null
+}
+
+const DECIMAL = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+`
+const NUMBER = new RegExp(String.raw`^([-+]?)(?:(${DECIMAL})(?:\s*/\s*(${DECIMAL}))?|\\frac\{\s*(${DECIMAL})\s*\}\{\s*(${DECIMAL})\s*\})(.*)$`)
+
+function asNumber(text: string): { value: number; unit: string } | null {
+  const plain = text.trim().replace(/^\\\((.*)\\\)$/s, '$1').trim().replace(/^[−–]/, '-')
+  const match = plain.match(NUMBER)
+  if (!match) return null
+  const [, sign, whole, over, top, bottom, rest] = match
+  const read = (n: string) => Number(n.replace(/,/g, ''))
+  const value = whole !== undefined ? read(whole) / (over === undefined ? 1 : read(over)) : read(top) / read(bottom)
+  if (!Number.isFinite(value)) return null
+  return { value: sign === '-' ? -value : value, unit: rest.trim().replace(/\s+/g, ' ') }
 }
 
 // A blank on a function word tests nothing, and the sentence it leaves is
