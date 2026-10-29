@@ -520,6 +520,10 @@ function Configure({ source }: { source: StoredSource }) {
   const keyChecks =
     answerCheck && types.length ? Math.round((total * types.filter((t) => CHECKED_TYPES.has(t)).length) / types.length) : 0
   const calls = total + reviews + keyChecks + source.pages.length
+  // In every test run, about 2 in 5 of the in-browser model's matching
+  // questions had a wrong answer key, and the newer checks did not change that
+  // (README, Question quality). Warned about, not blocked.
+  const warnMatching = engine.provider === 'local' && types.includes('matching')
 
   const start = async () => {
     setError(null)
@@ -583,6 +587,7 @@ function Configure({ source }: { source: StoredSource }) {
                   <input
                     type="checkbox"
                     checked={types.includes(type)}
+                    aria-describedby={type === 'matching' && warnMatching ? 'matching-note' : undefined}
                     onChange={(e) =>
                       setTypes((current) => (e.target.checked ? [...current, type] : current.filter((t) => t !== type)))
                     }
@@ -590,6 +595,14 @@ function Configure({ source }: { source: StoredSource }) {
                   {ITEM_TYPE_LABELS[type]}
                 </label>
               ))}
+            </div>
+            <div role="status">
+              {warnMatching && (
+                <p id="matching-note" className="notice">
+                  In testing, about 2 in 5 of the in-browser model’s matching questions had a wrong answer key. The OpenAI engine
+                  writes them much better.
+                </p>
+              )}
             </div>
           </fieldset>
           <label className="narrow-field">
