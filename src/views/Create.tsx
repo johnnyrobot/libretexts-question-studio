@@ -520,9 +520,10 @@ function Configure({ source }: { source: StoredSource }) {
   const keyChecks =
     answerCheck && types.length ? Math.round((total * types.filter((t) => CHECKED_TYPES.has(t)).length) / types.length) : 0
   const calls = total + reviews + keyChecks + source.pages.length
-  // In every test run, about 2 in 5 of the in-browser model's matching
-  // questions had a wrong answer key, and the newer checks did not change that
-  // (README, Question quality). Warned about, not blocked.
+  // In testing, about 2 in 5 of Gemma 4 E4B's matching questions had a wrong
+  // answer key, with the newer checks too (README, Question quality). Shown on
+  // either in-browser model, since Qwen3.5 4B has not been measured. Warned
+  // about, not blocked.
   const warnMatching = engine.provider === 'local' && types.includes('matching')
 
   const start = async () => {
@@ -599,8 +600,8 @@ function Configure({ source }: { source: StoredSource }) {
             <div role="status">
               {warnMatching && (
                 <p id="matching-note" className="notice">
-                  In testing, about 2 in 5 of the in-browser model’s matching questions had a wrong answer key. The OpenAI engine
-                  writes them much better.
+                  In testing, about 2 in 5 matching questions from Gemma 4 E4B, the default in-browser model, had a wrong answer
+                  key. On the OpenAI engine, GPT-6 Luna wrote them much better.
                 </p>
               )}
             </div>

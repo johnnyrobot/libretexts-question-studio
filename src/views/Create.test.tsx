@@ -597,7 +597,13 @@ describe('ticking Matching on Choose the questions', () => {
     const container = document.createElement('div')
     document.body.append(container)
     const root = createRoot(container)
-    act(() => root.render(<Create sourceId="source-1" />))
+    act(() =>
+      root.render(
+        <StrictMode>
+          <Create sourceId="source-1" />
+        </StrictMode>,
+      ),
+    )
     cleanup = () => {
       act(() => root.unmount())
       container.remove()
@@ -611,7 +617,12 @@ describe('ticking Matching on Choose the questions', () => {
         await settle()
       },
       ticked: (label: string) => box(label)?.checked,
-      note: () => container.querySelector('#matching-note')?.textContent ?? null,
+      // What a screen reader announces, and what it reads with the Matching box.
+      note: () => container.querySelector('fieldset [role="status"]')?.textContent || null,
+      description: (label: string) => {
+        const id = box(label)?.getAttribute('aria-describedby')
+        return id ? (container.querySelector(`#${id}`)?.textContent ?? null) : null
+      },
       start: () => [...container.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Write')),
     }
   }
@@ -620,12 +631,21 @@ describe('ticking Matching on Choose the questions', () => {
     await db.settings.clear()
   })
 
+  const WARNING =
+    'In testing, about 2 in 5 matching questions from Gemma 4 E4B, the default in-browser model, had a wrong answer key. On the OpenAI engine, GPT-6 Luna wrote them much better.'
+
   it('warns about wrong answer keys on the in-browser model', async () => {
     const view = await openConfigure()
     await view.tick('Matching')
-    expect(view.note()).toBe(
-      'In testing, about 2 in 5 of the in-browser model’s matching questions had a wrong answer key. The OpenAI engine writes them much better.',
-    )
+    expect(view.note()).toBe(WARNING)
+    expect(view.description('Matching')).toBe(WARNING)
+  })
+
+  it('warns on the in-browser Qwen3.5 4B too', async () => {
+    await saveEngineSettings({ localModel: 'qwen3.5-4b' })
+    const view = await openConfigure()
+    await view.tick('Matching')
+    expect(view.note()).toBe(WARNING)
   })
 
   it('still lets matching be written on the in-browser model', async () => {
@@ -641,6 +661,7 @@ describe('ticking Matching on Choose the questions', () => {
     await view.tick('Matching')
     await view.tick('Matching')
     expect(view.note()).toBeNull()
+    expect(view.description('Matching')).toBeNull()
   })
 
   it('does not warn on the OpenAI engine', async () => {
