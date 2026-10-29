@@ -412,6 +412,24 @@ describe('the answer keys to check', () => {
     expect(card.querySelector('.key-check')!.compareDocumentPosition(firstField) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('describes the focused Title field with the reasons, so a screen reader reads them when editing starts', async () => {
+    const { container, cards } = await show([{ type: 'true_false', critique: [KEY_NOTE] }], 'local')
+    await act(async () => button(cards[0], 'Edit').click())
+    await settle()
+    const [card] = cardsIn(container)
+    const title = document.activeElement as HTMLInputElement
+    expect(card.contains(title)).toBe(true)
+    const description = document.getElementById(title.getAttribute('aria-describedby') ?? '')
+    expect(description).toBe(card.querySelector('.key-check'))
+  })
+
+  it('gives the Title field no description when the question is not marked', async () => {
+    const { cards } = await show([{ type: 'true_false' }], 'local')
+    await act(async () => button(cards[0], 'Edit').click())
+    await settle()
+    expect((document.activeElement as HTMLInputElement).hasAttribute('aria-describedby')).toBe(false)
+  })
+
   it('says nothing about marked questions when none is marked', async () => {
     const { container } = await show([{ type: 'true_false', critique: [REVIEWER_NOTE] }], 'openai')
     expect(container.querySelector('.key-check-count')).toBeNull()

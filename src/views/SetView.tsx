@@ -315,7 +315,7 @@ function ItemCard({
   // Shown while editing too, above the fields: fixing a key starts from why
   // it was marked (LT-145).
   const keyCheckNotice = keyChecks.length > 0 && (
-    <section className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
+    <section id={`key-check-notice-${item.id}`} className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
       <h3 id={`key-check-${item.id}`} className="label">
         Check the answer key
       </h3>
@@ -378,6 +378,7 @@ function ItemCard({
       {editing ? (
         <ItemEditor
           draft={draft}
+          titleDescribedBy={keyCheckNotice ? `key-check-notice-${item.id}` : undefined}
           onCancel={closeEditor}
           onSave={async (next) => {
             await db.items.update(item.id, { draft: next, updatedAt: Date.now() })
