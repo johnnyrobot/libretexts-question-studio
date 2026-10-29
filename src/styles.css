@@ -1407,12 +1407,8 @@ button.disclosure[aria-expanded='true'] .icon {
   font-weight: 600;
 }
 
-.key-check {
-  margin-top: 1.5rem;
-  padding: 0.875rem 1.125rem;
-  border-left: 4px solid var(--warning);
-  border-radius: 0 8px 8px 0;
-  background: var(--warning-soft);
+.notice.key-check {
+  margin: 1.5rem 0 0;
 }
 
 .key-check h3 {
