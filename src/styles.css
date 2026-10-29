@@ -1411,7 +1411,7 @@ button.disclosure[aria-expanded='true'] .icon {
   margin: 1.5rem 0 0;
 }
 
-/* Above the editor's fields while editing (LT-145). */
+/* Keeps the reasons apart from the first field when they sit above the editor. */
 .notice.key-check + .editor {
   margin-top: 1.5rem;
 }

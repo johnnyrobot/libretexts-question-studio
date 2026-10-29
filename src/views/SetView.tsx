@@ -87,11 +87,11 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   const countOf = (value: Filter) => (value === 'all' ? items.length : items.filter((i) => i.status === value).length)
   // Approved questions are already cleared by splitNotes; rejected ones won't be exported (LT-141).
   const isMarked = (item: StoredItem) => splitNotes(item, set.provider).keyChecks.length > 0
-  const drafts = items.filter((item) => item.status === 'draft')
-  const markedDrafts = drafts.filter(isMarked).length
+  const draftItems = items.filter((item) => item.status === 'draft')
+  const markedDrafts = draftItems.filter(isMarked).length
   // Approving all would clear every mark unread, so marked questions are
   // approved one by one (LT-145).
-  const unmarkedDrafts = drafts.length - markedDrafts
+  const unmarkedDrafts = draftItems.length - markedDrafts
 
   return (
     <>
