@@ -621,8 +621,9 @@ describe('runGeneration', () => {
 
   it('writes matching questions with no distractor matches on the in-browser model', async () => {
     const provider = new FakeProvider('local')
-    // The draft has "Nitrogen"; the reviewer adds "Water", which repeats a match.
-    provider.revisions = [{ distractors: ['Water', 'Helium'] }]
+    // The draft has "Nitrogen"; the reviewer adds "Water", which repeats a
+    // match, and a stray angstrom sign.
+    provider.revisions = [{ distractors: ['Water', 'Helium (\u212B)'] }]
     await runGeneration('set-1', source, { itemTypes: ['matching'], perPage: 1, reviewPass: true }, provider, new AbortController().signal, callbacks)
     // Neither is sent back: the extras are dropped before the draft is checked.
     expect(provider.calls.filter((c) => c !== 'concept_batch')).toEqual(['matching_item', 'item_review', 'matching_check'])

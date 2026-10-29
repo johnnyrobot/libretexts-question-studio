@@ -493,8 +493,9 @@ export async function draftItem(
     signal,
     onProgress: callbacks.onModelEvent,
     validate: (value) => {
-      checkSymbols(value, sourceText(unit))
-      const repaired = withoutExtraMatches(provider, itemType, repairDraft(itemType, value))
+      const proposed = withoutDistractors(provider, itemType, value)
+      checkSymbols(proposed, sourceText(unit))
+      const repaired = repairDraft(itemType, proposed)
       const draft = parseDraft(itemType, repaired, allowed)
       checkModelDraft(draft)
       if (draft.item_type === 'math') {
@@ -535,9 +536,9 @@ export async function reviewItem(
       try {
         const record = value as { issues?: unknown; revised?: unknown }
         const issues = z.array(z.string()).max(8).safeParse(record?.issues)
-        checkSymbols(record?.revised, sourceText(unit))
-        const repaired = repairDraft(draft.item_type, keepComputation(draft, record?.revised))
-        const revised = parseDraft(draft.item_type, withoutExtraMatches(provider, draft.item_type, repaired), allowed)
+        const proposed = withoutDistractors(provider, draft.item_type, record?.revised)
+        checkSymbols(proposed, sourceText(unit))
+        const revised = parseDraft(draft.item_type, repairDraft(draft.item_type, keepComputation(draft, proposed)), allowed)
         checkModelDraft(revised)
         return { issues: issues.success ? cleanReviewNotes(issues.data, draft) : [], draft: revised }
       } catch (error) {
@@ -557,10 +558,11 @@ export async function reviewItem(
 // On the in-browser model a matching question has no distractor matches.
 // Gemma 4 E4B's extras often fit a term as well as its key: dropping them
 // fixed 9 of the 78 wrong keys in 506 saved drafts and spoiled no right one
-// (LT-172, 2026-10-29). The last pair can then be had by elimination, which
-// makes a question easier, not wrong; the instructor can add distractors. They
-// are dropped before the draft is checked, so a bad extra is not sent back.
-function withoutExtraMatches(provider: LLMProvider, itemType: ItemType, value: unknown): unknown {
+// (LT-172 replay, shipped in LT-195, 2026-10-29). The last pair can then be
+// had by elimination, which makes a question easier, not wrong; the instructor
+// can add distractors. They are dropped before any check, so a bad extra is
+// not sent back.
+function withoutDistractors(provider: LLMProvider, itemType: ItemType, value: unknown): unknown {
   if (provider.id !== 'local' || itemType !== 'matching' || !value || typeof value !== 'object') return value
   return { ...value, distractors: [] }
 }

@@ -94,6 +94,7 @@ describe('checkModelDraft', () => {
     expect(blank('3', ['-3'])).not.toThrow()
     expect(blank('50%', ['0.5'])).not.toThrow()
     expect(blank('1,5', ['15'])).not.toThrow()
+    expect(blank('0.000000001', ['0.000000002'])).not.toThrow()
     expect(blank('oxygen', ['10', 'carbon dioxide'])).not.toThrow()
 
     const choices = (draft: DraftOf<'multiple_choice' | 'multiple_answers'>, texts: string[]) => () =>
