@@ -397,6 +397,12 @@ describe('the answer keys to check', () => {
     expect(bulkButton(container)).toBeUndefined()
   })
 
+  it('shows the reasons below the question when it is not being edited', async () => {
+    const { cards } = await show([{ type: 'true_false', critique: [KEY_NOTE] }], 'local')
+    const preview = cards[0].querySelector('.preview')!
+    expect(preview.compareDocumentPosition(cards[0].querySelector('.key-check')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('shows the reasons above the editor while a marked question is edited', async () => {
     const { container, cards } = await show([{ type: 'true_false', critique: [KEY_NOTE] }], 'local')
     await act(async () => button(cards[0], 'Edit').click())

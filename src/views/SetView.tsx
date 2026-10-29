@@ -312,6 +312,20 @@ function ItemCard({
   const page = source?.pages[item.sourcePageIndex]
   const { draft } = item
   const { keyChecks, notes } = splitNotes(item, provider)
+  // Shown while editing too, above the fields: fixing a key starts from why
+  // it was marked (LT-145).
+  const keyCheckBox = keyChecks.length > 0 && (
+    <section className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
+      <h3 id={`key-check-${item.id}`} className="label">
+        Check the answer key
+      </h3>
+      <ul>
+        {keyChecks.map((note, index) => (
+          <li key={index}>{note}</li>
+        ))}
+      </ul>
+    </section>
+  )
 
   // Closing the editor puts focus back on the Edit button that opened it.
   useEffect(() => {
@@ -360,19 +374,7 @@ function ItemCard({
           {STATUS_LABELS[item.status]}
         </span>
       </header>
-      {/* Shown while editing too, above the fields: fixing a key starts from why it was marked (LT-145). */}
-      {keyChecks.length > 0 && (
-        <section className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
-          <h3 id={`key-check-${item.id}`} className="label">
-            Check the answer key
-          </h3>
-          <ul>
-            {keyChecks.map((note, index) => (
-              <li key={index}>{note}</li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {editing && keyCheckBox}
       {editing ? (
         <ItemEditor
           draft={draft}
@@ -390,6 +392,7 @@ function ItemCard({
       ) : (
         <ItemPreview draft={draft} />
       )}
+      {!editing && keyCheckBox}
       {notes.length > 0 && (
         <details className="critique">
           <summary>Notes ({notes.length})</summary>
