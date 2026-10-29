@@ -84,10 +84,14 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
     setDeleteRefused(null)
   }
   const visible = items.filter((item) => filter === 'all' || item.status === filter)
-  const drafts = items.filter((item) => item.status === 'draft').length
   const countOf = (value: Filter) => (value === 'all' ? items.length : items.filter((i) => i.status === value).length)
+  const isMarked = (item: StoredItem) => splitNotes(item, set.provider).keyChecks.length > 0
   // Approved questions are already cleared by splitNotes; rejected ones won't be exported (LT-141).
-  const markedDrafts = items.filter((item) => item.status === 'draft' && splitNotes(item, set.provider).keyChecks.length > 0).length
+  const draftItems = items.filter((item) => item.status === 'draft')
+  const markedDrafts = draftItems.filter(isMarked).length
+  // Approving all would clear every mark unread, so marked questions are
+  // approved one by one (LT-145).
+  const unmarkedDrafts = draftItems.length - markedDrafts
 
   return (
     <>
@@ -154,20 +158,20 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
             onSelect={setFilter}
             panelId="question-list"
           />
-          {drafts > 1 && (
+          {unmarkedDrafts > 1 && (
             <button
               type="button"
               onClick={async () => {
                 await db.items
                   .where('setId')
                   .equals(set.id)
-                  .filter((item) => item.status === 'draft')
+                  .filter((item) => item.status === 'draft' && !isMarked(item))
                   .modify({ status: 'approved', updatedAt: Date.now() })
-                // This button is gone once nothing needs review.
+                // This button is gone once no unmarked question needs review.
                 focusSelectedTab()
               }}
             >
-              Approve all {drafts}
+              {markedDrafts > 0 ? `Approve ${unmarkedDrafts} unmarked` : `Approve all ${unmarkedDrafts}`}
             </button>
           )}
         </div>
@@ -308,6 +312,21 @@ function ItemCard({
   const page = source?.pages[item.sourcePageIndex]
   const { draft } = item
   const { keyChecks, notes } = splitNotes(item, provider)
+  // Shown while editing too, above the fields: fixing a key starts from why
+  // it was marked (LT-145).
+  const keyCheckNoticeId = `key-check-notice-${item.id}`
+  const keyCheckNotice = keyChecks.length > 0 && (
+    <section id={keyCheckNoticeId} className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
+      <h3 id={`key-check-${item.id}`} className="label">
+        Check the answer key
+      </h3>
+      <ul>
+        {keyChecks.map((note, index) => (
+          <li key={index}>{note}</li>
+        ))}
+      </ul>
+    </section>
+  )
 
   // Closing the editor puts focus back on the Edit button that opened it.
   useEffect(() => {
@@ -356,9 +375,11 @@ function ItemCard({
           {STATUS_LABELS[item.status]}
         </span>
       </header>
+      {editing && keyCheckNotice}
       {editing ? (
         <ItemEditor
           draft={draft}
+          titleDescribedBy={keyCheckNotice ? keyCheckNoticeId : undefined}
           onCancel={closeEditor}
           onSave={async (next) => {
             await db.items.update(item.id, { draft: next, updatedAt: Date.now() })
@@ -373,19 +394,7 @@ function ItemCard({
       ) : (
         <ItemPreview draft={draft} />
       )}
-      {/* Both shown while editing too: fixing a key starts from why it was marked. */}
-      {keyChecks.length > 0 && (
-        <section className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
-          <h3 id={`key-check-${item.id}`} className="label">
-            Check the answer key
-          </h3>
-          <ul>
-            {keyChecks.map((note, index) => (
-              <li key={index}>{note}</li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {!editing && keyCheckNotice}
       {notes.length > 0 && (
         <details className="critique">
           <summary>Notes ({notes.length})</summary>

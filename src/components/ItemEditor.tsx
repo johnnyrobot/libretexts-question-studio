@@ -25,11 +25,14 @@ export function ItemEditor({
   onSave,
   onCancel,
   onDelete,
+  titleDescribedBy,
 }: {
   draft: QuestionDraft
   onSave: (draft: QuestionDraft) => void
   onCancel: () => void
   onDelete?: () => void
+  // Id of what describes the Title field, which takes focus when the editor opens.
+  titleDescribedBy?: string
 }) {
   const [value, setValue] = useState<QuestionDraft>(() => structuredClone(draft))
   const [error, setError] = useState<string | null>(null)
@@ -54,7 +57,12 @@ export function ItemEditor({
     >
       <label>
         Title
-        <input value={value.title} onChange={(e) => set({ title: e.target.value })} autoFocus />
+        <input
+          value={value.title}
+          onChange={(e) => set({ title: e.target.value })}
+          aria-describedby={titleDescribedBy}
+          autoFocus
+        />
       </label>
       <label>
         Question
