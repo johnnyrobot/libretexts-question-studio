@@ -130,7 +130,7 @@ pages load all their files from there.
 
 ## Question quality
 
-The test set is 22 textbook pages kept out of all prompt tuning and training: 2 pages from each of 11 books in 11 subjects. Each model was asked for 8 questions per page, rotating through the 8 types that have an answer key, with the review on; a question a model could not finish is left out, so each wrote fewer than 176. A math or numerical question needs numbers or a formula from the page: where a run found none, it wrote multiple choice instead. All three Gemma 4 E4B runs also had the answer check, done by the default model in each; GPT-6 Luna's run did not. The default model's and GPT-6 Luna's runs used the app as it was on 2026-10-10, before its newer checks (see **What the numbers cover**). Claude graded all the questions blind against one rubric, with the three models' questions shuffled together; the current-checks run was graded later the same way, shuffled together with the default model's 2026-10-10 questions (see **The newer checks made no clear difference**). No LibreTexts instructor has checked Claude's grades; a planned instructor check of a random 20% was not done. Each question gets one verdict:
+The test set is 22 textbook pages kept out of all prompt tuning and training: 2 pages from each of 11 books in 11 subjects. Each model was asked for 8 questions per page, rotating through the 8 types that have an answer key, with the review on; a question a model could not finish is left out, so each wrote fewer than 176. A math or numerical question needs numbers or a formula from the page: where a run found none, it wrote multiple choice instead. All three Gemma 4 E4B runs also had the answer check, done by the default model in each; GPT-6 Luna's run did not. The default model's and GPT-6 Luna's runs used the app as it was on 2026-10-10, before its newer checks (see **What the numbers cover**). Claude graded all the questions blind against one rubric, with the three models' questions shuffled together; the current-checks run was graded later in a second round the same way, shuffled together with the default model's 2026-10-10 questions (see **The newer checks made no clear difference**). No LibreTexts instructor has checked Claude's grades; a planned instructor check of a random 20% was not done. Each question gets one verdict:
 
 - **Usable as is:** an instructor would publish it without editing.
 - **Needs a small edit:** fixable in under a minute.
@@ -138,34 +138,34 @@ The test set is 22 textbook pages kept out of all prompt tuning and training: 2 
 
 A **wrong answer key** is false for the question as written; a fill-in-the-blank key is also wrong when another common word fits equally well. **Weak distractors** counts only multiple choice, select-all, dropdowns and matching questions: one of the wrong choices is implausible, a near-duplicate or a joke.
 
-| | Gemma 4 E4B in the browser (the default) | Gemma 4 E4B, current checks (2026-10-29) | Fine-tuned Gemma 4 E4B (tested, not shipped) | GPT-6 Luna, high reasoning effort |
-|---|---|---|---|---|
-| **Usable as is** | 35% (59/168) | 46% (76/166) | 44% (75/172) | 62% (108/175) |
-| Needs a small edit | 36% (60/168) | 31% (51/166) | 28% (49/172) | 19% (33/175) |
-| Rejected | 29% (49/168) | 23% (39/166) | 28% (48/172) | 19% (34/175) |
-| **Wrong answer key** | 17% (28/168) | 14% (23/166) | 19% (32/172) | 5% (9/175) |
-| Wrong key with no note from the app | 4% (6/168) | 0% (0/166) | 6% (10/172) | 4% (7/175) |
-| Weak distractors | 59% (61/103) | 43% (44/102) | 56% (59/106) | 21% (19/90) |
+Claude graded the questions in two rounds, and the second round graded higher: the same 2026-10-10 questions from the default model scored 35% usable as is in the first round and 45% in the second. Compare columns within a round, not across them.
 
-The current-checks column was graded in a second pool, which graded higher, so it does not compare directly with the other columns; the default model's 2026-10-10 questions scored 45% usable as is and 14% wrong keys in that pool (see **The newer checks made no clear difference**).
+| | Round 1: Gemma 4 E4B in the browser (the default), 2026-10-10 | Round 1: Fine-tuned Gemma 4 E4B (tested, not shipped) | Round 1: GPT-6 Luna, high reasoning effort | Round 2: the default, 2026-10-10 | Round 2: the default, current checks (2026-10-29) |
+|---|---|---|---|---|---|
+| **Usable as is** | 35% (59/168) | 44% (75/172) | 62% (108/175) | 45% (76/168) | 46% (76/166) |
+| Needs a small edit | 36% (60/168) | 28% (49/172) | 19% (33/175) | 33% (55/168) | 31% (51/166) |
+| Rejected | 29% (49/168) | 28% (48/172) | 19% (34/175) | 22% (37/168) | 23% (39/166) |
+| **Wrong answer key** | 17% (28/168) | 19% (32/172) | 5% (9/175) | 14% (23/168) | 14% (23/166) |
+| Wrong key with no note from the app | 4% (6/168) | 6% (10/172) | 4% (7/175) | 2% (3/168) | 0% (0/166) |
+| Weak distractors | 59% (61/103) | 56% (59/106) | 21% (19/90) | 51% (53/103) | 43% (44/102) |
 
 - **Wrong answer keys are the error that matters most, and Gemma 4 E4B makes far more of them.** About one question in five or six has a wrong key, three to four times GPT-6 Luna's rate. The app put a note on 22 of the default model's 28 wrong keys, but it also put one on 62% of that model's questions, so a note was only a weak warning.
-- **Matching and dropdowns are the weakest types, and numerical is weak too.** A third to nearly half of Gemma 4 E4B's matching and dropdowns questions have wrong keys, with or without fine-tuning, and few are usable. The default model's numerical questions have wrong keys where GPT-6 Luna's have none, and the fine-tuned model's were rarely usable. Select-all is also rarely usable from the default model. GPT-6 Luna's weak type is fill in the blank, which it wrote without the answer check that now re-blanks a question the check fills differently. Math and numerical questions came from a different set of pages in each run. Multiple choice includes the questions written in their place: 16 in each of the default model's runs, 18 in the fine-tuned one, 2 in GPT-6 Luna's. By type, usable as is / wrong key (7 to 40 questions per type, so read these roughly; the current-checks column comes from the second pool, so compare it with the others only loosely):
+- **Matching and dropdowns are the weakest types, and numerical is weak too.** A third to nearly half of Gemma 4 E4B's matching and dropdowns questions have wrong keys, with or without fine-tuning, and few are usable. The default model's numerical questions have wrong keys where GPT-6 Luna's have none, and the fine-tuned model's were rarely usable. Select-all is also rarely usable from the default model. GPT-6 Luna's weak type is fill in the blank, which it wrote without the answer check that now re-blanks a question the check fills differently. Math and numerical questions came from a different set of pages in each run. Multiple choice includes the questions written in their place: 16 in each of the default model's runs, 18 in the fine-tuned one, 2 in GPT-6 Luna's. By type, usable as is / wrong key (7 to 40 questions per type, so read these roughly; compare columns within a round):
 
-  | Type | Default (2026-10-10) | Default, current checks | Fine-tuned | GPT-6 Luna |
-  |---|---|---|---|---|
-  | Matching | 5% / 43% | 5% / 40% | 0% / 45% | 64% / 0% |
-  | Multiple dropdowns | 5% / 32% | 18% / 9% | 23% / 36% | 55% / 5% |
-  | Numerical | 43% / 14% | 71% / 7% | 15% / 8% | 52% / 0% |
-  | Multiple choice | 37% / 13% | 61% / 13% | 65% / 10% | 75% / 0% |
-  | Select all that apply | 18% / 5% | 32% / 18% | 32% / 18% | 77% / 0% |
-  | True/false | 91% / 0% | 95% / 0% | 95% / 0% | 91% / 0% |
-  | Fill in the blank | 52% / 19% | 43% / 5% | 50% / 14% | 45% / 36% |
-  | Math | 25% / 0% | 14% / 29% | 33% / 22% | 30% / 0% |
+  | Type | Round 1: default, 2026-10-10 | Round 1: fine-tuned | Round 1: GPT-6 Luna | Round 2: default, 2026-10-10 | Round 2: default, current checks |
+  |---|---|---|---|---|---|
+  | Matching | 5% / 43% | 0% / 45% | 64% / 0% | 14% / 43% | 5% / 40% |
+  | Multiple dropdowns | 5% / 32% | 23% / 36% | 55% / 5% | 23% / 23% | 18% / 9% |
+  | Numerical | 43% / 14% | 15% / 8% | 52% / 0% | 64% / 14% | 71% / 7% |
+  | Multiple choice | 37% / 13% | 65% / 10% | 75% / 0% | 39% / 13% | 61% / 13% |
+  | Select all that apply | 18% / 5% | 32% / 18% | 77% / 0% | 27% / 5% | 32% / 18% |
+  | True/false | 91% / 0% | 95% / 0% | 91% / 0% | 95% / 0% | 95% / 0% |
+  | Fill in the blank | 52% / 19% | 50% / 14% | 45% / 36% | 62% / 5% | 43% / 5% |
+  | Math | 25% / 0% | 33% / 22% | 30% / 0% | 50% / 0% | 14% / 29% |
 
 - **Fine-tuning raised usable questions but did not reduce wrong keys.** The fine-tuned model is Gemma 4 E4B with a LoRA adapter (a small set of trained changes to its weights), applied at a quarter of its trained strength. The adapter was trained on 3,855 questions that Gemma 4 31B drafted from 261 other LibreTexts books. In the test, the fine-tuned model drafted the questions, and the default model did every other step, including the review and the answer check. On the 162 slots (same page, type and position) where both wrote a question, the fine-tuned model wrote more usable questions (45% vs 35%, p = 0.014) and as many wrong keys (17% each). The fine-tuned run had newer app checks (see below), but the usable gain is all in the five types those checks do not touch (62% vs 46%, p = 0.005), with wrong keys the same there too (8% vs 9%), so it comes from the model. It is not in the app: it leaves wrong keys where they were, and the tested setup held a second 2.9 GB set of weights in GPU memory beside the default model. Loading one model at a time and swapping between them was not tried.
 - **What the numbers cover.** The default model and GPT-6 Luna wrote their questions on 2026-10-10. That was before the answer check covered matching and dropdowns, before the arithmetic check of numerical explanations, and before the answer check ran on OpenAI; the app does all three by default now. The fine-tuned run, on 2026-10-26 and 27, had the first two. Counted together, its matching, dropdowns and numerical questions were no better than the default model's from 2026-10-10. The current-checks run, on 2026-10-29, had all three.
-- **The newer checks made no clear difference to the default model.** On 2026-10-29 the default model wrote the test again on the app as it is now, with every check at its default setting. Its questions were graded in a second pool, shuffled together with the default model's 2026-10-10 questions, and this pool graded higher: the default model's 2026-10-10 questions scored 45% usable and 14% wrong keys in it, against 35% and 17% in the first pool (usable p < 0.001 on the same questions), so compare the current-checks column with those numbers, not with the first column. On the 160 slots where both runs wrote a question, usable was 47% vs 46% (p = 0.89) and wrong keys 12% vs 13% (p = 0.84). In matching, dropdowns and numerical, the types the newer checks touch (54 slots), wrong keys were 10 vs 14 (p = 0.34) and usable 14 vs 16 (p = 0.79). Multiple choice looked better, 23 vs 15 usable on 36 slots, but not clearly (p = 0.13). The app now puts a note on every wrong key (23 of 23, against 20 of 23 for the 2026-10-10 questions in this pool), but it also puts one on 72% of the questions, up from 62%, so a note is still only a weak warning. About one question in seven still has a wrong key, and two in five of the matching questions.
+- **The newer checks made no clear difference to the default model.** On 2026-10-29 the default model wrote the test again on the app as it is now, with every check at its default setting. Its questions were graded in the second round, shuffled together with the default model's 2026-10-10 questions, and that round graded higher: the 2026-10-10 questions scored 45% usable and 14% wrong keys in it, against 35% and 17% in the first round (usable p < 0.001 on the same questions). On the 160 slots where both runs wrote a question, usable was 47% vs 46% (p = 0.89) and wrong keys 12% vs 13% (p = 0.84). In matching, dropdowns and numerical, the types the newer checks touch (54 slots), wrong keys were 10 vs 14 (p = 0.34) and usable 14 vs 16 (p = 0.79). Multiple choice looked better, 23 vs 15 usable on 36 slots, but not clearly (p = 0.13). The app now puts a note on every wrong key (23 of 23, against 20 of 23 for the 2026-10-10 questions in the same round), but it also puts one on 72% of the questions, up from 62%, so a note is still only a weak warning. About one question in seven still has a wrong key, and two in five of the matching questions.
 
 ## Known limits
 
