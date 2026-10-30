@@ -6,7 +6,7 @@ import {
   type GenerationResult,
   type QuestionChecks,
 } from '../lib/generation/pipeline'
-import { GpuLost, type Embedder, type LLMProvider } from '../lib/llm/types'
+import { GpuLost, type Embedder, type LLMProvider, type ProgressEvent } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
 import { generationLockName, webLocks, withGenerationLock } from '../lib/storage/set-locks'
 
@@ -71,11 +71,7 @@ export async function startGeneration(
         onStatus: (status) => update({ status, detail: '' }),
         onItem: () => update({ written: state.written + 1 }),
         onProgress: (done, total) => update({ done, total }),
-        onModelEvent: (event) => {
-          if (event.kind === 'status') update({ detail: event.message })
-          else if (event.kind === 'reasoning') update({ detail: event.text })
-          else update({ detail: `${event.generated} chunks generated…` })
-        },
+        onModelEvent: showModelEvent,
       }, embedder)
       await db.sets.update(setId, {
         status: result.created === 0 && (result.skipped || result.errors.length) ? 'failed' : 'complete',
@@ -85,7 +81,7 @@ export async function startGeneration(
       update({ running: false, status: `Done — ${result.created} question(s) written.` })
     } catch (error) {
       const cancelled = signal.aborted
-      const message = error instanceof GpuLost ? gpuLostMessage(state.written) : error instanceof Error ? error.message : String(error)
+      const message = failureMessage(error, state.written)
       await db.sets.update(setId, {
         status: cancelled ? 'cancelled' : 'failed',
         error: cancelled ? 'Stopped before finishing. Questions written so far were kept.' : message,
@@ -120,15 +116,11 @@ export async function startNewVersion(
     try {
       await writeNewVersion(itemId, source, checks, provider, signal, {
         onStatus: (status) => update({ status, detail: '' }),
-        onModelEvent: (event) => {
-          if (event.kind === 'status') update({ detail: event.message })
-          else if (event.kind === 'reasoning') update({ detail: event.text })
-          else update({ detail: `${event.generated} chunks generated…` })
-        },
+        onModelEvent: showModelEvent,
       }, embedder)
       update({ running: false, done: 1, written: 1, status: 'A new version is ready. Compare it with the current one, then keep one.' })
     } catch (error) {
-      const message = error instanceof GpuLost ? gpuLostMessage(0) : error instanceof Error ? error.message : String(error)
+      const message = failureMessage(error, 0)
       update({ running: false, status: signal.aborted ? `Stopped. ${kept}` : `Couldn’t write a new version: ${message} ${kept}` })
     } finally {
       controller = null
@@ -158,8 +150,20 @@ function resultError({ created, skipped, errors }: GenerationResult): string | n
   return null
 }
 
-// The run loads the model again once where the engine can (pipeline.ts), so
-// by now it is the instructor's turn.
+// What the model is doing, shown under the run's status.
+function showModelEvent(event: ProgressEvent): void {
+  if (event.kind === 'status') update({ detail: event.message })
+  else if (event.kind === 'reasoning') update({ detail: event.text })
+  else update({ detail: `${event.generated} chunks generated…` })
+}
+
+function failureMessage(error: unknown, written: number): string {
+  return error instanceof GpuLost ? gpuLostMessage(written) : error instanceof Error ? error.message : String(error)
+}
+
+// A whole run loads the model again once where the engine can (pipeline.ts),
+// so by now it is the instructor's turn. A new version of one question isn't
+// worth the reload: the instructor tries again once the model is back.
 function gpuLostMessage(written: number): string {
   const kept = written ? ' The questions written so far were kept.' : ''
   return `The GPU stopped responding while writing questions.${kept} Reload the model in Settings, or close other GPU-heavy tabs, and try again.`

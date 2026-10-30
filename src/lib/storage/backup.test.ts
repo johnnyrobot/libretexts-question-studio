@@ -58,6 +58,17 @@ describe('backing up a question with a new version waiting', () => {
     expect(restored.draft).toEqual(SAMPLE_DRAFTS[0])
     expect(restored.newVersion).toBeUndefined()
   })
+
+  // A new version of it is then planned without one, as for older questions.
+  it('drops a damaged concept, keeping the question', async () => {
+    await db.items.clear()
+    const damaged = { ...question(undefined), concept: { ...concept, source_paragraphs: '0' } }
+    const backup = { format: 'libretexts-question-studio-backup', version: 1, createdAt: '', sources: [], sets: [], items: [damaged] }
+    await restoreBackup(new File([JSON.stringify(backup)], 'backup.json'))
+    const restored = (await db.items.get('i'))!
+    expect(restored.draft).toEqual(SAMPLE_DRAFTS[0])
+    expect(restored.concept).toBeUndefined()
+  })
 })
 
 describe('restoring while a set is being written', () => {

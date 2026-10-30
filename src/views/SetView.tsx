@@ -561,19 +561,25 @@ function useNewVersion(item: StoredItem, set: StoredSet, source: StoredSource | 
   // which version was kept. A run's own status is said once it starts.
   const [said, setSaid] = useState<{ message: string; at: number } | null>(null)
   const [startedAt, setStartedAt] = useState(0)
+  // Only a run this card has seen has anything to say on it: the run's last
+  // status outlives it, and a card shown afresh would repeat it.
+  const [followed, setFollowed] = useState(writing)
+  if (writing && !followed) setFollowed(true)
   // Focus would be lost with the Cancel button once the run ends, so it goes
-  // to the new version, or back to the question. A button taken out of the
-  // page sends no blur, so this stays set then.
+  // to the question, then on to the new version once it shows, which can be
+  // a moment after. A button taken out of the page sends no blur, so this
+  // stays set then.
   const cancelHadFocus = useRef(false)
   useEffect(() => {
     if (writing || !cancelHadFocus.current) return
-    cancelHadFocus.current = false
-    const target = document.getElementById(`new-version-${item.id}`) ?? document.getElementById(`item-${item.id}`)
-    target?.focus()
+    const pending = document.getElementById(`new-version-${item.id}`)
+    if (pending) cancelHadFocus.current = false
+    ;(pending ?? document.getElementById(`item-${item.id}`))?.focus()
   }, [writing, item.id, item.newVersion])
 
   const write = async () => {
     setSaid(null)
+    cancelHadFocus.current = false
     if (!source) return
     const provider = await createProvider(engine)
     if (typeof provider === 'string') {
@@ -604,7 +610,7 @@ function useNewVersion(item: StoredItem, set: StoredSet, source: StoredSource | 
     if (!leaves) document.getElementById(`item-${item.id}`)?.focus()
   }
 
-  const runMessage = thisRun && (said === null || said.at < startedAt) ? generation.status : null
+  const runMessage = thisRun && followed && (said === null || said.at < startedAt) ? generation.status : null
   return {
     writing,
     busy: generation.running,

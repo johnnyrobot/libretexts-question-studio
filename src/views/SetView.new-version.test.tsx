@@ -150,6 +150,19 @@ describe('writing a new version of a question', () => {
     expect(document.activeElement?.id).toBe('item-item')
   })
 
+  // The run's last status outlives it, but a card shown afresh has nothing to say.
+  it('says nothing old when the question is shown again after a choice', async () => {
+    const { resume } = scriptedEngine()
+    let view = await render()
+    await view.press('Write a new version')
+    resume()
+    await view.finished()
+    await view.press('Keep the new version')
+    cleanup?.()
+    view = await render()
+    expect(view.announced()).toBeNull()
+  })
+
   it('leaves the question as it was when the current version is kept', async () => {
     const { resume } = scriptedEngine()
     const view = await render()

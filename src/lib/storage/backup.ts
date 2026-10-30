@@ -68,8 +68,12 @@ export async function restoreBackup(file: File): Promise<{ sets: number; items: 
     throw new Error('That file is not a Question Studio backup.')
   }
   const items = parsed.items.map((item) => {
-    const { newVersion, ...rest } = item
+    const { newVersion, concept, ...rest } = item
     const restored = { ...rest, draft: reparse(item.draft) } as unknown as StoredItem
+    // What the question was written to test, used to plan a new version of it.
+    // Older questions have none, and a damaged one is left out the same way.
+    const checkedConcept = conceptShape.safeParse(concept)
+    if (checkedConcept.success) restored.concept = checkedConcept.data
     // A new version waiting to be chosen is checked the same way, and dropped
     // if it no longer passes: the question it would replace is kept.
     const pending = newVersionShape.safeParse(newVersion)
