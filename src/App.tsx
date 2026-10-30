@@ -194,7 +194,7 @@ export default function App({ updateReady, applyUpdate }: { updateReady: boolean
         )}
         {generation.running && !watchingRun && (
           <p className="banner narrow-only" role="status">
-            Writing questions: {generation.done} of {generation.total}.{' '}
+            {generation.itemId ? 'Writing a new version of a question.' : `Writing questions: ${generation.done} of ${generation.total}.`}{' '}
             <a href={`#/set/${generation.setId}`}>View</a>
           </p>
         )}
@@ -252,12 +252,11 @@ function RunStatus() {
   return (
     <a href={`#/set/${generation.setId}`} className="run-status">
       <span>
-        <strong>Writing questions</strong>
-        <span className="fine">
-          {generation.done} of {generation.total || '…'} · View
-        </span>
+        <strong>{generation.itemId ? 'Writing a new version' : 'Writing questions'}</strong>
+        <span className="fine">{generation.itemId ? 'One question · View' : `${generation.done} of ${generation.total || '…'} · View`}</span>
       </span>
-      <progress max={generation.total || 1} value={generation.done} aria-label="Generation progress" />
+      {/* One question has no steps to count, so its bar just moves. */}
+      <progress max={generation.total || 1} value={generation.itemId ? undefined : generation.done} aria-label="Generation progress" />
     </a>
   )
 }

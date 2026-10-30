@@ -1,5 +1,11 @@
 import { useSyncExternalStore } from 'react'
-import { runGeneration, type GenerationPlan, type GenerationResult } from '../lib/generation/pipeline'
+import {
+  runGeneration,
+  writeNewVersion,
+  type GenerationPlan,
+  type GenerationResult,
+  type QuestionChecks,
+} from '../lib/generation/pipeline'
 import { GpuLost, type Embedder, type LLMProvider } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
 import { generationLockName, webLocks, withGenerationLock } from '../lib/storage/set-locks'
@@ -11,6 +17,9 @@ import { generationLockName, webLocks, withGenerationLock } from '../lib/storage
 export interface GenerationState {
   running: boolean
   setId: string | null
+  // Set while a new version of this one question is written, and kept after,
+  // so its card can say how the run ended (startNewVersion).
+  itemId: string | null
   status: string
   // Questions finished, written or left out; written counts only the first.
   done: number
@@ -19,7 +28,7 @@ export interface GenerationState {
   detail: string
 }
 
-let state: GenerationState = { running: false, setId: null, status: '', done: 0, written: 0, total: 0, detail: '' }
+let state: GenerationState = { running: false, setId: null, itemId: null, status: '', done: 0, written: 0, total: 0, detail: '' }
 let controller: AbortController | null = null
 const listeners = new Set<() => void>()
 
@@ -47,7 +56,7 @@ export async function startGeneration(
 ): Promise<void> {
   if (state.running) throw new Error('A generation is already running.')
   controller = new AbortController()
-  update({ running: true, setId, status: 'Starting…', done: 0, written: 0, total: 0, detail: '' })
+  update({ running: true, setId, itemId: null, status: 'Starting…', done: 0, written: 0, total: 0, detail: '' })
   const { signal } = controller
   const run = async () => {
     // Marked again now the lock is held, in case another tab took the set for
@@ -88,6 +97,53 @@ export async function startGeneration(
     }
   }
   await withGenerationLock(setId, {}, run, run)
+}
+
+// One question drafted again beside the one it may replace (LT-201), under
+// the set's lock like a whole run, so the set cannot be written, deleted or
+// written again elsewhere meanwhile. The set's own status stays the first
+// run's. Every way it ends leaves the current version as it was.
+export async function startNewVersion(
+  itemId: string,
+  setId: string,
+  source: StoredSource,
+  checks: QuestionChecks,
+  provider: LLMProvider,
+  embedder: Embedder | null = null,
+): Promise<void> {
+  if (state.running) throw new Error('A generation is already running.')
+  controller = new AbortController()
+  update({ running: true, setId, itemId, status: 'Writing a new version…', done: 0, written: 0, total: 1, detail: '' })
+  const { signal } = controller
+  const kept = 'The current version is kept.'
+  const run = async () => {
+    try {
+      await writeNewVersion(itemId, source, checks, provider, signal, {
+        onStatus: (status) => update({ status, detail: '' }),
+        onModelEvent: (event) => {
+          if (event.kind === 'status') update({ detail: event.message })
+          else if (event.kind === 'reasoning') update({ detail: event.text })
+          else update({ detail: `${event.generated} chunks generated…` })
+        },
+      }, embedder)
+      update({ running: false, done: 1, written: 1, status: 'A new version is ready. Compare it with the current one, then keep one.' })
+    } catch (error) {
+      const message = error instanceof GpuLost ? gpuLostMessage(0) : error instanceof Error ? error.message : String(error)
+      update({ running: false, status: signal.aborted ? `Stopped. ${kept}` : `Couldn’t write a new version: ${message} ${kept}` })
+    } finally {
+      controller = null
+    }
+  }
+  await withGenerationLock(
+    setId,
+    { ifAvailable: true },
+    async (lock) => {
+      if (lock) return run()
+      controller = null
+      update({ running: false, status: `This set is being written in another tab, so no new version was written. ${kept}` })
+    },
+    run,
+  )
 }
 
 // Questions whose answers never passed the checks were already started over

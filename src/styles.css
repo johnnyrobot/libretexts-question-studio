@@ -1463,6 +1463,54 @@ details[open] > summary {
   margin-top: 0.375rem;
 }
 
+/* A new version waiting beside the current one (LT-201). */
+.new-version {
+  margin-top: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--accent);
+}
+
+.new-version > h3 {
+  margin: 0;
+}
+
+.new-version-title {
+  margin: 0.25rem 0 1rem;
+  font-weight: 600;
+}
+
+.new-version .actions {
+  margin-top: 1.5rem;
+}
+
+.new-version-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  margin-top: 1.5rem;
+}
+
+.new-version-run progress {
+  flex: 1 1 12rem;
+}
+
+.new-version-run .run-detail {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+
+.new-version-status {
+  margin: 1rem 0 0;
+}
+
+/* Kept in the accessibility tree while empty, so what it says next is read. */
+.new-version-status:empty {
+  margin: 0;
+}
+
 .source-text {
   margin-top: 1.5rem;
   padding: 1.25rem 1.5rem;

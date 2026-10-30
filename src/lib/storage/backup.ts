@@ -30,6 +30,17 @@ export async function createBackup(): Promise<Blob> {
   return new Blob([JSON.stringify(backup)], { type: 'application/json' })
 }
 
+const draftShape = z.object({ item_type: z.enum(ITEM_TYPES) }).loose()
+const conceptShape = z
+  .object({ label: z.string(), description: z.string(), source_paragraphs: z.array(z.number()), quantitative: z.boolean() })
+  .loose()
+const newVersionShape = z.object({ draft: draftShape, critique: z.array(z.string()), concept: conceptShape, createdAt: z.number() })
+
+function reparse(draft: z.infer<typeof draftShape>) {
+  const { item_type, ...payload } = draft
+  return parseDraft(item_type, payload)
+}
+
 const envelope = z.object({
   format: z.literal(BACKUP_FORMAT),
   version: z.literal(1),
@@ -41,7 +52,7 @@ const envelope = z.object({
         id: z.string(),
         setId: z.string(),
         status: z.enum(['draft', 'approved', 'rejected']),
-        draft: z.object({ item_type: z.enum(ITEM_TYPES) }).loose(),
+        draft: draftShape,
       })
       .loose(),
   ),
@@ -57,8 +68,19 @@ export async function restoreBackup(file: File): Promise<{ sets: number; items: 
     throw new Error('That file is not a Question Studio backup.')
   }
   const items = parsed.items.map((item) => {
-    const { item_type, ...payload } = item.draft
-    return { ...item, draft: parseDraft(item_type, payload) } as unknown as StoredItem
+    const { newVersion, ...rest } = item
+    const restored = { ...rest, draft: reparse(item.draft) } as unknown as StoredItem
+    // A new version waiting to be chosen is checked the same way, and dropped
+    // if it no longer passes: the question it would replace is kept.
+    const pending = newVersionShape.safeParse(newVersion)
+    if (pending.success) {
+      try {
+        restored.newVersion = { ...pending.data, draft: reparse(pending.data.draft) }
+      } catch {
+        // Left out.
+      }
+    }
+    return restored
   })
   // A set being written keeps changing until its run ends, which would undo
   // the restore of it.

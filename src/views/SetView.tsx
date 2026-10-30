@@ -23,7 +23,9 @@ import {
   type StoredSource,
 } from '../lib/storage/db'
 import { unlessGenerating, webLocks } from '../lib/storage/set-locks'
-import { cancelGeneration, markInterruptedOnceReleased, useGeneration } from '../state/generation'
+import { discardNewVersion, keepNewVersion } from '../lib/storage/versions'
+import { createEmbedder, createProvider, useEngineSettings } from '../state/engine'
+import { cancelGeneration, markInterruptedOnceReleased, startNewVersion, useGeneration } from '../state/generation'
 import { navigate, pageLinkFor } from '../router'
 
 // A set has two destinations: reviewing its questions (#/set/<id>) and
@@ -63,7 +65,10 @@ type Filter = 'all' | ItemStatus
 function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; source: StoredSource | null }) {
   const generation = useGeneration()
   const [filter, setFilter] = useState<Filter>('all')
-  const running = generation.running && generation.setId === set.id
+  // A run writing the whole set, or one writing a new version of a question
+  // in it (shown on that question's card).
+  const running = generation.running && generation.setId === set.id && !generation.itemId
+  const rewriting = generation.running && generation.setId === set.id && !!generation.itemId
   // Still marked generating though this tab isn't writing it: another tab is,
   // as a set left so by a closed tab is marked interrupted when the app opens.
   // This tab's own run keeps its setId once over, until the status arrives.
@@ -197,7 +202,7 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
               <ItemCard
                 key={item.id}
                 item={item}
-                provider={set.provider}
+                set={set}
                 number={items.indexOf(item) + 1}
                 source={source}
                 leavesView={(status) => filter !== 'all' && status !== filter}
@@ -225,8 +230,8 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
           <button
             type="button"
             className="danger-link"
-            disabled={running || elsewhere}
-            aria-describedby={running || elsewhere ? 'delete-wait' : undefined}
+            disabled={running || rewriting || elsewhere}
+            aria-describedby={running || rewriting || elsewhere ? 'delete-wait' : undefined}
             onClick={async () => {
               if (!confirm(`Delete “${set.title}” and its ${items.length} questions from this browser?`)) return
               if (await unlessGenerating([set.id], () => deleteSet(set.id))) {
@@ -238,9 +243,10 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
           >
             Delete this set
           </button>
-          {(running || elsewhere) && (
+          {(running || rewriting || elsewhere) && (
             <p className="fine" id="delete-wait">
-              {elsewhere && 'Being written in another tab. '}Delete it once its questions are written.
+              {elsewhere && 'Being written in another tab. '}
+              {rewriting ? 'Delete it once the new version is written.' : 'Delete it once its questions are written.'}
             </p>
           )}
         </div>
@@ -292,14 +298,14 @@ const STATUS_LABELS: Record<ItemStatus, string> = { draft: 'Needs review', appro
 
 function ItemCard({
   item,
-  provider,
+  set,
   number,
   source,
   leavesView,
   focusNext,
 }: {
   item: StoredItem
-  provider: StoredSet['provider'] | undefined
+  set: StoredSet
   number: number
   source: StoredSource | null
   leavesView: (status: ItemStatus) => boolean
@@ -310,23 +316,15 @@ function ItemCard({
   const editButton = useRef<HTMLButtonElement>(null)
   const returnFocus = useRef(false)
   const page = source?.pages[item.sourcePageIndex]
-  const { draft } = item
-  const { keyChecks, notes } = splitNotes(item, provider)
+  const { draft, newVersion } = item
+  const { keyChecks, notes } = splitNotes(item, set.provider)
   // Shown while editing too, above the fields: fixing a key starts from why
   // it was marked (LT-145).
   const keyCheckNoticeId = `key-check-notice-${item.id}`
   const keyCheckNotice = keyChecks.length > 0 && (
-    <section id={keyCheckNoticeId} className="notice key-check" aria-labelledby={`key-check-${item.id}`}>
-      <h3 id={`key-check-${item.id}`} className="label">
-        Check the answer key
-      </h3>
-      <ul>
-        {keyChecks.map((note, index) => (
-          <li key={index}>{note}</li>
-        ))}
-      </ul>
-    </section>
+    <KeyCheckNotice id={keyCheckNoticeId} headingId={`key-check-${item.id}`} keyChecks={keyChecks} />
   )
+  const versions = useNewVersion(item, set, source)
 
   // Closing the editor puts focus back on the Edit button that opened it.
   useEffect(() => {
@@ -392,19 +390,47 @@ function ItemCard({
           }}
         />
       ) : (
-        <ItemPreview draft={draft} />
+        <>
+          {newVersion && <h3 className="label">Current version</h3>}
+          <ItemPreview draft={draft} />
+        </>
       )}
       {!editing && keyCheckNotice}
-      {notes.length > 0 && (
-        <details className="critique">
-          <summary>Notes ({notes.length})</summary>
-          <ul>
-            {notes.map((note, index) => (
-              <li key={index}>{note}</li>
-            ))}
-          </ul>
-        </details>
+      <Notes notes={notes} />
+      {newVersion && !editing && (
+        <NewVersion
+          item={item}
+          provider={set.provider}
+          onKeep={async () => {
+            await keepNewVersion(item.id)
+            // Kept, it needs review again.
+            versions.chose('Kept the new version. Review it before you export.', leavesView('draft'))
+          }}
+          onDiscard={async () => {
+            await discardNewVersion(item.id)
+            versions.chose('Kept the current version.', false)
+          }}
+        />
       )}
+      {versions.writing && (
+        <div className="new-version-run">
+          {/* One question has no steps to count, so its bar just moves. */}
+          <progress aria-label="Writing a new version" />
+          <button type="button" onFocus={versions.cancelFocused} onBlur={versions.cancelBlurred} onClick={versions.cancel}>
+            Cancel
+          </button>
+          {versions.detail && (
+            <details className="run-detail">
+              <summary>Show model activity</summary>
+              <p className="fine">{versions.detail}</p>
+            </details>
+          )}
+        </div>
+      )}
+      {/* Always in the page, so what it says next is announced. */}
+      <p className="new-version-status fine" role="status">
+        {versions.message}
+      </p>
       {showSource && page && !editing && (
         <div className="source-text">
           <h3 className="label">From “{page.title}”</h3>
@@ -436,6 +462,12 @@ function ItemCard({
             <button type="button" ref={editButton} onClick={() => setEditing(true)}>
               Edit
             </button>
+            {/* With a new version waiting, the choice comes first. */}
+            {page && !newVersion && (
+              <button type="button" disabled={versions.busy} onClick={versions.write}>
+                Write a new version
+              </button>
+            )}
           </div>
           {page && (
             <div className="quiet">
@@ -448,6 +480,142 @@ function ItemCard({
       )}
     </li>
   )
+}
+
+function KeyCheckNotice({ id, headingId, keyChecks }: { id?: string; headingId: string; keyChecks: string[] }) {
+  return (
+    <section id={id} className="notice key-check" aria-labelledby={headingId}>
+      <h3 id={headingId} className="label">
+        Check the answer key
+      </h3>
+      <ul>
+        {keyChecks.map((note, index) => (
+          <li key={index}>{note}</li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function Notes({ notes }: { notes: string[] }) {
+  if (!notes.length) return null
+  return (
+    <details className="critique">
+      <summary>Notes ({notes.length})</summary>
+      <ul>
+        {notes.map((note, index) => (
+          <li key={index}>{note}</li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+// A new version waits beside the current one, with its own notes, until the
+// instructor keeps one of them (LT-201). It has not been reviewed yet.
+function NewVersion({
+  item,
+  provider,
+  onKeep,
+  onDiscard,
+}: {
+  item: StoredItem
+  provider: StoredSet['provider'] | undefined
+  onKeep: () => void
+  onDiscard: () => void
+}) {
+  const pending = item.newVersion!
+  const { keyChecks, notes } = splitNotes({ ...pending, status: 'draft' }, provider)
+  const headingId = `new-version-${item.id}`
+  return (
+    <section className="new-version" aria-labelledby={headingId}>
+      <h3 id={headingId} className="label" tabIndex={-1}>
+        New version
+      </h3>
+      <p className="new-version-title">{pending.draft.title}</p>
+      <ItemPreview draft={pending.draft} />
+      {keyChecks.length > 0 && <KeyCheckNotice headingId={`new-version-key-check-${item.id}`} keyChecks={keyChecks} />}
+      <Notes notes={notes} />
+      <div className="actions">
+        <button type="button" className="primary" onClick={onKeep}>
+          Keep the new version
+        </button>
+        <button type="button" onClick={onDiscard}>
+          Keep the current version
+        </button>
+      </div>
+    </section>
+  )
+}
+
+// Writing a new version of one question: starting it with the engine set
+// now, checked as the set's first draft was (pipeline.ts, writeNewVersion),
+// and what the card says about it. The run itself is the app's one run, so
+// it carries on if the instructor leaves the page.
+function useNewVersion(item: StoredItem, set: StoredSet, source: StoredSource | null) {
+  const engine = useEngineSettings()
+  const generation = useGeneration()
+  const thisRun = generation.itemId === item.id && generation.setId === item.setId
+  const writing = thisRun && generation.running
+  // What the card last said in its own right: the engine wasn't ready, or
+  // which version was kept. A run's own status is said once it starts.
+  const [said, setSaid] = useState<{ message: string; at: number } | null>(null)
+  const [startedAt, setStartedAt] = useState(0)
+  // Focus would be lost with the Cancel button once the run ends, so it goes
+  // to the new version, or back to the question. A button taken out of the
+  // page sends no blur, so this stays set then.
+  const cancelHadFocus = useRef(false)
+  useEffect(() => {
+    if (writing || !cancelHadFocus.current) return
+    cancelHadFocus.current = false
+    const target = document.getElementById(`new-version-${item.id}`) ?? document.getElementById(`item-${item.id}`)
+    target?.focus()
+  }, [writing, item.id, item.newVersion])
+
+  const write = async () => {
+    setSaid(null)
+    if (!source) return
+    const provider = await createProvider(engine)
+    if (typeof provider === 'string') {
+      setSaid({ message: provider, at: Date.now() })
+      return
+    }
+    const embedder = await createEmbedder(engine)
+    // Sets saved before LT-201 were written with the review on.
+    const checks = { reviewPass: set.requested.reviewPass ?? true, answerCheck: provider.id === 'local' || engine.answerCheck }
+    setStartedAt(Date.now())
+    try {
+      await startNewVersion(item.id, item.setId, source, checks, provider, embedder)
+    } catch (error) {
+      // Another run started in the moment before.
+      setSaid({ message: error instanceof Error ? error.message : String(error), at: Date.now() })
+    }
+  }
+
+  const cancel = () => {
+    cancelHadFocus.current = false
+    document.getElementById(`item-${item.id}`)?.focus()
+    cancelGeneration()
+  }
+
+  // Focus moves to the question, or to its neighbour when it leaves the filter.
+  const chose = (message: string, leaves: boolean) => {
+    setSaid({ message, at: Date.now() })
+    if (!leaves) document.getElementById(`item-${item.id}`)?.focus()
+  }
+
+  const runMessage = thisRun && (said === null || said.at < startedAt) ? generation.status : null
+  return {
+    writing,
+    busy: generation.running,
+    detail: writing ? generation.detail : '',
+    message: runMessage ?? said?.message ?? '',
+    cancelFocused: () => (cancelHadFocus.current = true),
+    cancelBlurred: () => (cancelHadFocus.current = false),
+    write,
+    cancel,
+    chose,
+  }
 }
 
 function capitalize(value: string): string {
@@ -490,7 +658,8 @@ function Export({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   // A download before the remembered name loads would leave the author out.
   const authorLoading = author === null
 
-  const running = generation.running && generation.setId === set.id
+  // A new version waiting to be chosen is not exported, so it doesn't hold export up.
+  const running = generation.running && generation.setId === set.id && !generation.itemId
   const approved = items.filter((item) => item.status === 'approved').length
   const drafts = items.filter((item) => item.status === 'draft').length
   const exportableItems = items.filter((i) => (includeDrafts ? i.status !== 'rejected' : i.status === 'approved'))

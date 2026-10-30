@@ -5,8 +5,8 @@ import { arithmeticProblems, type ArithmeticProblem } from '../math/arithmetic'
 import { CONSTANT_NAMES, FUNCTION_NAMES } from '../math/expr'
 import { formatComputed, formatNumber, formatUnits } from '../math/format'
 import { checkWorkedExample, VARIABLE_NAME } from '../math/spec'
-import { db, newId, type StoredItem, type StoredSource } from '../storage/db'
-import { ARITHMETIC_CHECK_OPENING, BLANK_CHECK_OPENING, KEY_CHECK_OPENING } from './key-notes'
+import { db, newId, type NewVersion, type StoredItem, type StoredSource } from '../storage/db'
+import { ARITHMETIC_CHECK_OPENING, BLANK_CHECK_OPENING, KEY_CHECK_OPENING, MATCHING_IN_BROWSER_NOTE } from './key-notes'
 import {
   blankCheckPrompt,
   conceptPrompt,
@@ -345,51 +345,9 @@ export async function runGeneration(
             )
           }
         }
-        const allowed = new Set(unit.paragraphs.map(([i]) => i))
-        const kind = itemType.replace(/_/g, ' ')
-        callbacks.onStatus(`Writing a ${kind} question on “${concept.label}”…`)
-        let draft = await withFreshStarts((round) => {
-          if (round > 1) callbacks.onStatus(`Starting the ${kind} question on “${concept.label}” over…`)
-          return draftItem(provider, unit, concept, itemType, stems.slice(-12), allowed, signal, callbacks)
-        })
-        let critique: string[] = notes
-        let reviewNotes: string[] = []
-        // On the in-browser model the reviewer may only reword a math question
-        // (see keepComputation), and its notes on them were mostly false claims
-        // about placeholder format, so the ~20 s review is skipped.
-        const review = plan.reviewPass && !(provider.id === 'local' && draft.item_type === 'math')
-        if (review) {
-          callbacks.onStatus(`Reviewing “${draft.title}”…`)
-          try {
-            const reviewed = await reviewItem(provider, unit, concept, draft, allowed, signal, callbacks, [], typedAnswerProblem(draft))
-            draft = reviewed.draft
-            reviewNotes = reviewed.issues
-            critique = [...notes, ...reviewed.issues]
-          } catch (error) {
-            if (signal.aborted || error instanceof GpuLost) throw error
-            critique = [...notes, `Automatic review could not complete (${message(error)}); the unreviewed draft was kept.`]
-          }
-        }
-        if (provider.id === 'local' || plan.answerCheck) {
-          const checked = await verifyAnswerKey(provider, unit, concept, draft, allowed, signal, callbacks, textbook)
-          // A new blank makes it another question than the one the reviewer
-          // read, and its notes were nearly all about the old blank, such as
-          // "The correct answer '9.8 N' contains a number and unit…" on a key
-          // that is now "weight": 8 of the 9 notes on the 10 of 30 questions
-          // given a new blank (2026-10-09). The new blank has passed the check.
-          if (draft.item_type === 'fill_in_blank' && checked.draft !== draft) {
-            critique = critique.filter((note) => !reviewNotes.includes(note))
-          }
-          draft = checked.draft
-          critique = [...critique, ...checked.notes]
-        }
-        draft = finalize(draft, concept)
-        const typed = typedAnswerProblem(draft)
-        if (typed && draft.item_type === 'fill_in_blank') {
-          // The reviewer, told about it, tends to list it too, in its own words.
-          const answer = draft.answer.toLowerCase()
-          critique = [...critique.filter((note) => !note.toLowerCase().includes(answer)), typed]
-        }
+        const written = await writeQuestion(provider, unit, concept, itemType, { avoid: stems.slice(-12), checks: plan, textbook, notes }, signal, callbacks)
+        const draft = written.draft
+        let critique = written.critique
         const similar = await duplicates?.add(draft.stem).catch((error: unknown) => {
           // Its model went with the GPU; the questions do not need it.
           if (error instanceof GpuLost) {
@@ -398,9 +356,8 @@ export async function runGeneration(
           }
           return null
         })
-        if (similar && similar.similarity >= DUPLICATE_SIMILARITY) {
-          critique = [...critique, `Very similar to another question in this set: “${clip(similar.stem, 140)}”`]
-        }
+        const duplicate = similarNote(similar)
+        if (duplicate) critique = [...critique, duplicate]
         const now = Date.now()
         const item: StoredItem = {
           id: newId(),
@@ -410,6 +367,7 @@ export async function runGeneration(
           draft,
           sourcePageIndex: current.pageIndex,
           critique,
+          concept,
           createdAt: now,
           updatedAt: now,
         }
@@ -429,6 +387,156 @@ export async function runGeneration(
     }
   }
   return { created, skipped, errors }
+}
+
+// What a question is checked with once drafted. A set keeps its run's choice
+// of review pass, so a new version of one of its questions is checked the same.
+export type QuestionChecks = Pick<GenerationPlan, 'reviewPass' | 'answerCheck'>
+
+interface QuestionContext {
+  // Stems the model is told not to repeat.
+  avoid: string[]
+  checks: QuestionChecks
+  textbook: WordIndex
+  // Notes the question starts with, such as why its type was changed.
+  notes: string[]
+}
+
+// Writes one question on a concept: drafted, reviewed, its key checked and
+// cleaned up. A set run and a new version of one question both write it here,
+// so a new version goes through exactly what the first one did.
+async function writeQuestion(
+  provider: LLMProvider,
+  unit: SourceUnit,
+  concept: Concept,
+  itemType: ItemType,
+  { avoid, checks, textbook, notes }: QuestionContext,
+  signal: AbortSignal,
+  callbacks: GenerationCallbacks,
+): Promise<{ draft: QuestionDraft; critique: string[] }> {
+  const allowed = new Set(unit.paragraphs.map(([i]) => i))
+  const kind = itemType.replace(/_/g, ' ')
+  callbacks.onStatus(`Writing a ${kind} question on “${concept.label}”…`)
+  let draft = await withFreshStarts((round) => {
+    if (round > 1) callbacks.onStatus(`Starting the ${kind} question on “${concept.label}” over…`)
+    return draftItem(provider, unit, concept, itemType, avoid, allowed, signal, callbacks)
+  })
+  let critique: string[] = notes
+  let reviewNotes: string[] = []
+  // On the in-browser model the reviewer may only reword a math question
+  // (see keepComputation), and its notes on them were mostly false claims
+  // about placeholder format, so the ~20 s review is skipped.
+  const review = checks.reviewPass && !(provider.id === 'local' && draft.item_type === 'math')
+  if (review) {
+    callbacks.onStatus(`Reviewing “${draft.title}”…`)
+    try {
+      const reviewed = await reviewItem(provider, unit, concept, draft, allowed, signal, callbacks, [], typedAnswerProblem(draft))
+      draft = reviewed.draft
+      reviewNotes = reviewed.issues
+      critique = [...notes, ...reviewed.issues]
+    } catch (error) {
+      if (signal.aborted || error instanceof GpuLost) throw error
+      critique = [...notes, `Automatic review could not complete (${message(error)}); the unreviewed draft was kept.`]
+    }
+  }
+  if (provider.id === 'local' || checks.answerCheck) {
+    const checked = await verifyAnswerKey(provider, unit, concept, draft, allowed, signal, callbacks, textbook)
+    // A new blank makes it another question than the one the reviewer
+    // read, and its notes were nearly all about the old blank, such as
+    // "The correct answer '9.8 N' contains a number and unit…" on a key
+    // that is now "weight": 8 of the 9 notes on the 10 of 30 questions
+    // given a new blank (2026-10-09). The new blank has passed the check.
+    if (draft.item_type === 'fill_in_blank' && checked.draft !== draft) {
+      critique = critique.filter((note) => !reviewNotes.includes(note))
+    }
+    draft = checked.draft
+    critique = [...critique, ...checked.notes]
+  }
+  draft = finalize(draft, concept)
+  const typed = typedAnswerProblem(draft)
+  if (typed && draft.item_type === 'fill_in_blank') {
+    // The reviewer, told about it, tends to list it too, in its own words.
+    const answer = draft.answer.toLowerCase()
+    critique = [...critique.filter((note) => !note.toLowerCase().includes(answer)), typed]
+  }
+  return { draft, critique }
+}
+
+function similarNote(similar: { stem: string; similarity: number } | null | undefined): string | null {
+  return similar && similar.similarity >= DUPLICATE_SIMILARITY ? `Very similar to another question in this set: “${clip(similar.stem, 140)}”` : null
+}
+
+// Writes another version of one saved question, from the same page, concept
+// and type, and keeps it beside the current version until the instructor
+// chooses one (keepNewVersion, discardNewVersion). The current version is
+// never changed, so a failed or cancelled draft loses nothing.
+export async function writeNewVersion(
+  itemId: string,
+  source: StoredSource,
+  checks: QuestionChecks,
+  provider: LLMProvider,
+  signal: AbortSignal,
+  callbacks: Pick<GenerationCallbacks, 'onStatus' | 'onModelEvent'>,
+  embedder: Embedder | null = null,
+): Promise<NewVersion> {
+  const item = await db.items.get(itemId)
+  if (!item) throw new Error('This question has been deleted.')
+  const { unit, concept } = draftingPlan(item, source, SOURCE_BUDGET[provider.id])
+  const others = (await db.items.where('setId').equals(item.setId).sortBy('position')).filter((other) => other.id !== item.id)
+  const avoid = others.filter((other) => other.position < item.position).map((other) => other.draft.stem).slice(-12)
+  const textbook = new WordIndex(source.pages.flatMap((page) => page.paragraphs.map((p) => p.text)))
+  const written = await writeQuestion(
+    provider,
+    unit,
+    concept,
+    item.draft.item_type,
+    { avoid, checks, textbook, notes: [] },
+    signal,
+    { onItem: () => {}, onProgress: () => {}, ...callbacks },
+  )
+  let critique = written.critique
+  // The set's engine decides the note on its other matching questions.
+  if (provider.id === 'local' && written.draft.item_type === 'matching') critique = [...critique, MATCHING_IN_BROWSER_NOTE]
+  if (embedder) {
+    // As in a set run, the duplicate check is a convenience.
+    try {
+      callbacks.onStatus('Checking for similar questions…')
+      await embedder.load((progress) => callbacks.onModelEvent?.({ kind: 'status', message: progress.text }))
+      const duplicates = new StemIndex(embedder)
+      await duplicates.addAll(others.map((other) => other.draft.stem))
+      const duplicate = similarNote(await duplicates.add(written.draft.stem))
+      if (duplicate) critique = [...critique, duplicate]
+    } catch (error) {
+      if (signal.aborted) throw error
+      console.warn('Duplicate check unavailable:', error)
+    }
+  }
+  signal.throwIfAborted()
+  const newVersion: NewVersion = { draft: written.draft, critique, concept, createdAt: Date.now() }
+  // Only onto the question as it still is: it may have been deleted meanwhile.
+  const saved = await db.items.update(item.id, { newVersion })
+  if (!saved) throw new Error('This question has been deleted.')
+  return newVersion
+}
+
+// The section and concept a question was written from. Questions saved before
+// the app kept their concept get one made from their label and citations.
+function draftingPlan(item: StoredItem, source: StoredSource, budget: number): { unit: SourceUnit; concept: Concept } {
+  const cited = item.concept?.source_paragraphs ?? item.draft.citation_paragraphs
+  const units = planUnits(source, 1, budget).filter((plan) => plan.pageIndex === item.sourcePageIndex)
+  if (!units.length) throw new Error('The page this question was written from is no longer in its source.')
+  const overlap = (plan: UnitPlan) => plan.unit.paragraphs.filter(([index]) => cited.includes(index)).length
+  const { unit } = units.reduce((best, plan) => (overlap(plan) > overlap(best) ? plan : best))
+  const inUnit = unit.paragraphs.map(([index]) => index)
+  const kept = cited.filter((index) => inUnit.includes(index))
+  const source_paragraphs = (kept.length ? kept : inUnit).slice(0, 12)
+  const concept: Concept = item.concept ?? {
+    label: item.draft.concept_label,
+    description: item.draft.concept_label,
+    source_paragraphs,
+    quantitative: QUANTITATIVE_TYPES.has(item.draft.item_type),
+  }
+  return { unit, concept: { ...concept, source_paragraphs } }
 }
 
 // The label is what the instructor sees on every question. Gemma 4 E4B once

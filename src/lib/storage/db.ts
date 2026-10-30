@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie'
 import type { Paragraph } from '../content/normalize'
+import type { Concept } from '../generation/prompts'
 import type { QuestionDraft } from '../generation/schema'
 import { unlessGenerating, webLocks } from './set-locks'
 
@@ -50,8 +51,21 @@ export interface StoredItem {
   // The page the item's citations point into, so review can show the source.
   sourcePageIndex: number
   critique: string[]
+  // The concept it was written on, to write a new version on it. Questions
+  // saved before the app kept it have none.
+  concept?: Concept
+  // A new version waiting for the instructor to keep it or go back to the
+  // current one. It is not exported until it is kept.
+  newVersion?: NewVersion
   createdAt: number
   updatedAt: number
+}
+
+export interface NewVersion {
+  draft: QuestionDraft
+  critique: string[]
+  concept: Concept
+  createdAt: number
 }
 
 export interface StoredSet {
@@ -62,7 +76,10 @@ export interface StoredSet {
   model: string
   status: 'generating' | 'complete' | 'failed' | 'cancelled'
   error: string | null
-  requested: { itemTypes: string[]; count: number }
+  // reviewPass, the second-pass review the set was written with, so a new
+  // version is checked the same way; sets saved before it were written with
+  // it on, the default then and since.
+  requested: { itemTypes: string[]; count: number; reviewPass?: boolean }
   createdAt: number
   updatedAt: number
 }

@@ -546,7 +546,7 @@ function Configure({ source }: { source: StoredSource }) {
       model: provider.model,
       status: 'generating',
       error: null,
-      requested: { itemTypes: types, count: total },
+      requested: { itemTypes: types, count: total, reviewPass },
       createdAt: now,
       updatedAt: now,
     })
