@@ -181,6 +181,20 @@ describe('writing a new version of a question', () => {
     expect(view.announced()).toBeNull()
   })
 
+  // Kept, it needs review again, so it leaves a list of approved questions.
+  it('moves focus to the next question when the kept version leaves the list shown', async () => {
+    const { resume } = scriptedEngine()
+    const view = await render()
+    const approvedTab = [...view.container.querySelectorAll<HTMLElement>('[role="tab"]')].find((tab) => tab.textContent?.startsWith('Approved'))!
+    await act(async () => approvedTab.click())
+    await view.press('Write a new version')
+    resume()
+    await view.finished()
+    await view.press('Keep the new version')
+    expect((await db.items.get('item'))?.status).toBe('draft')
+    expect(document.activeElement?.id).toBe('item-other')
+  })
+
   it('leaves the question as it was when the current version is kept', async () => {
     const { resume } = scriptedEngine()
     const view = await render()

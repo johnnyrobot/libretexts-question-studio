@@ -402,9 +402,11 @@ function ItemCard({
           item={item}
           provider={set.provider}
           onKeep={async () => {
+            // Kept, it needs review again, so it may leave the list shown.
+            const leaves = leavesView('draft')
+            if (leaves) focusNext()
             await keepNewVersion(item.id)
-            // Kept, it needs review again.
-            versions.chose('Kept the new version. Review it before you export.', leavesView('draft'))
+            versions.chose('Kept the new version. Review it before you export.', leaves)
           }}
           onDiscard={async () => {
             await discardNewVersion(item.id)
