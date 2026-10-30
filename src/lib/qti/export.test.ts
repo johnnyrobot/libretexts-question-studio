@@ -9,6 +9,7 @@ import { db, type StoredSource } from '../storage/db'
 import { numericalExpectation } from './adapt-expectations'
 import { itemIdent, mathVersion } from './canvas'
 import { exportMathVersions, exportSet } from './export'
+import { keepNewVersion } from '../storage/versions'
 import { SAMPLE_DRAFTS } from './fixtures'
 
 const MATH = SAMPLE_DRAFTS.find((d): d is DraftOf<'math'> => d.item_type === 'math')!
@@ -78,6 +79,18 @@ describe('exportSet', () => {
     expect(quiz.items).toHaveLength(SAMPLE_DRAFTS.length)
     expect(quiz.items.at(-1)!.title).toBe(MATH.title)
     expect(record.filename).toBe('leaf-quiz-adapt-qti.zip')
+  })
+
+  it('exports the version of a question the instructor kept, not one still waiting to be chosen', async () => {
+    const concept = { label: 'Leaves', description: 'Leaves', source_paragraphs: [0], quantitative: false }
+    const newVersion = { draft: { ...SAMPLE_DRAFTS[0], title: 'The new version' }, critique: [], concept, createdAt: 2 }
+    await db.items.update(uuid(0), { newVersion })
+    const titles = async () => (await quizzes((await exportSet('set', { includeDrafts: true, randomizeMath: false })).zip))[0].items.map((i) => i.title)
+    expect(await titles()).toContain(SAMPLE_DRAFTS[0].title)
+    expect(await titles()).not.toContain('The new version')
+    await keepNewVersion(uuid(0))
+    expect(await titles()).toContain('The new version')
+    expect(await titles()).not.toContain(SAMPLE_DRAFTS[0].title)
   })
 
   it('gives identifiers that sort in set order, since ADAPT imports in identifier order', async () => {

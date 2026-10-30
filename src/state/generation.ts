@@ -1,6 +1,12 @@
 import { useSyncExternalStore } from 'react'
-import { runGeneration, type GenerationPlan, type GenerationResult } from '../lib/generation/pipeline'
-import { GpuLost, type Embedder, type LLMProvider } from '../lib/llm/types'
+import {
+  runGeneration,
+  writeNewVersion,
+  type GenerationPlan,
+  type GenerationResult,
+  type QuestionChecks,
+} from '../lib/generation/pipeline'
+import { GpuLost, type Embedder, type LLMProvider, type ProgressEvent } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
 import { generationLockName, webLocks, withGenerationLock } from '../lib/storage/set-locks'
 
@@ -11,6 +17,9 @@ import { generationLockName, webLocks, withGenerationLock } from '../lib/storage
 export interface GenerationState {
   running: boolean
   setId: string | null
+  // Set while a new version of this one question is written, and kept after,
+  // so its card can say how the run ended (startNewVersion).
+  itemId: string | null
   status: string
   // Questions finished, written or left out; written counts only the first.
   done: number
@@ -19,7 +28,7 @@ export interface GenerationState {
   detail: string
 }
 
-let state: GenerationState = { running: false, setId: null, status: '', done: 0, written: 0, total: 0, detail: '' }
+let state: GenerationState = { running: false, setId: null, itemId: null, status: '', done: 0, written: 0, total: 0, detail: '' }
 let controller: AbortController | null = null
 const listeners = new Set<() => void>()
 
@@ -47,7 +56,7 @@ export async function startGeneration(
 ): Promise<void> {
   if (state.running) throw new Error('A generation is already running.')
   controller = new AbortController()
-  update({ running: true, setId, status: 'Starting…', done: 0, written: 0, total: 0, detail: '' })
+  update({ running: true, setId, itemId: null, status: 'Starting…', done: 0, written: 0, total: 0, detail: '' })
   const { signal } = controller
   const run = async () => {
     // Marked again now the lock is held, in case another tab took the set for
@@ -62,11 +71,7 @@ export async function startGeneration(
         onStatus: (status) => update({ status, detail: '' }),
         onItem: () => update({ written: state.written + 1 }),
         onProgress: (done, total) => update({ done, total }),
-        onModelEvent: (event) => {
-          if (event.kind === 'status') update({ detail: event.message })
-          else if (event.kind === 'reasoning') update({ detail: event.text })
-          else update({ detail: `${event.generated} chunks generated…` })
-        },
+        onModelEvent: showModelEvent,
       }, embedder)
       await db.sets.update(setId, {
         status: result.created === 0 && (result.skipped || result.errors.length) ? 'failed' : 'complete',
@@ -76,7 +81,7 @@ export async function startGeneration(
       update({ running: false, status: `Done — ${result.created} question(s) written.` })
     } catch (error) {
       const cancelled = signal.aborted
-      const message = error instanceof GpuLost ? gpuLostMessage(state.written) : error instanceof Error ? error.message : String(error)
+      const message = failureMessage(error, state.written)
       await db.sets.update(setId, {
         status: cancelled ? 'cancelled' : 'failed',
         error: cancelled ? 'Stopped before finishing. Questions written so far were kept.' : message,
@@ -88,6 +93,51 @@ export async function startGeneration(
     }
   }
   await withGenerationLock(setId, {}, run, run)
+}
+
+export const NEW_VERSION_READY = 'A new version is ready. Compare it with the current one, then keep one.'
+
+// One question drafted again beside the one it may replace (LT-201), under
+// the set's lock like a whole run, so the set cannot be written, deleted or
+// written again elsewhere meanwhile. The set's own status stays the first
+// run's. Every way it ends leaves the current version as it was.
+export async function startNewVersion(
+  itemId: string,
+  setId: string,
+  source: StoredSource,
+  checks: QuestionChecks,
+  provider: LLMProvider,
+  embedder: Embedder | null = null,
+): Promise<void> {
+  if (state.running) throw new Error('A generation is already running.')
+  controller = new AbortController()
+  update({ running: true, setId, itemId, status: 'Writing a new version…', done: 0, written: 0, total: 1, detail: '' })
+  const { signal } = controller
+  const kept = 'The current version is kept.'
+  const run = async () => {
+    try {
+      await writeNewVersion(itemId, source, checks, provider, signal, {
+        onStatus: (status) => update({ status, detail: '' }),
+        onModelEvent: showModelEvent,
+      }, embedder)
+      update({ running: false, done: 1, written: 1, status: NEW_VERSION_READY })
+    } catch (error) {
+      const message = failureMessage(error, 0)
+      update({ running: false, status: signal.aborted ? `Stopped. ${kept}` : `Couldn’t write a new version: ${message} ${kept}` })
+    } finally {
+      controller = null
+    }
+  }
+  await withGenerationLock(
+    setId,
+    { ifAvailable: true },
+    async (lock) => {
+      if (lock) return run()
+      controller = null
+      update({ running: false, status: `This set is being written in another tab, so no new version was written. ${kept}` })
+    },
+    run,
+  )
 }
 
 // Questions whose answers never passed the checks were already started over
@@ -102,8 +152,20 @@ function resultError({ created, skipped, errors }: GenerationResult): string | n
   return null
 }
 
-// The run loads the model again once where the engine can (pipeline.ts), so
-// by now it is the instructor's turn.
+// What the model is doing, shown under the run's status.
+function showModelEvent(event: ProgressEvent): void {
+  if (event.kind === 'status') update({ detail: event.message })
+  else if (event.kind === 'reasoning') update({ detail: event.text })
+  else update({ detail: `${event.generated} chunks generated…` })
+}
+
+function failureMessage(error: unknown, written: number): string {
+  return error instanceof GpuLost ? gpuLostMessage(written) : error instanceof Error ? error.message : String(error)
+}
+
+// A whole run loads the model again once where the engine can (pipeline.ts),
+// so by now it is the instructor's turn. A new version of one question isn't
+// worth the reload: the instructor tries again once the model is back.
 function gpuLostMessage(written: number): string {
   const kept = written ? ' The questions written so far were kept.' : ''
   return `The GPU stopped responding while writing questions.${kept} Reload the model in Settings, or close other GPU-heavy tabs, and try again.`

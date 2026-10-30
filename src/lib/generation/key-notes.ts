@@ -28,9 +28,12 @@ export function splitNotes(
   item: Pick<StoredItem, 'draft' | 'critique' | 'status'>,
   provider: StoredSet['provider'] | undefined,
 ): SplitNotes {
-  const isKeyCheck = (note: string) => OPENINGS.some((opening) => note.startsWith(opening))
+  // A new version the in-browser model wrote in a set written with OpenAI
+  // carries the matching note itself (writeNewVersion in pipeline.ts).
+  const isKeyCheck = (note: string) => note === MATCHING_IN_BROWSER_NOTE || OPENINGS.some((opening) => note.startsWith(opening))
   const keyChecks = item.critique.filter(isKeyCheck)
-  if (item.draft.item_type === 'matching' && provider !== 'openai') keyChecks.push(MATCHING_IN_BROWSER_NOTE)
+  const matchingNote = item.draft.item_type === 'matching' && provider !== 'openai'
+  if (matchingNote && !keyChecks.includes(MATCHING_IN_BROWSER_NOTE)) keyChecks.push(MATCHING_IN_BROWSER_NOTE)
   const notes = item.critique.filter((note) => !isKeyCheck(note))
   return item.status === 'approved' ? { keyChecks: [], notes: [...keyChecks, ...notes] } : { keyChecks, notes }
 }

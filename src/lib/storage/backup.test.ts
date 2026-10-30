@@ -32,6 +32,45 @@ describe('backup', () => {
   })
 })
 
+describe('backing up a question with a new version waiting', () => {
+  const concept = { label: 'Inputs', description: 'What plants take in', source_paragraphs: [0], quantitative: false }
+  const question = (newVersion: unknown) => ({
+    id: 'i', setId: 'set', position: 0, status: 'approved', draft: SAMPLE_DRAFTS[0], sourcePageIndex: 0, critique: [],
+    concept, newVersion, createdAt: 1, updatedAt: 1,
+  })
+  const restore = async (newVersion: unknown) => {
+    await db.items.clear()
+    const backup = { format: 'libretexts-question-studio-backup', version: 1, createdAt: '', sources: [], sets: [], items: [question(newVersion)] }
+    await restoreBackup(new File([JSON.stringify(backup)], 'backup.json'))
+    return (await db.items.get('i'))!
+  }
+
+  it('keeps the new version, checked like the current one', async () => {
+    // Spaces the schema trims show it was checked.
+    const newVersion = { draft: { ...SAMPLE_DRAFTS[1], stem: `  ${SAMPLE_DRAFTS[1].stem}  ` }, critique: ['A note'], concept, createdAt: 2 }
+    const restored = await restore(newVersion)
+    expect(restored.concept).toEqual(concept)
+    expect(restored.newVersion).toEqual({ ...newVersion, draft: SAMPLE_DRAFTS[1] })
+  })
+
+  it('drops a new version that is no longer a valid question, keeping the question', async () => {
+    const restored = await restore({ draft: { item_type: 'multiple_choice', stem: 'Broken' }, critique: [], concept, createdAt: 2 })
+    expect(restored.draft).toEqual(SAMPLE_DRAFTS[0])
+    expect(restored.newVersion).toBeUndefined()
+  })
+
+  // A new version of it is then planned without one, as for older questions.
+  it('drops a damaged concept, keeping the question', async () => {
+    await db.items.clear()
+    const damaged = { ...question(undefined), concept: { ...concept, source_paragraphs: '0' } }
+    const backup = { format: 'libretexts-question-studio-backup', version: 1, createdAt: '', sources: [], sets: [], items: [damaged] }
+    await restoreBackup(new File([JSON.stringify(backup)], 'backup.json'))
+    const restored = (await db.items.get('i'))!
+    expect(restored.draft).toEqual(SAMPLE_DRAFTS[0])
+    expect(restored.concept).toBeUndefined()
+  })
+})
+
 describe('restoring while a set is being written', () => {
   afterEach(() => {
     vi.unstubAllGlobals()

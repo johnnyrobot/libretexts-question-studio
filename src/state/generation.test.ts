@@ -5,7 +5,8 @@ import { SAMPLE_DRAFTS } from '../lib/qti/fixtures'
 import { completeWithRetries, type LLMProvider } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
 import { FakeLocks } from '../lib/storage/fixtures'
-import { markInterruptedSets, startGeneration } from './generation'
+import { unlessGenerating } from '../lib/storage/set-locks'
+import { cancelGeneration, markInterruptedSets, startGeneration, startNewVersion } from './generation'
 
 const source: StoredSource = {
   id: 'src-1',
@@ -107,6 +108,87 @@ describe('startGeneration', () => {
     expect(set?.error).toBe(
       'The GPU stopped responding while writing questions. The questions written so far were kept. Reload the model in Settings, or close other GPU-heavy tabs, and try again.',
     )
+  })
+})
+
+describe('startNewVersion', () => {
+  const checks = { reviewPass: false, answerCheck: false }
+  const { item_type: _, ...essay } = SAMPLE_DRAFTS.find((d) => d.item_type === 'essay')!
+  void _
+
+  beforeEach(async () => {
+    await db.sets.update('set-1', { status: 'complete' })
+    await db.items.add({
+      id: 'item-1', setId: 'set-1', position: 0, status: 'approved', sourcePageIndex: 0, critique: [],
+      draft: { ...SAMPLE_DRAFTS.find((d) => d.item_type === 'essay')!, title: 'The current version' },
+      concept: { label: 'Inputs', description: 'What plants take in', source_paragraphs: [0], quantitative: false },
+      createdAt: 0, updatedAt: 0,
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // Writes one essay question once the test lets it go on.
+  function pausedProvider() {
+    let started = () => {}
+    const hasStarted = new Promise<void>((resolve) => (started = resolve))
+    let resume = () => {}
+    const resumed = new Promise<void>((resolve) => (resume = resolve))
+    const provider: LLMProvider = {
+      id: 'local',
+      model: 'fake',
+      complete: (request) =>
+        completeWithRetries(request, async () => {
+          started()
+          await resumed
+          request.signal?.throwIfAborted()
+          return { text: JSON.stringify({ ...essay, title: 'The new version', citation_paragraphs: [0] }), usage: null }
+        }),
+    }
+    return { provider, hasStarted, resume }
+  }
+
+  it('writes a new version beside the current one, holding the set so no other run starts on it', async () => {
+    vi.stubGlobal('navigator', { locks: new FakeLocks() })
+    const { provider, hasStarted, resume } = pausedProvider()
+    const finished = startNewVersion('item-1', 'set-1', source, checks, provider)
+    await hasStarted
+    expect(await unlessGenerating(['set-1'], async () => {})).toBe('set-1')
+    await expect(startGeneration('set-1', source, { itemTypes: ['essay'], perPage: 1, reviewPass: false }, provider)).rejects.toThrow()
+    resume()
+    await finished
+    const item = await db.items.get('item-1')
+    expect(item?.draft.title).toBe('The current version')
+    expect(item?.newVersion?.draft.title).toBe('The new version')
+    // The set's own state is the first run's, untouched.
+    expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
+  })
+
+  it('writes nothing while another tab is writing the set', async () => {
+    const locks = new FakeLocks()
+    vi.stubGlobal('navigator', { locks })
+    let release = () => {}
+    const held = locks.request('generation:set-1', () => new Promise<void>((resolve) => (release = resolve)))
+    await startNewVersion('item-1', 'set-1', source, checks, pausedProvider().provider)
+    expect((await db.items.get('item-1'))?.newVersion).toBeUndefined()
+    release()
+    await held
+  })
+
+  it('keeps the current version when cancelled', async () => {
+    vi.stubGlobal('navigator', { locks: new FakeLocks() })
+    const { provider, hasStarted, resume } = pausedProvider()
+    const finished = startNewVersion('item-1', 'set-1', source, checks, provider)
+    await hasStarted
+    cancelGeneration()
+    resume()
+    await finished
+    const item = await db.items.get('item-1')
+    expect(item?.newVersion).toBeUndefined()
+    expect(item?.draft.title).toBe('The current version')
+    expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
   })
 })
 

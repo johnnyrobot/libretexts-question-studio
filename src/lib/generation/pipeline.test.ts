@@ -24,9 +24,10 @@ import {
   symbolsToMath,
   withFinalValue,
   WordIndex,
+  writeNewVersion,
 } from './pipeline'
 import { checkModelDraft, parseDraft, type DraftOf, type ItemType } from './schema'
-import { splitNotes } from './key-notes'
+import { MATCHING_IN_BROWSER_NOTE, splitNotes } from './key-notes'
 
 const source: StoredSource = {
   id: 'src-1',
@@ -196,6 +197,12 @@ describe('runGeneration', () => {
     const items = await db.items.where('setId').equals('set-1').sortBy('position')
     expect(items.map((i) => i.draft.item_type)).toEqual(['multiple_choice', 'true_false', 'matching', 'multiple_choice'])
     expect(items.every((i) => i.status === 'draft' && i.draft.concept_label === 'Inputs')).toBe(true)
+  })
+
+  it('keeps the concept each question was written on, for a new version of it', async () => {
+    await runGeneration('set-1', source, { itemTypes: ['essay'], perPage: 1, reviewPass: false }, new FakeProvider(), new AbortController().signal, callbacks)
+    const [item] = await db.items.where('setId').equals('set-1').toArray()
+    expect(item.concept).toEqual({ label: 'Inputs', description: 'What plants take in', source_paragraphs: [0, 1], quantitative: true })
   })
 
   it('feeds validation errors back to the model and recovers', async () => {
@@ -872,6 +879,136 @@ describe('runGeneration', () => {
     expect(result).toEqual({ created: 0, skipped: 1, errors: [] })
     expect(prompts[1]).toMatch(/citation_paragraphs 7/)
     warn.mockRestore()
+  })
+})
+
+describe('writeNewVersion', () => {
+  const concept = { label: 'Light capture', description: 'How chlorophyll uses light', source_paragraphs: [1], quantitative: false }
+  const current = (patch: Partial<StoredItem> = {}): StoredItem => ({
+    id: 'item-1',
+    setId: 'set-1',
+    position: 0,
+    status: 'approved',
+    draft: { ...SAMPLE_DRAFTS.find((d) => d.item_type === 'multiple_choice')!, title: 'The current version' },
+    sourcePageIndex: 0,
+    critique: ['A note on the current version'],
+    concept,
+    createdAt: 1,
+    updatedAt: 1,
+    ...patch,
+  })
+
+  it('drafts the same type from the same page and keeps it beside the current version', async () => {
+    await db.items.add(current())
+    const provider = new FakeProvider()
+    const prompts: string[] = []
+    const original = provider.complete.bind(provider)
+    provider.complete = (request) => {
+      prompts.push(request.prompt)
+      return original(request)
+    }
+    await writeNewVersion('item-1', source, { reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(provider.calls).toEqual(['multiple_choice_item'])
+    expect(prompts[0]).toContain('Light capture: How chlorophyll uses light')
+    const item = (await db.items.get('item-1'))!
+    expect(item.draft.title).toBe('The current version')
+    expect(item.status).toBe('approved')
+    expect(item.critique).toEqual(['A note on the current version'])
+    expect(item.newVersion?.draft.item_type).toBe('multiple_choice')
+    expect(item.newVersion?.draft.title).not.toBe('The current version')
+    expect(item.newVersion?.draft.concept_label).toBe('Light capture')
+    expect(item.newVersion?.concept).toEqual(concept)
+  })
+
+  it('writes a new version of a question saved before the app kept its concept, from its label and citations', async () => {
+    const { concept: _, ...old } = current()
+    void _
+    await db.items.add({ ...old, draft: { ...old.draft, concept_label: 'Carbon dioxide intake', citation_paragraphs: [0] } })
+    const provider = new FakeProvider()
+    const prompts: string[] = []
+    const original = provider.complete.bind(provider)
+    provider.complete = (request) => {
+      prompts.push(request.prompt)
+      return original(request)
+    }
+    await writeNewVersion('item-1', source, { reviewPass: false }, provider, new AbortController().signal, callbacks)
+    expect(prompts[0]).toContain('concept_label exactly equal to "Carbon dioxide intake"')
+    expect(prompts[0]).toContain('Plants absorb carbon dioxide')
+    expect(prompts[0]).not.toContain('Chlorophyll captures')
+    const item = (await db.items.get('item-1'))!
+    expect(item.newVersion?.draft.concept_label).toBe('Carbon dioxide intake')
+    expect(item.newVersion?.concept.source_paragraphs).toEqual([0])
+  })
+
+  it('leaves the question as it is when the new version fails or is cancelled', async () => {
+    await db.items.add(current())
+    const before = await db.items.get('item-1')
+    const failing = new FakeProvider()
+    failing.complete = () => Promise.reject(new LLMError('The model is not loaded.'))
+    await expect(writeNewVersion('item-1', source, { reviewPass: false }, failing, new AbortController().signal, callbacks)).rejects.toThrow(
+      'The model is not loaded.',
+    )
+    const controller = new AbortController()
+    const provider = new FakeProvider()
+    const original = provider.complete.bind(provider)
+    provider.complete = (request) => {
+      controller.abort()
+      return original(request)
+    }
+    await expect(writeNewVersion('item-1', source, { reviewPass: false }, provider, controller.signal, callbacks)).rejects.toThrow()
+    expect(await db.items.get('item-1')).toEqual(before)
+  })
+
+  it('reviews and checks the new version as the first one was, with no distractor matches on the in-browser model', async () => {
+    const matching = SAMPLE_DRAFTS.find((d) => d.item_type === 'matching')!
+    await db.items.add(current({ draft: matching }))
+    const provider = new FakeProvider('local')
+    provider.revisions = [{ distractors: ['Water', 'Helium'] }]
+    await writeNewVersion('item-1', source, { reviewPass: true }, provider, new AbortController().signal, callbacks)
+    expect(provider.calls).toEqual(['matching_item', 'item_review', 'matching_check'])
+    const item = (await db.items.get('item-1'))!
+    expect((item.newVersion!.draft as DraftOf<'matching'>).distractors).toEqual([])
+  })
+
+  it('marks a matching question the in-browser model rewrote in a set OpenAI wrote, once in any set', async () => {
+    const matching = SAMPLE_DRAFTS.find((d) => d.item_type === 'matching')!
+    await db.items.add(current({ draft: matching, status: 'draft' }))
+    await writeNewVersion('item-1', source, { reviewPass: false }, new FakeProvider('local'), new AbortController().signal, callbacks)
+    const { newVersion } = (await db.items.get('item-1'))!
+    const version = { ...newVersion!, status: 'draft' as const }
+    expect(splitNotes(version, 'openai').keyChecks).toEqual([MATCHING_IN_BROWSER_NOTE])
+    expect(splitNotes(version, 'local').keyChecks).toEqual([MATCHING_IN_BROWSER_NOTE])
+    expect(splitNotes(version, 'openai').notes).toEqual([])
+  })
+
+  it('checks the answer key with an OpenAI key only when the instructor asked for it', async () => {
+    await db.items.add(current())
+    const provider = new FakeProvider('openai')
+    await writeNewVersion('item-1', source, { reviewPass: false }, provider, new AbortController().signal, callbacks)
+    await writeNewVersion('item-1', source, { reviewPass: false, answerCheck: true }, provider, new AbortController().signal, callbacks)
+    expect(provider.calls).toEqual(['multiple_choice_item', 'multiple_choice_item', 'key_check'])
+  })
+
+  it('tells the model not to repeat the questions before it, and checks for duplicates among the others only', async () => {
+    const mc = SAMPLE_DRAFTS.find((d) => d.item_type === 'multiple_choice')!
+    const other = (id: string, position: number, stem: string): StoredItem => ({ ...current(), id, position, draft: { ...mc, stem } })
+    await db.items.bulkAdd([other('before', 0, 'Which gas do plants take in?'), current({ position: 1, draft: mc }), other('after', 2, 'Which pigment captures light?')])
+    const provider = new FakeProvider()
+    const prompts: string[] = []
+    const original = provider.complete.bind(provider)
+    provider.complete = (request) => {
+      prompts.push(request.prompt)
+      return original(request)
+    }
+    // The new version repeats the current one's stem, which is not a duplicate.
+    await writeNewVersion('item-1', source, { reviewPass: false }, provider, new AbortController().signal, callbacks, fakeEmbedder())
+    expect(prompts[0]).toContain('Which gas do plants take in?')
+    expect(prompts[0]).not.toContain('Which pigment captures light?')
+    expect((await db.items.get('item-1'))!.newVersion?.critique).toEqual([])
+    // A later question with the same stem is.
+    await db.items.update('after', { draft: mc })
+    await writeNewVersion('item-1', source, { reviewPass: false }, provider, new AbortController().signal, callbacks, fakeEmbedder())
+    expect((await db.items.get('item-1'))!.newVersion?.critique).toEqual([expect.stringContaining('Very similar to another question in this set')])
   })
 })
 
