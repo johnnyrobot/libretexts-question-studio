@@ -25,7 +25,7 @@ import {
 import { unlessGenerating, webLocks } from '../lib/storage/set-locks'
 import { discardNewVersion, keepNewVersion } from '../lib/storage/versions'
 import { createEmbedder, createProvider, useEngineSettings } from '../state/engine'
-import { cancelGeneration, markInterruptedOnceReleased, startNewVersion, useGeneration } from '../state/generation'
+import { cancelGeneration, markInterruptedOnceReleased, NEW_VERSION_READY, startNewVersion, useGeneration } from '../state/generation'
 import { navigate, pageLinkFor } from '../router'
 
 // A set has two destinations: reviewing its questions (#/set/<id>) and
@@ -566,16 +566,19 @@ function useNewVersion(item: StoredItem, set: StoredSet, source: StoredSource | 
   const [followed, setFollowed] = useState(writing)
   if (writing && !followed) setFollowed(true)
   // Focus would be lost with the Cancel button once the run ends, so it goes
-  // to the question, then on to the new version once it shows, which can be
-  // a moment after. A button taken out of the page sends no blur, so this
-  // stays set then.
+  // to the new version, which can show a moment after the run ends, or back
+  // to the question when there is none. A button taken out of the page sends
+  // no blur, so this stays set then.
   const cancelHadFocus = useRef(false)
+  const written = thisRun && generation.status === NEW_VERSION_READY
   useEffect(() => {
     if (writing || !cancelHadFocus.current) return
     const pending = document.getElementById(`new-version-${item.id}`)
-    if (pending) cancelHadFocus.current = false
-    ;(pending ?? document.getElementById(`item-${item.id}`))?.focus()
-  }, [writing, item.id, item.newVersion])
+    if (written && !pending) return
+    cancelHadFocus.current = false
+    const target = pending ?? document.getElementById(`item-${item.id}`)
+    target?.focus()
+  }, [writing, written, item.id, item.newVersion])
 
   const write = async () => {
     setSaid(null)

@@ -95,6 +95,8 @@ export async function startGeneration(
   await withGenerationLock(setId, {}, run, run)
 }
 
+export const NEW_VERSION_READY = 'A new version is ready. Compare it with the current one, then keep one.'
+
 // One question drafted again beside the one it may replace (LT-201), under
 // the set's lock like a whole run, so the set cannot be written, deleted or
 // written again elsewhere meanwhile. The set's own status stays the first
@@ -118,7 +120,7 @@ export async function startNewVersion(
         onStatus: (status) => update({ status, detail: '' }),
         onModelEvent: showModelEvent,
       }, embedder)
-      update({ running: false, done: 1, written: 1, status: 'A new version is ready. Compare it with the current one, then keep one.' })
+      update({ running: false, done: 1, written: 1, status: NEW_VERSION_READY })
     } catch (error) {
       const message = failureMessage(error, 0)
       update({ running: false, status: signal.aborted ? `Stopped. ${kept}` : `Couldn’t write a new version: ${message} ${kept}` })

@@ -135,6 +135,24 @@ describe('writing a new version of a question', () => {
     expect(document.activeElement?.id).toBe('new-version-item')
   })
 
+  // Once on the question, focus stays where the instructor takes it.
+  it('moves focus from Cancel to the question when the draft fails, and leaves it there', async () => {
+    const { resume } = scriptedEngine(new Error('The model stopped.'))
+    const view = await render()
+    await view.press('Write a new version')
+    act(() => view.button('Cancel')!.focus())
+    resume()
+    await view.finished()
+    expect(document.activeElement?.id).toBe('item-item')
+    act(() => view.button('Write a new version', 1)!.focus())
+    // Written in another tab, or restored from a backup.
+    const current = await db.items.get('item')
+    await db.items.update('item', { newVersion: { draft: current!.draft, critique: [], concept: current!.concept!, createdAt: 2 } })
+    await settle()
+    expect(view.card().querySelector('.new-version')).not.toBeNull()
+    expect(document.activeElement).toBe(view.button('Write a new version', 1))
+  })
+
   it('makes the new version the question, to review again, when it is kept', async () => {
     const { resume } = scriptedEngine()
     const view = await render()
