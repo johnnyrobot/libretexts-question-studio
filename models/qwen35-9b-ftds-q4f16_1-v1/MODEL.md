@@ -155,14 +155,40 @@ Memory (macOS `footprint` of the test Chrome's processes, sampled every
 
 - First load: the GPU process holds 7.6 GB once the model is loaded; the
   whole browser peaked at 11.2 GB during the load.
-- In use: the GPU process grows while the model writes, about 0.7 GB a
-  minute in the app (7.6 to 12.7 GB over one 6-question set) and about 1 GB
-  every 3 to 4 minutes in the ship gate's harness. It drops back to a few GB
-  when the page is reloaded. The ship gate's one 32.9 GB sample was this
-  growth after 76 minutes in one tab (GPU process 32.0 GB plus the page's
-  0.9 GB), not processes counted twice. Gemma 4 E4B grows the same way
-  (0.3 to 9.9 GB in 14 minutes). Whether this is memory WebGPU keeps for
-  reuse or a leak is not known.
+- In use, before LT-242: the GPU process grew with every long prompt and
+  came back only when the page was reloaded: 7.6 to 12.7 GB over one
+  6-question set in the app. The page's JavaScript heap stayed flat (about
+  32 MB); the growth was WebGPU buffers. The ship gate's one 32.9 GB
+  sample was this growth after 76 minutes in one tab. The cause was a leak in
+  WebLLM 0.2.85: it kept the logits of every 1,024-token prefill chunk but
+  the last, 121 MB each on this model. The app now applies WebLLM 0.2.86's
+  fix to 0.2.85 when it is installed and built (LT-242).
+
+30 minutes of continuous drafting in one tab (LT-242, 2026-11-02, quiet Mac,
+Chrome, synthetic passages of 300 to 3,000 words, 500 to 3,950 prompt tokens,
+cycled; drafts only, no duplicate check). GPU process, after the first
+question, then every 10 minutes:
+
+| | Questions | Start | 10 min | 20 min | 30 min | Peak, whole browser | After unload |
+|---|---|---|---|---|---|---|---|
+| This model, before the fix | 130 | 7.3 GB | 13.7 GB | 19.8 GB | 26.4 GB | 27.5 GB | 0.15 GB |
+| This model, after the fix | 133 | 7.3 GB | 7.3 GB | 7.4 GB | 7.4 GB | 8.4 GB | 0.15 GB |
+| Gemma 4 E4B (no change) | 88 | 7.4 GB | 9.7 GB | 9.6 GB | 9.7 GB | 24.2 GB | 2.4 GB |
+
+Before the fix the GPU process grew about 0.6 GB a minute. After it, it
+stayed between 7.33 and 7.36 GB for the whole 30 minutes.
+
+Gemma 4 E4B (Transformers.js 4.3.1, ONNX Runtime Web 1.31 on WebGPU) does not
+leak: the WebGPU buffers it holds rise and fall with prompt length (6.3 to
+7.1 GB) and the GPU process levels off near 9.7 GB, ONNX Runtime keeping freed
+buffers for reuse. With the worker's 3.2 to 3.4 GB of WebAssembly memory the
+whole browser sits at about 12.9 GB while it writes (the median over a
+6-question set, with 99% of samples above 12 GB), and for a few seconds in
+some long prompts the GPU process reaches about 20 GB. ONNX Runtime's other
+buffer cache modes did not help: `lazyRelease` left the whole browser at
+12.7 GB (90th percentile 19.5 GB), and `disabled` made the GPU stop
+responding on every question. Unloading between sets can't lower a peak
+inside one, so E4B's memory is not bounded (LT-242).
 
 The judges are other AI models. These numbers say how this model compares
 with E4B on this pool; they do not promise that a given question is right.
