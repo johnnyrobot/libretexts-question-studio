@@ -1,9 +1,10 @@
 // WebLLM 0.2.85 detaches the logits of every chunked-prefill chunk from the
-// TVM scope but disposes only the last, so each prompt over 1024 tokens leaves
-// about 121 MB of GPU memory per extra chunk until the worker ends (LT-242).
+// TVM scope but disposes only the last, so each prompt over 1,024 tokens
+// leaves about 121 MB of GPU memory per extra chunk until the model is
+// unloaded or the page reloads (LT-242).
 // WebLLM 0.2.86 fixes it, but needs model libraries built for it, so npm
 // install applies the same fix to 0.2.85.
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 
@@ -33,7 +34,8 @@ export function patchWebLlm(source) {
   return source.slice(0, leakyAt) + FIXED + source.slice(leakyAt + LEAKY.length)
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+// realpath, because import.meta.url has symlinks resolved and argv[1] doesn't.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const file = createRequire(import.meta.url).resolve('@mlc-ai/web-llm')
   // latin1 keeps every byte (the bundle mixes line endings) as it is.
   const source = readFileSync(file, 'latin1')

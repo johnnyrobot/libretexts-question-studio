@@ -182,10 +182,13 @@ Gemma 4 E4B (Transformers.js 4.3.1, ONNX Runtime Web 1.31 on WebGPU) does not
 leak: the WebGPU buffers it holds rise and fall with prompt length (6.3 to
 7.1 GB) and the GPU process levels off near 9.7 GB, ONNX Runtime keeping freed
 buffers for reuse. With the worker's 3.2 to 3.4 GB of WebAssembly memory the
-whole browser sits at about 12.9 GB while it writes, and for a few seconds in
+whole browser sits at about 12.9 GB while it writes (the median over a
+6-question set, with 99% of samples above 12 GB), and for a few seconds in
 some long prompts the GPU process reaches about 20 GB. ONNX Runtime's other
 buffer cache modes did not help: `lazyRelease` left the whole browser at
-12.7 GB, and `disabled` made the GPU stop responding on the first question.
+12.7 GB (90th percentile 19.5 GB), and `disabled` made the GPU stop
+responding on every question. Unloading between sets can't lower a peak
+inside one, so E4B's memory is not bounded (LT-242).
 
 The judges are other AI models. These numbers say how this model compares
 with E4B on this pool; they do not promise that a given question is right.
