@@ -139,9 +139,10 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
           Questions are being written in another tab. They appear here as each one is written.
         </p>
       )}
-      {!running && set.error && (
+      {/* Try again outlasts a dismissed message (LT-236). */}
+      {!running && (set.error || retryable) && (
         <div className={`${set.status === 'failed' ? 'error' : 'notice'} dismissible`}>
-          <p role="status">{set.error}</p>
+          <p role="status">{set.error ?? 'Writing stopped before every question was written.'}</p>
           <div className="banner-actions">
             {/* A run a lost GPU stopped, from where it stopped. */}
             {retryable && (
@@ -149,16 +150,18 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
                 Try again
               </button>
             )}
-            <button
-              type="button"
-              className="link"
-              onClick={async () => {
-                await db.sets.update(set.id, { error: null })
-                focusMain()
-              }}
-            >
-              Dismiss
-            </button>
+            {set.error && (
+              <button
+                type="button"
+                className="link"
+                onClick={async () => {
+                  await db.sets.update(set.id, { error: null })
+                  focusMain()
+                }}
+              >
+                Dismiss
+              </button>
+            )}
           </div>
         </div>
       )}

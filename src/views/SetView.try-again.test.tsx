@@ -100,4 +100,15 @@ describe('a run a lost GPU stopped', () => {
     expect(view.container.querySelectorAll('li.item')).toHaveLength(3)
     expect(view.button('Try again')).toBeNull()
   })
+
+  it('keeps Try again after the message is dismissed', async () => {
+    const { provider } = flakyGpu()
+    const source = (await db.sources.get('s'))!
+    await startGeneration('set', source, { itemTypes: ['essay'], perPage: 3, reviewPass: false }, provider)
+    const view = await render()
+    await act(async () => view.button('Dismiss')!.click())
+    await settle()
+    expect(view.button('Dismiss')).toBeNull()
+    expect(view.button('Try again')).not.toBeNull()
+  })
 })
