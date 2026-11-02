@@ -6,7 +6,7 @@ import { completeWithRetries, type LLMProvider } from '../lib/llm/types'
 import { db, type StoredSource } from '../lib/storage/db'
 import { FakeLocks } from '../lib/storage/fixtures'
 import { unlessGenerating } from '../lib/storage/set-locks'
-import { cancelGeneration, markInterruptedSets, startGeneration, startNewVersion } from './generation'
+import { cancelGeneration, markInterruptedSets, retryGeneration, startGeneration, startNewVersion } from './generation'
 
 const source: StoredSource = {
   id: 'src-1',
@@ -79,7 +79,7 @@ describe('startGeneration', () => {
     await startGeneration('set-1', source, { itemTypes: ['multiple_choice'], perPage: 1, reviewPass: false }, provider)
     const set = await db.sets.get('set-1')
     expect(set?.status).toBe('failed')
-    expect(set?.error).toBe('The GPU stopped responding while writing questions. Reload the model in Settings, or close other GPU-heavy tabs, and try again.')
+    expect(set?.error).toBe('The graphics processor stopped responding, so writing stopped. Close other apps or tabs that use it heavily, then try again.')
     expect(calls).toBe(1)
   })
 
@@ -106,8 +106,67 @@ describe('startGeneration', () => {
     expect(await db.items.where('setId').equals('set-1').count()).toBe(1)
     expect(set?.status).toBe('failed')
     expect(set?.error).toBe(
-      'The GPU stopped responding while writing questions. The questions written so far were kept. Reload the model in Settings, or close other GPU-heavy tabs, and try again.',
+      'The graphics processor stopped responding, so writing stopped. The questions written so far were kept. Close other apps or tabs that use it heavily, then try again.',
     )
+  })
+})
+
+describe('retryGeneration', () => {
+  const { item_type: _, ...essay } = SAMPLE_DRAFTS.find((d) => d.item_type === 'essay')!
+  void _
+
+  // Writes essay questions on the in-browser engine; once one is written, the
+  // GPU is lost on every call until the test fixes it. Garbled, the fixed
+  // model's questions never parse.
+  function flakyGpu() {
+    let written = 0
+    const gpu = { fixed: false, garbled: false }
+    const provider: LLMProvider = {
+      id: 'local',
+      model: 'fake',
+      recover: vi.fn(async () => undefined),
+      complete: (request) =>
+        completeWithRetries(request, async () => {
+          if (request.schemaName === 'concept_batch') {
+            const concept = { label: 'Inputs', description: 'What plants take in', source_paragraphs: [0], quantitative: false }
+            return { text: JSON.stringify({ concepts: [concept] }), usage: null }
+          }
+          if (written && !gpu.fixed) throw new Error(DEVICE_LOST_ERROR)
+          if (gpu.garbled) return { text: '{"oops":', usage: null }
+          written++
+          return { text: JSON.stringify({ ...essay, citation_paragraphs: [0] }), usage: null }
+        }),
+    }
+    return { provider, gpu }
+  }
+
+  it('writes the rest of a run a second loss stopped, on the model loaded again', async () => {
+    const { provider, gpu } = flakyGpu()
+    await startGeneration('set-1', source, { itemTypes: ['essay'], perPage: 3, reviewPass: false }, provider)
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    expect(await db.sets.get('set-1')).toMatchObject({ status: 'failed' })
+    expect(await db.items.where('setId').equals('set-1').count()).toBe(1)
+
+    gpu.fixed = true
+    await retryGeneration('set-1')
+    expect(provider.recover).toHaveBeenCalledTimes(2)
+    expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
+    const items = await db.items.where('setId').equals('set-1').sortBy('position')
+    expect(items.map((item) => item.position)).toEqual([0, 1, 2])
+  })
+
+  it('counts the questions the stopped run wrote when the rest cannot be written', async () => {
+    const { provider, gpu } = flakyGpu()
+    await startGeneration('set-1', source, { itemTypes: ['essay'], perPage: 3, reviewPass: false }, provider)
+    Object.assign(gpu, { fixed: true, garbled: true })
+    await retryGeneration('set-1')
+    // Not "No questions could be written": the first run's question is there.
+    expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
+  })
+
+  it('has nothing to try again after a run that ended another way', async () => {
+    await startGeneration('set-1', source, { itemTypes: ['essay'], perPage: 1, reviewPass: false }, essayProvider())
+    await expect(retryGeneration('set-1')).rejects.toThrow()
   })
 })
 

@@ -920,6 +920,29 @@ describe('writeNewVersion', () => {
     expect(item.newVersion?.concept).toEqual(concept)
   })
 
+  it('loads the model again once when the GPU goes, and writes the new version on it', async () => {
+    await db.items.add(current())
+    const provider = Object.assign(new FakeProvider('local'), { recover: vi.fn(async () => undefined) })
+    provider.loseGpuOn.push('multiple_choice_item')
+    const statuses: string[] = []
+    await writeNewVersion('item-1', source, { reviewPass: false }, provider, new AbortController().signal, { ...callbacks, onStatus: (s) => statuses.push(s) })
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    expect(statuses).toContain('The graphics processor was reset by another app. Restarting the model…')
+    expect((await db.items.get('item-1'))!.newVersion?.draft.item_type).toBe('multiple_choice')
+  })
+
+  it('stops at a second loss, keeping the current version', async () => {
+    await db.items.add(current())
+    const provider = Object.assign(new FakeProvider('local'), { recover: vi.fn(async () => undefined) })
+    provider.loseGpuOn.push('multiple_choice_item', 'multiple_choice_item')
+    const run = writeNewVersion('item-1', source, { reviewPass: false }, provider, new AbortController().signal, callbacks)
+    await expect(run).rejects.toBeInstanceOf(GpuLost)
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    const item = (await db.items.get('item-1'))!
+    expect(item.draft.title).toBe('The current version')
+    expect(item.newVersion).toBeUndefined()
+  })
+
   it('writes a new version of a question saved before the app kept its concept, from its label and citations', async () => {
     const { concept: _, ...old } = current()
     void _
@@ -1588,6 +1611,67 @@ describe('a lost GPU', () => {
     expect(provider.calls.filter((call) => call === 'multiple_choice_item')).toHaveLength(2)
   })
 
+  it('says the graphics processor was reset and the model is restarting', async () => {
+    const provider = inBrowser()
+    provider.loseGpuOn.push('multiple_choice_item')
+    const statuses: string[] = []
+    await runGeneration('set-1', source, plan, provider, new AbortController().signal, { ...callbacks, onStatus: (s) => statuses.push(s) })
+    expect(statuses).toContain('The graphics processor was reset by another app. Restarting the model…')
+  })
+
+  it('loads the model again for each question the GPU interrupts, once the one before it was written', async () => {
+    const provider = inBrowser()
+    provider.loseGpuOn.push('multiple_choice_item')
+    // The second question is interrupted too, after the first was written on the reloaded model.
+    let items = 0
+    const onItem = () => {
+      if (++items === 1) provider.loseGpuOn.push('multiple_choice_item')
+    }
+    const result = await runGeneration('set-1', source, { ...plan, perPage: 2 }, provider, new AbortController().signal, { ...callbacks, onItem })
+    expect(result).toEqual({ created: 2, skipped: 0, errors: [] })
+    expect(provider.recover).toHaveBeenCalledTimes(2)
+    expect(provider.calls.filter((call) => call === 'multiple_choice_item')).toHaveLength(4)
+  })
+
+  it('ends the run when the question written again on the reloaded model is interrupted too', async () => {
+    const provider = inBrowser()
+    let items = 0
+    const onItem = () => {
+      if (++items === 1) provider.loseGpuOn.push('multiple_choice_item', 'multiple_choice_item')
+    }
+    const run = runGeneration('set-1', source, { ...plan, perPage: 3 }, provider, new AbortController().signal, { ...callbacks, onItem })
+    await expect(run).rejects.toBeInstanceOf(GpuLost)
+    expect(provider.recover).toHaveBeenCalledTimes(1)
+    // Tried twice, and the third question never started.
+    expect(provider.calls.filter((call) => call === 'multiple_choice_item')).toHaveLength(3)
+    expect(await db.items.where('setId').equals('set-1').count()).toBe(1)
+  })
+
+  it('gives the next section its own reload when a section left out after one', async () => {
+    const provider = inBrowser()
+    const original = provider.complete.bind(provider)
+    const twoPages: StoredSource = {
+      ...source,
+      pages: [source.pages[0], { title: 'Respiration', url: null, pageId: '2', paragraphs: [{ index: 0, text: 'Cells release energy from glucose.', start: 0, end: 34 }] }],
+    }
+    // Each section's concepts lose the GPU once; the first section's then never parse.
+    const lost = new Set<string>()
+    provider.complete = (request) => {
+      if (request.schemaName !== 'concept_batch') return original(request)
+      const page = request.prompt.includes('glucose') ? 'Respiration' : 'Photosynthesis'
+      if (!lost.has(page)) {
+        lost.add(page)
+        return completeWithRetries(request, async () => {
+          throw new Error(DEVICE_LOST_ERROR)
+        })
+      }
+      return page === 'Photosynthesis' ? completeWithRetries(request, async () => ({ text: '{"oops":', usage: null })) : original(request)
+    }
+    const result = await runGeneration('set-1', twoPages, plan, provider, new AbortController().signal, callbacks)
+    expect(provider.recover).toHaveBeenCalledTimes(2)
+    expect(result.created).toBe(1)
+  })
+
   it('ends the run at a second loss, keeping the questions written', async () => {
     const provider = inBrowser()
     // Once the first question is in, the GPU fails every time.
@@ -1680,6 +1764,31 @@ describe('a lost GPU', () => {
     expect(provider.recover).toHaveBeenCalledTimes(1)
     const [item] = await db.items.where('setId').equals('set-1').toArray()
     expect(item.critique.join(' ')).not.toMatch(/could not|disagrees/)
+  })
+
+  it('writes only the questions still to write when a stopped run is tried again', async () => {
+    const provider = inBrowser()
+    const types = { ...plan, itemTypes: ['multiple_choice', 'true_false'] as ItemType[], perPage: 3 }
+    let items = 0
+    const onItem = () => {
+      if (++items === 1) provider.loseGpuOn.push('true_false_item', 'true_false_item')
+    }
+    await expect(runGeneration('set-1', source, types, provider, new AbortController().signal, { ...callbacks, onItem })).rejects.toBeInstanceOf(GpuLost)
+
+    const progress: [number, number][] = []
+    const result = await runGeneration('set-1', source, { ...types, resume: { done: 1, firstType: 0 } }, provider, new AbortController().signal, {
+      ...callbacks,
+      onProgress: (done, total) => progress.push([done, total]),
+    })
+    expect(result).toEqual({ created: 2, skipped: 0, errors: [] })
+    expect(progress[0]).toEqual([1, 3])
+    expect(progress.at(-1)).toEqual([3, 3])
+    const written = await db.items.where('setId').equals('set-1').sortBy('position')
+    expect(written.map((item) => [item.position, item.draft.item_type])).toEqual([
+      [0, 'multiple_choice'],
+      [1, 'true_false'],
+      [2, 'multiple_choice'],
+    ])
   })
 
   it('goes on writing without the duplicate check once the GPU drops it', async () => {

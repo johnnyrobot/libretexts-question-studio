@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import {
+  GPU_RESTARTING,
   runGeneration,
   writeNewVersion,
   type GenerationPlan,
@@ -26,11 +27,26 @@ export interface GenerationState {
   written: number
   total: number
   detail: string
+  // Whether the set's last run was stopped by a lost GPU and can be tried
+  // again from where it stopped (retryGeneration).
+  retryable: boolean
 }
 
-let state: GenerationState = { running: false, setId: null, itemId: null, status: '', done: 0, written: 0, total: 0, detail: '' }
+let state: GenerationState = { running: false, setId: null, itemId: null, status: '', done: 0, written: 0, total: 0, detail: '', retryable: false }
 let controller: AbortController | null = null
+// The run a lost GPU stopped, kept in memory only: after a reload the
+// instructor starts a new run instead.
+let stopped: {
+  setId: string
+  source: StoredSource
+  plan: GenerationPlan
+  provider: LLMProvider
+  embedder: Embedder | null
+  progress: Progress
+} | null = null
 const listeners = new Set<() => void>()
+
+type Progress = Pick<GenerationState, 'done' | 'written' | 'total'>
 
 function update(patch: Partial<GenerationState>) {
   state = { ...state, ...patch }
@@ -54,9 +70,31 @@ export async function startGeneration(
   provider: LLMProvider,
   embedder: Embedder | null = null,
 ): Promise<void> {
+  return runSet(setId, source, plan, provider, embedder, null)
+}
+
+// Tries a run a lost GPU stopped again (see GenerationState.retryable): the
+// model is loaded again from the browser's storage, and the questions it had
+// not finished are written.
+export async function retryGeneration(setId: string): Promise<void> {
+  if (!stopped || stopped.setId !== setId || state.running) throw new Error('There is no stopped run of this set to try again.')
+  const { source, plan, provider, embedder, progress } = stopped
+  return runSet(setId, source, plan, provider, embedder, progress)
+}
+
+async function runSet(
+  setId: string,
+  source: StoredSource,
+  plan: GenerationPlan,
+  provider: LLMProvider,
+  embedder: Embedder | null,
+  // How far the stopped run being tried again got, or null for a new run.
+  restart: Progress | null,
+): Promise<void> {
   if (state.running) throw new Error('A generation is already running.')
   controller = new AbortController()
-  update({ running: true, setId, itemId: null, status: 'Starting…', done: 0, written: 0, total: 0, detail: '' })
+  stopped = null
+  update({ running: true, setId, itemId: null, status: 'Starting…', done: 0, written: 0, total: 0, ...restart, detail: '', retryable: false })
   const { signal } = controller
   const run = async () => {
     // Marked again now the lock is held, in case another tab took the set for
@@ -66,28 +104,42 @@ export async function startGeneration(
       update({ running: false, status: 'Stopped: the set was deleted.' })
       return
     }
+    // Where the question types cycle from, should the run need trying again.
+    const firstType = plan.resume?.firstType ?? (await db.items.where('setId').equals(setId).count())
     try {
+      if (restart) {
+        update({ status: GPU_RESTARTING })
+        await provider.recover?.(showLoadProgress)
+      }
       const result = await runGeneration(setId, source, plan, provider, signal, {
         onStatus: (status) => update({ status, detail: '' }),
         onItem: () => update({ written: state.written + 1 }),
         onProgress: (done, total) => update({ done, total }),
         onModelEvent: showModelEvent,
       }, embedder)
+      // Counting the questions the stopped run wrote, when this one tries it again.
+      const outcome = { ...result, created: state.written }
       await db.sets.update(setId, {
-        status: result.created === 0 && (result.skipped || result.errors.length) ? 'failed' : 'complete',
-        error: resultError(result),
+        status: outcome.created === 0 && (outcome.skipped || outcome.errors.length) ? 'failed' : 'complete',
+        error: resultError(outcome),
         updatedAt: Date.now(),
       })
-      update({ running: false, status: `Done — ${result.created} question(s) written.` })
+      update({ running: false, status: `Done — ${state.written} question(s) written.` })
     } catch (error) {
       const cancelled = signal.aborted
+      // A lost GPU, or a model that would not load again after one.
+      const retryable = !cancelled && (error instanceof GpuLost || restart !== null)
       const message = failureMessage(error, state.written)
       await db.sets.update(setId, {
         status: cancelled ? 'cancelled' : 'failed',
         error: cancelled ? 'Stopped before finishing. Questions written so far were kept.' : message,
         updatedAt: Date.now(),
       })
-      update({ running: false, status: cancelled ? 'Stopped.' : `Failed: ${message}` })
+      if (retryable) {
+        const { done, written, total } = state
+        stopped = { setId, source, plan: { ...plan, resume: { done, firstType } }, provider, embedder, progress: { done, written, total } }
+      }
+      update({ running: false, status: cancelled ? 'Stopped.' : `Failed: ${message}`, retryable })
     } finally {
       controller = null
     }
@@ -111,7 +163,8 @@ export async function startNewVersion(
 ): Promise<void> {
   if (state.running) throw new Error('A generation is already running.')
   controller = new AbortController()
-  update({ running: true, setId, itemId, status: 'Writing a new version…', done: 0, written: 0, total: 1, detail: '' })
+  stopped = null
+  update({ running: true, setId, itemId, status: 'Writing a new version…', done: 0, written: 0, total: 1, detail: '', retryable: false })
   const { signal } = controller
   const kept = 'The current version is kept.'
   const run = async () => {
@@ -152,6 +205,10 @@ function resultError({ created, skipped, errors }: GenerationResult): string | n
   return null
 }
 
+function showLoadProgress(progress: { text: string }): void {
+  update({ detail: progress.text })
+}
+
 // What the model is doing, shown under the run's status.
 function showModelEvent(event: ProgressEvent): void {
   if (event.kind === 'status') update({ detail: event.message })
@@ -163,12 +220,13 @@ function failureMessage(error: unknown, written: number): string {
   return error instanceof GpuLost ? gpuLostMessage(written) : error instanceof Error ? error.message : String(error)
 }
 
-// A whole run loads the model again once where the engine can (pipeline.ts),
-// so by now it is the instructor's turn. A new version of one question isn't
-// worth the reload: the instructor tries again once the model is back.
+// A run loads the model again once for each step a lost GPU interrupts
+// (pipeline.ts), and so does a new version, so by now it is the instructor's
+// turn: a run they can try again from where it stopped (retryGeneration),
+// a new version they can ask for again.
 function gpuLostMessage(written: number): string {
   const kept = written ? ' The questions written so far were kept.' : ''
-  return `The GPU stopped responding while writing questions.${kept} Reload the model in Settings, or close other GPU-heavy tabs, and try again.`
+  return `The graphics processor stopped responding, so writing stopped.${kept} Close other apps or tabs that use it heavily, then try again.`
 }
 
 export function cancelGeneration(): void {

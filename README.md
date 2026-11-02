@@ -174,6 +174,7 @@ Claude graded the questions in two rounds, and the second round graded higher: t
 
 - The in-browser models need WebGPU: recent desktop Chrome or Edge, Safari 26, or Firefox on Windows / Apple Silicon. Phones are not supported. Gemma 4 E4B has only been tested in desktop Chrome on Apple Silicon; Qwen3.5 4B is the fallback.
 - Gemma 4 E4B in the browser writes weaker distractors and more wrong answer keys than GPT-6 Luna (see [Question quality](#question-quality)); Qwen3.5 4B has not been measured. Every question is a draft until an instructor approves it.
+- Another app can make the graphics processor reset, which takes the in-browser model with it. The app then loads the model again from the browser's storage, with no new download, and tries the interrupted step once more, keeping the questions already written. If the same step is interrupted again, writing stops and the set offers **Try again**, which writes the questions still missing. Try again lasts until the page is reloaded or another run starts.
 - Images and figures are not used as question material. Image alt text is kept as text.
 - ADAPT grades fill-in-the-blank against a single answer by exact match, ignoring case (alternates are honoured by Canvas only). The app asks for answers in plain words. With the answer check, it also blanks another word when the check fills the blank differently. Questions where it cannot are noted. ADAPT ignores feedback on several types.
 - In ADAPT, essays take the assignment's Default Open-ended Submission Type; with None, students have nothing to submit.
