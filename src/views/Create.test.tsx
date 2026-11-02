@@ -632,7 +632,7 @@ describe('ticking Matching on Choose the questions', () => {
   })
 
   const WARNING =
-    'In testing, about 2 in 5 matching questions from Gemma 4 E4B, the default in-browser model, had a wrong answer key. On the OpenAI engine, GPT-6 Luna wrote them much better.'
+    'In testing, about 2 in 5 matching questions from Gemma 4 E4B had a wrong answer key. On the OpenAI engine, GPT-6 Luna wrote them much better.'
 
   it('warns about wrong answer keys on the in-browser model', async () => {
     const view = await openConfigure()
@@ -642,7 +642,7 @@ describe('ticking Matching on Choose the questions', () => {
   })
 
   it('warns on the in-browser Qwen3.5 4B too', async () => {
-    await saveEngineSettings({ localModel: 'qwen3.5-4b' })
+    await saveEngineSettings({ pickedLocalModel: 'qwen3.5-4b' })
     const view = await openConfigure()
     await view.tick('Matching')
     expect(view.note()).toBe(WARNING)

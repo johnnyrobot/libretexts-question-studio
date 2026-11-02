@@ -212,3 +212,33 @@ describe('a lost GPU', () => {
     await expect(provider.complete(request)).resolves.toMatchObject({ attempts: 2, value: { stem: 'Why?' } })
   })
 })
+
+// LT-237: the tuned 9B is served from this site under a path that never changes.
+describe('where the tuned Qwen3.5 9B comes from', () => {
+  const TUNED = 'qwen35-9b-ftds-q4f16_1-v1'
+
+  it('downloads from this site, weights and GPU code alike', async () => {
+    vi.stubGlobal('location', new URL('https://qtistudio.libretexts.dev/#/settings'))
+    const fetched: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      fetched.push(url)
+      return new Response(JSON.stringify({ records: [{ nbytes: 3 }, { nbytes: 4 }] }))
+    })
+    const { appConfig, downloadBytes } = await fresh()
+
+    const record = appConfig.model_list.find((m) => m.model_id === TUNED)!
+    expect(record.model).toBe(`https://qtistudio.libretexts.dev/models/${TUNED}`)
+    expect(record.model_lib).toMatch(new RegExp(`^https://qtistudio\\.libretexts\\.dev/models/${TUNED}/[^/]+\\.wasm$`))
+    expect(await downloadBytes(TUNED)).toBe(7)
+    expect(fetched).toEqual([`https://qtistudio.libretexts.dev/models/${TUNED}/resolve/main/tensor-cache.json`])
+  })
+
+  it('downloads from the local mirror a developer names', async () => {
+    vi.stubGlobal('location', new URL('http://localhost:5173/'))
+    vi.stubEnv('VITE_MODEL_BASE', 'http://localhost:8790/models/')
+    const { appConfig } = await fresh()
+    vi.unstubAllEnvs()
+
+    expect(appConfig.model_list.find((m) => m.model_id === TUNED)!.model).toBe(`http://localhost:8790/models/${TUNED}`)
+  })
+})

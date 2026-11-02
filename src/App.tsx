@@ -1,11 +1,11 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Icon } from './components/Icon'
-import { localModel, useLoadedLocalModel } from './lib/llm/local-models'
+import { useLoadedLocalModel } from './lib/llm/local-models'
 import { db } from './lib/storage/db'
 import { useSessionKey } from './lib/storage/secrets'
 import { bookLinkFromRoute, pageLinkFromRoute, useRoute } from './router'
-import { localModelId, useEngineSettings } from './state/engine'
+import { chosenLocalModel, localModelId, useEngineSettings } from './state/engine'
 import { useGeneration } from './state/generation'
 import { TEXT_SIZES, setTextSize, useNarrowLayout, useTextSize } from './state/text-size'
 import { setTheme, useTheme } from './state/theme'
@@ -268,7 +268,7 @@ function EngineStatus() {
   const [ready, label] =
     engine.provider === 'openai'
       ? [!!key, `OpenAI · ${key ? engine.openaiModel : 'no key'}`]
-      : [loaded, `${localModel(engine.localModel).label} · ${loaded ? 'ready' : 'not loaded'}`]
+      : [loaded, `${chosenLocalModel(engine).label} · ${loaded ? 'ready' : 'not loaded'}`]
   return (
     <a href="#/settings" className="engine-status">
       <span className={`dot ${ready ? 'ready' : 'waiting'}`} aria-hidden="true" />

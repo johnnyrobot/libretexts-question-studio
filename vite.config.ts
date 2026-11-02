@@ -33,6 +33,9 @@ export default defineConfig({
         // they are cached on first use instead of being precached for everyone.
         globIgnores: ['**/local-*.js', '**/local.worker-*.js', '**/transformers-*.js', '**/transformers.worker-*.js', '**/ort-wasm-*'],
         navigateFallback: 'index.html',
+        // The site's own model builds (/models/<build>/, LT-237) are files,
+        // never the app.
+        navigateFallbackDenylist: [/^\/models\//],
         runtimeCaching: [
           {
             // Hashed build assets never change, so cache-first is safe. ONNX

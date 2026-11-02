@@ -4,9 +4,10 @@ import type { LLMProvider } from './types'
 // The lightweight half of the in-browser model support. The runtimes live in
 // ./transformers.ts (Transformers.js, for Gemma 4 and EmbeddingGemma 2) and
 // ./local.ts (WebLLM, for Qwen3.5) and are only imported when an instructor
-// uses them. Gemma 4 E4B is the default.
+// uses them. The tuned Qwen3.5 9B is the default where it runs, Gemma 4 E4B
+// elsewhere (LT-237).
 
-export type LocalModelKey = 'gemma-4-e4b' | 'qwen3.5-4b'
+export type LocalModelKey = 'qwen3.5-9b-ftds' | 'gemma-4-e4b' | 'qwen3.5-4b'
 
 export interface LocalModel {
   key: LocalModelKey
@@ -17,13 +18,30 @@ export interface LocalModel {
   // The id the runtime knows the build by. GPUs without shader-f16 (e.g.
   // Firefox) need the build with 32-bit activations.
   build: (f16: boolean) => string
+  // Has no 32-bit build, so it runs only on GPUs with shader-f16.
+  f16Only?: boolean
+  // A model whose downloaded files are freed once this one has loaded, so
+  // nobody keeps two 5 GB models (LT-237).
+  replaces?: LocalModelKey
 }
 
 export const LOCAL_MODELS: readonly LocalModel[] = [
   {
+    // Qwen3.5 9B fine-tuned on DeepSeek V4.1 Flash's questions (LT-207),
+    // served from this site, not Hugging Face (./local.ts).
+    key: 'qwen3.5-9b-ftds',
+    label: 'Qwen3.5 9B, tuned for questions',
+    summary: 'Recommended. Fewer wrong answer keys. 5.1 GB download. Needs a GPU with 16-bit shader support.',
+    license: 'Apache-2.0',
+    runtime: 'webllm',
+    build: () => 'qwen35-9b-ftds-q4f16_1-v1',
+    f16Only: true,
+    replaces: 'gemma-4-e4b',
+  },
+  {
     key: 'gemma-4-e4b',
     label: 'Gemma 4 E4B',
-    summary: 'Recommended. Writes questions about 1.7 times as fast. 4.9 GB download.',
+    summary: 'Writes questions faster, and runs on GPUs without 16-bit shader support. 4.9 GB download.',
     license: 'Apache-2.0',
     runtime: 'transformers',
     build: (f16) => `onnx-community/gemma-4-E4B-it-ONNX:${f16 ? 'q4f16' : 'q4'}`,
@@ -38,7 +56,10 @@ export const LOCAL_MODELS: readonly LocalModel[] = [
   },
 ]
 
-export const DEFAULT_LOCAL_MODEL: LocalModelKey = 'gemma-4-e4b'
+// The best model this GPU runs.
+export function defaultLocalModel(f16: boolean): LocalModelKey {
+  return f16 ? 'qwen3.5-9b-ftds' : 'gemma-4-e4b'
+}
 
 export function localModel(key: string): LocalModel {
   return LOCAL_MODELS.find((model) => model.key === key) ?? LOCAL_MODELS[0]
@@ -80,6 +101,21 @@ export interface LocalRuntime {
 
 export function localRuntime(model: LocalModel): Promise<LocalRuntime> {
   return model.runtime === 'webllm' ? import('./local') : import('./transformers')
+}
+
+// Deletes the downloaded files of the model `model` replaces, both builds,
+// and returns its label if a fully downloaded one was deleted. Every build is
+// deleted, since a download that stopped part way still left files. Call it
+// only once `model` has loaded, so a failed download never leaves a teacher
+// with neither.
+export async function freeReplacedModel(model: LocalModel): Promise<string | null> {
+  if (!model.replaces) return null
+  const replaced = localModel(model.replaces)
+  const runtime = await localRuntime(replaced)
+  const builds = [...new Set([replaced.build(true), replaced.build(false)])]
+  const cached = await Promise.all(builds.map((build) => runtime.isModelCached(build).catch(() => false)))
+  const deleted = await Promise.allSettled(builds.map((build) => runtime.deleteCachedModel(build)))
+  return cached.some((full, i) => full && deleted[i].status === 'fulfilled') ? replaced.label : null
 }
 
 export interface GpuSupport {

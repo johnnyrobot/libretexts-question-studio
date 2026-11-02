@@ -4,8 +4,8 @@ import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/Page'
 import {
   EMBEDDER,
+  freeReplacedModel,
   LOCAL_MODELS,
-  localModel,
   localRuntime,
   probeWebGPU,
   useLoadedLocalModel,
@@ -19,7 +19,7 @@ import { createBackup, restoreBackup } from '../lib/storage/backup'
 import { db, deleteEverything, requestPersistentStorage } from '../lib/storage/db'
 import { downloadBlob } from '../lib/qti/export'
 import { forgetKey, getSessionKey, hasRememberedKey, rememberKey, setSessionKey } from '../lib/storage/secrets'
-import { localModelId, saveEngineSettings, useEngineSettings } from '../state/engine'
+import { chosenLocalModel, localModelId, saveEngineSettings, useEngineSettings } from '../state/engine'
 import { useGeneration } from '../state/generation'
 
 export type SettingsSection = 'engine' | 'data'
@@ -82,7 +82,8 @@ function LocalSettings() {
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState<LoadProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const model = localModel(engine.localModel)
+  const [freed, setFreed] = useState<string | null>(null)
+  const model = chosenLocalModel(engine)
   const modelId = localModelId(engine)
   const loaded = loadedModel === modelId
   const active = runtime?.key === model.key ? runtime.module : null
@@ -124,6 +125,8 @@ function LocalSettings() {
     try {
       await active.loadLocalModel(modelId, setProgress)
       setInfo({ modelId, cached: true, bytes: status?.bytes ?? null })
+      const freedLabel = await freeReplacedModel(model).catch(() => null)
+      if (freedLabel) setFreed(freedLabel)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -143,9 +146,10 @@ function LocalSettings() {
               type="radio"
               name="local-model"
               checked={model.key === option.key}
+              disabled={option.f16Only && gpu?.webgpu && !gpu.f16}
               onChange={() => {
                 setError(null)
-                void saveEngineSettings({ localModel: option.key })
+                void saveEngineSettings({ pickedLocalModel: option.key })
               }}
             />
             <span>
@@ -157,7 +161,10 @@ function LocalSettings() {
       </fieldset>
       {gpu && !gpu.webgpu && <p className="error mt">{gpu.reason}</p>}
       {gpu?.webgpu && !gpu.f16 && (
-        <p className="notice mt">This GPU lacks 16-bit shader support, so the larger 32-bit build of the model is used.</p>
+        <p className="notice mt">
+          This GPU lacks 16-bit shader support, so the tuned Qwen3.5 9B cannot run here and the other models use their
+          larger 32-bit builds.
+        </p>
       )}
       <dl className="facts mt">
         <dt>Status</dt>
@@ -200,6 +207,11 @@ function LocalSettings() {
           {error}
         </p>
       )}
+      {freed && (
+        <p className="notice mt" role="status">
+          {freed}’s downloaded files were deleted to free disk space.
+        </p>
+      )}
       <div className="actions">
         {!loaded && (
           <button
@@ -236,8 +248,9 @@ function LocalSettings() {
         )}
       </div>
       <p className="fine mt">
-        The model downloads from Hugging Face once and stays in this browser. Load it each time you open the app (from disk,
-        which is quick). {model.runtime === 'webllm'
+        The model downloads once, from {model.key === 'qwen3.5-9b-ftds' ? 'this site' : 'Hugging Face'}, and stays in
+        this browser. Load it each time you open the app (from disk, which is quick).{' '}
+        {model.runtime === 'webllm'
           ? 'It runs on recent desktop Chrome, Edge, and Safari 26, not on phones.'
           : 'It has been tested in desktop Chrome; if it will not load, try Qwen3.5 4B.'}{' '}
         Build: <code>{modelId}</code>
