@@ -44,9 +44,11 @@ const { FakeEngine } = vi.hoisted(() => {
     static answer: Answer
     calls = 0
     readonly worker: FakeWorker
+    readonly options: { appConfig: { cacheBackend?: string } }
 
-    constructor(worker: FakeWorker) {
+    constructor(worker: FakeWorker, options: { appConfig: { cacheBackend?: string } }) {
       this.worker = worker
+      this.options = options
       // Like WebLLM, which fails on message kinds it does not know.
       worker.onmessage = (event) => {
         throw new Error(`UnknownMessageKindError: ${(event.data as { kind: string }).kind}`)
@@ -70,11 +72,13 @@ const { FakeEngine } = vi.hoisted(() => {
   return { FakeEngine }
 })
 
+const { deleteModelAllInfoInCache } = vi.hoisted(() => ({ deleteModelAllInfoInCache: vi.fn(async () => undefined) }))
+
 vi.mock('@mlc-ai/web-llm', () => ({
   WebWorkerMLCEngine: FakeEngine,
   prebuiltAppConfig: { model_list: [] },
   hasModelInCache: async () => true,
-  deleteModelAllInfoInCache: async () => undefined,
+  deleteModelAllInfoInCache,
 }))
 
 async function* stream(text: string, finish = 'stop'): AsyncIterable<Chunk> {
@@ -181,6 +185,18 @@ describe('a lost GPU', () => {
     expect(loadedLocalModel()).toBe(MODEL)
     await expect(provider.complete(request)).resolves.toMatchObject({ value: { stem: 'Why?' } })
     expect(FakeEngine.all[1].calls).toBe(1)
+  })
+
+  it('loads the model again from the browser cache, keeping the downloaded files', async () => {
+    const { loadLocalModel, createProvider } = await fresh()
+    await loadLocalModel(MODEL, () => undefined)
+    FakeWorker.all[0].post({ kind: 'gpuLost', message: WEBGPU_LOST_MESSAGE })
+    deleteModelAllInfoInCache.mockClear()
+
+    await createProvider(MODEL).recover!()
+
+    expect(FakeEngine.all.map((engine) => engine.options.appConfig.cacheBackend)).toEqual(['cache', 'cache'])
+    expect(deleteModelAllInfoInCache).not.toHaveBeenCalled()
   })
 
   it('forgets the loss once the model is loaded again', async () => {

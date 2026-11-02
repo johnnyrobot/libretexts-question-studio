@@ -53,6 +53,10 @@ export interface GenerationPlan {
   // Whether OpenAI also checks answer keys (see verifyAnswerKey), at one or
   // more extra calls per question. The in-browser model always does.
   answerCheck?: boolean
+  // Where a run stopped by a lost GPU left off, when it is tried again: how
+  // many of its questions were finished (written or left out), and how many
+  // the set held when it started, which the question types cycle from.
+  resume?: { done: number; firstType: number }
 }
 
 export interface GenerationResult {
@@ -201,7 +205,7 @@ export async function runGeneration(
   const existing = await db.items.where('setId').equals(setId).sortBy('position')
   const stems = existing.map((item) => item.draft.stem)
   let position = existing.length
-  let done = 0
+  let done = plan.resume?.done ?? 0
   let created = 0
   let skipped = 0
   const errors: string[] = []
@@ -213,7 +217,7 @@ export async function runGeneration(
       for (let k = 0; k < count; k++) errors.push(message(error))
     }
   }
-  callbacks.onProgress(0, total)
+  callbacks.onProgress(done, total)
 
   // The duplicate check is a convenience: if it cannot load, questions are
   // still written, just not checked.
@@ -232,25 +236,18 @@ export async function runGeneration(
   }
 
   // A lost GPU takes the model with it, so every later step would fail too.
-  // The model is loaded again once a run and the interrupted step tried again;
-  // after that a loss ends the run, keeping the questions written. The
-  // duplicate check's model was on the same GPU and is not loaded again.
-  let reloaded = false
-  const reloadAfter = async (error: unknown): Promise<boolean> => {
-    if (!(error instanceof GpuLost)) return false
-    if (reloaded || !provider.recover) throw error
-    reloaded = true
+  // The model is loaded again from the browser's storage and the interrupted
+  // step tried again, once per step: concepts for a section, or a question. A
+  // loss while that step is tried again ends the run, keeping the questions
+  // written. The duplicate check's model was on the same GPU and is not loaded
+  // again.
+  const recovery = gpuRecovery(provider, callbacks, () => {
     duplicates = null
-    callbacks.onStatus('The GPU stopped responding. Loading the model again…')
-    await provider.recover((progress) => callbacks.onModelEvent?.({ kind: 'status', message: progress.text })).catch(() => {
-      throw error
-    })
-    return true
-  }
+  })
 
   // Types are assigned up front so each section's concept prompt knows how
   // many calculation questions it has to supply.
-  let typeCursor = existing.length
+  let typeCursor = plan.resume?.firstType ?? existing.length
   const slotTypes = units.map((u) => Array.from({ length: u.count }, () => plan.itemTypes[typeCursor++ % plan.itemTypes.length]))
 
   // Each section's concepts are extracted once, when first needed.
@@ -306,25 +303,30 @@ export async function runGeneration(
     return best
   }
 
+  // Questions a stopped run finished are not written again.
+  let finished = done
   for (const [index, current] of units.entries()) {
-    if (!current.count) continue
+    const first = Math.min(finished, current.count)
+    finished -= first
+    if (first === current.count) continue
     signal.throwIfAborted()
     const finding = `Finding concepts in “${current.unit.pageTitle}”…`
     let concepts: Concept[]
     try {
       concepts = await conceptsOf(index, finding).catch(async (error: unknown) => {
-        if (signal.aborted || !(await reloadAfter(error))) throw error
+        if (signal.aborted || !(await recovery.reloadAfter(error))) throw error
         return conceptsOf(index, finding)
       })
+      recovery.stepDone()
     } catch (error) {
       if (signal.aborted || error instanceof GpuLost) throw error
-      leaveOut(error, current.count)
-      done += current.count
+      leaveOut(error, current.count - first)
+      done += current.count - first
       callbacks.onProgress(done, total)
       continue
     }
 
-    for (let j = 0; j < current.count; ) {
+    for (let j = first; j < current.count; ) {
       signal.throwIfAborted()
       let concept = concepts[j % concepts.length]
       let itemType = slotTypes[index][j]
@@ -379,14 +381,44 @@ export async function runGeneration(
       } catch (error) {
         if (signal.aborted) throw error
         // The same question is written again on the reloaded model.
-        if (await reloadAfter(error)) continue
+        if (await recovery.reloadAfter(error)) continue
         leaveOut(error, 1)
       }
+      recovery.stepDone()
       callbacks.onProgress(++done, total)
       j++
     }
   }
   return { created, skipped, errors }
+}
+
+export const GPU_RESTARTING = 'The graphics processor was reset by another app. Restarting the model…'
+
+// Loads the model again after a lost GPU, at most once per step: reloadAfter
+// says whether to try the step again, and rethrows a loss it cannot recover
+// from; stepDone gives the next step its own reload.
+function gpuRecovery(
+  provider: LLMProvider,
+  callbacks: Pick<GenerationCallbacks, 'onStatus' | 'onModelEvent'>,
+  onReload: () => void = () => {},
+) {
+  let reloaded = false
+  return {
+    async reloadAfter(error: unknown): Promise<boolean> {
+      if (!(error instanceof GpuLost)) return false
+      if (reloaded || !provider.recover) throw error
+      reloaded = true
+      onReload()
+      callbacks.onStatus(GPU_RESTARTING)
+      await provider.recover((progress) => callbacks.onModelEvent?.({ kind: 'status', message: progress.text })).catch(() => {
+        throw error
+      })
+      return true
+    },
+    stepDone() {
+      reloaded = false
+    },
+  }
 }
 
 // What a question is checked with once drafted. A set keeps its run's choice
@@ -485,15 +517,18 @@ export async function writeNewVersion(
   const others = (await db.items.where('setId').equals(item.setId).sortBy('position')).filter((other) => other.id !== item.id)
   const avoid = others.filter((other) => other.position < item.position).map((other) => other.draft.stem).slice(-12)
   const textbook = new WordIndex(source.pages.flatMap((page) => page.paragraphs.map((p) => p.text)))
-  const written = await writeQuestion(
-    provider,
-    unit,
-    concept,
-    item.draft.item_type,
-    { avoid, checks, textbook, notes: [] },
-    signal,
-    { onItem: () => {}, onProgress: () => {}, ...callbacks },
-  )
+  // As in a set run, a lost GPU gets one reload and the question one more try.
+  const recovery = gpuRecovery(provider, callbacks)
+  const write = () =>
+    writeQuestion(provider, unit, concept, item.draft.item_type, { avoid, checks, textbook, notes: [] }, signal, {
+      onItem: () => {},
+      onProgress: () => {},
+      ...callbacks,
+    })
+  const written = await write().catch(async (error: unknown) => {
+    if (signal.aborted || !(await recovery.reloadAfter(error))) throw error
+    return write()
+  })
   let critique = written.critique
   // The set's engine decides the note on its other matching questions.
   if (provider.id === 'local' && written.draft.item_type === 'matching') critique = [...critique, MATCHING_IN_BROWSER_NOTE]

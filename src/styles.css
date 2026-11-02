@@ -923,6 +923,12 @@ button.danger-link {
   margin: 0;
 }
 
+.banner-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+}
+
 .error {
   border-left-color: var(--danger);
   background: var(--danger-soft);

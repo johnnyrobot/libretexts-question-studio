@@ -25,7 +25,7 @@ import {
 import { unlessGenerating, webLocks } from '../lib/storage/set-locks'
 import { discardNewVersion, keepNewVersion } from '../lib/storage/versions'
 import { createEmbedder, createProvider, useEngineSettings } from '../state/engine'
-import { cancelGeneration, markInterruptedOnceReleased, NEW_VERSION_READY, startNewVersion, useGeneration } from '../state/generation'
+import { cancelGeneration, markInterruptedOnceReleased, NEW_VERSION_READY, retryGeneration, startNewVersion, useGeneration } from '../state/generation'
 import { navigate, pageLinkFor } from '../router'
 
 // A set has two destinations: reviewing its questions (#/set/<id>) and
@@ -69,6 +69,7 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
   // in it (shown on that question's card).
   const running = generation.running && generation.setId === set.id && !generation.itemId
   const rewriting = generation.running && generation.setId === set.id && !!generation.itemId
+  const retryable = !generation.running && generation.setId === set.id && generation.retryable
   // Still marked generating though this tab isn't writing it: another tab is,
   // as a set left so by a closed tab is marked interrupted when the app opens.
   // This tab's own run keeps its setId once over, until the status arrives.
@@ -141,16 +142,24 @@ function Review({ set, items, source }: { set: StoredSet; items: StoredItem[]; s
       {!running && set.error && (
         <div className={`${set.status === 'failed' ? 'error' : 'notice'} dismissible`}>
           <p role="status">{set.error}</p>
-          <button
-            type="button"
-            className="link"
-            onClick={async () => {
-              await db.sets.update(set.id, { error: null })
-              focusMain()
-            }}
-          >
-            Dismiss
-          </button>
+          <div className="banner-actions">
+            {/* A run a lost GPU stopped, from where it stopped. */}
+            {retryable && (
+              <button type="button" onClick={() => void retryGeneration(set.id)}>
+                Try again
+              </button>
+            )}
+            <button
+              type="button"
+              className="link"
+              onClick={async () => {
+                await db.sets.update(set.id, { error: null })
+                focusMain()
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
