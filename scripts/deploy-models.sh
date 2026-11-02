@@ -76,17 +76,19 @@ echo "== Build $BUILD, staged in $STAGE"
 (cd "$STAGE" && shasum -a 256 -c --quiet "$SUMS") || { echo "Staged files do not match SHA256SUMS." >&2; exit 1; }
 for name in MODEL.md SHA256SUMS; do cmp -s "$STAGE/$name" "$REPO/models/$BUILD/$name" || { echo "$STAGE/$name differs from the repo's." >&2; exit 1; }; done
 FILES=$(awk '{print $2}' "$SUMS"; printf 'MODEL.md\nSHA256SUMS\n')
-BYTES=$(cd "$STAGE" && echo "$FILES" | xargs stat -f %z | awk '{s+=$1} END {print s}')
+# "<bytes>  <name>" per file; wc -c rather than stat, whose flags differ between macOS and Linux.
+SIZES=$(cd "$STAGE" && echo "$FILES" | while read -r name; do printf '%s  %s\n' "$(wc -c < "$name" | tr -d ' ')" "$name"; done)
+BYTES=$(echo "$SIZES" | awk '{s+=$1} END {print s}')
 echo "All $(awk 'END {print NR}' "$SUMS") pinned files match. To upload: $(echo "$FILES" | awk 'END {print NR}') files, $BYTES bytes."
 
 echo "== Server ($HOST)"
 remote "df -B1 --output=avail,target /opt/libretexts | tail -1" | awk -v need="$BYTES" '{printf "Free on %s: %d bytes (%.1f GB); the upload needs %.1f GB.\n", $2, $1, $1/1e9, need/1e9; if ($1 < need * 1.2) {print "Not enough room (wants 20% to spare)."; exit 1}}'
-if remote "test -e $REMOTE_ROOT/$BUILD"; then
+# Asked as a printed answer, so a failed ssh stops the script instead of reading as "not there".
+ALREADY=$(remote "if test -e $REMOTE_ROOT/$BUILD; then echo 1; else echo 0; fi")
+if [ "$ALREADY" = 1 ]; then
   echo "$REMOTE_ROOT/$BUILD is already there; builds are never replaced."
-  ALREADY=1
 else
   echo "$REMOTE_ROOT/$BUILD is not there yet."
-  ALREADY=0
 fi
 CURRENT=$(mktemp) EDITED=$(mktemp)
 remote "cat $CADDYFILE" > "$CURRENT"
@@ -101,7 +103,7 @@ fi
 
 if [ "$DRY_RUN" = 1 ]; then
   echo "== Would upload to $HOST:$REMOTE_ROOT/$BUILD/"
-  (cd "$STAGE" && echo "$FILES" | xargs stat -f '%z  %N')
+  echo "$SIZES"
   if [ "$CADDY_DONE" = 0 ]; then
     echo "== Would change $CADDYFILE (backup first, caddy validate, then reload):"
     diff -u --label "$CADDYFILE" --label "$CADDYFILE (changed)" "$CURRENT" "$EDITED" || true
@@ -124,7 +126,7 @@ if [ "$CADDY_DONE" = 0 ]; then
   remote "cat > /tmp/Caddyfile.models" < "$EDITED"
   # Installed only if the server's file is still the one the change was made from.
   remote "echo '$(shasum -a 256 < "$CURRENT" | cut -d' ' -f1)  $CADDYFILE' | sha256sum -c --quiet \
-    && caddy validate --adapter caddyfile --config /tmp/Caddyfile.models \
+    && sudo caddy validate --adapter caddyfile --config /tmp/Caddyfile.models \
     && sudo cp -p $CADDYFILE $BACKUP && sudo cp /tmp/Caddyfile.models $CADDYFILE && sudo systemctl reload caddy"
   echo "Caddy reloaded. Backup: $BACKUP"
 fi

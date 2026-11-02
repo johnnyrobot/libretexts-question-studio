@@ -14,7 +14,7 @@ import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.abspath(os.path.expanduser(sys.argv[1])) if len(sys.argv) > 1 else sys.exit(__doc__)
-ORIGINS = {'http://localhost:5173', 'http://localhost:4173'}
+ORIGINS = {f'http://{host}:{port}' for host in ('localhost', '127.0.0.1') for port in (5173, 4173)}
 
 
 class Handler(SimpleHTTPRequestHandler):

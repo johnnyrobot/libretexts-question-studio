@@ -125,8 +125,8 @@ function LocalSettings() {
     try {
       await active.loadLocalModel(modelId, setProgress)
       setInfo({ modelId, cached: true, bytes: status?.bytes ?? null })
-      const freed = await freeReplacedModel(model).catch(() => null)
-      if (freed) setFreed(freed)
+      const freedLabel = await freeReplacedModel(model).catch(() => null)
+      if (freedLabel) setFreed(freedLabel)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
