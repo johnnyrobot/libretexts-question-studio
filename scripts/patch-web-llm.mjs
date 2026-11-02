@@ -4,7 +4,7 @@
 // unloaded or the page reloads (LT-242).
 // WebLLM 0.2.86 fixes it, but needs model libraries built for it, so npm
 // install applies the same fix to 0.2.85.
-import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 
@@ -40,6 +40,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
   // latin1 keeps every byte (the bundle mixes line endings) as it is.
   const source = readFileSync(file, 'latin1')
   const patched = patchWebLlm(source)
-  if (patched !== source) writeFileSync(file, patched, 'latin1')
+  if (patched !== source) {
+    // Write beside it and rename, so a stopped install can't leave half a bundle.
+    writeFileSync(`${file}.lt242`, patched, 'latin1')
+    renameSync(`${file}.lt242`, file)
+  }
   console.log(`patch-web-llm: ${patched === source ? 'already patched' : 'patched'} ${file}`)
 }
