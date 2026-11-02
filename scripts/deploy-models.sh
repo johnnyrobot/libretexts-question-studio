@@ -85,6 +85,7 @@ echo "== Server ($HOST)"
 remote "df -B1 --output=avail,target /opt/libretexts | tail -1" | awk -v need="$BYTES" '{printf "Free on %s: %d bytes (%.1f GB); the upload needs %.1f GB.\n", $2, $1, $1/1e9, need/1e9; if ($1 < need * 1.2) {print "Not enough room (wants 20% to spare)."; exit 1}}'
 # Asked as a printed answer, so a failed ssh stops the script instead of reading as "not there".
 ALREADY=$(remote "if test -e $REMOTE_ROOT/$BUILD; then echo 1; else echo 0; fi")
+case "$ALREADY" in 0 | 1) ;; *) echo "Unexpected answer from the server: $ALREADY" >&2; exit 1 ;; esac
 if [ "$ALREADY" = 1 ]; then
   echo "$REMOTE_ROOT/$BUILD is already there; builds are never replaced."
 else
