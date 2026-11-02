@@ -26,11 +26,11 @@ const FIXED = `                // Keep only the last chunk's logits; endScope fr
 /** Returns WebLLM's bundle with the chunked-prefill leak fixed. */
 export function patchWebLlm(source) {
   if (source.includes(FIXED)) return source
-  const at = source.indexOf(LEAKY)
-  if (at < 0 || source.indexOf(LEAKY, at + 1) >= 0) {
+  const leakyAt = source.indexOf(LEAKY)
+  if (leakyAt < 0 || source.indexOf(LEAKY, leakyAt + 1) >= 0) {
     throw new Error('patch-web-llm: WebLLM’s chunked-prefill loop is not the 0.2.85 one; check LT-242 before upgrading.')
   }
-  return source.slice(0, at) + FIXED + source.slice(at + LEAKY.length)
+  return source.slice(0, leakyAt) + FIXED + source.slice(leakyAt + LEAKY.length)
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

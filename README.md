@@ -55,15 +55,18 @@ history, backup and restore, the question editor, the OpenAI answer-check
 setting, links that open the app on a LibreTexts page, and a second tab
 leaving a set alone while another tab is still writing it, then marking it
 interrupted if that tab closes first, and Delete everything refusing while any
-set is being written.
+set is being written, and that the installed WebLLM has the prefill patch
+(see below).
 
-`npm install` and `npm run build` also patch WebLLM 0.2.85 (`scripts/patch-web-llm.mjs`): as
-released it keeps about 121 MB of GPU memory for every 1,024-token prefill
-chunk past the first of each prompt, until the page reloads (LT-242). WebLLM
-0.2.86 fixes this but needs model libraries built for it, so the version is
-pinned. The script refuses a WebLLM it doesn't recognise, and a test checks that
-the installed copy has the fix. To upgrade WebLLM, check whether the new version
-still needs the patch and remove the script if it doesn't.
+`npm install` and `npm run build` also patch WebLLM 0.2.85
+(`scripts/patch-web-llm.mjs`). As released it keeps about 121 MB of GPU memory
+for every 1,024-token prefill chunk past the first of each prompt, until the
+model is unloaded or the page reloads (LT-242). WebLLM 0.2.86 fixes this but
+needs model libraries built for it, so the version is pinned. The script
+refuses a WebLLM it doesn't recognise. With npm scripts turned off
+(`--ignore-scripts`), run `node scripts/patch-web-llm.mjs` yourself and delete
+`node_modules/.vite` so the dev server picks it up. To upgrade WebLLM, check
+whether the new version still needs the patch and remove the script if not.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint, the tests and the build,
 but not the ADAPT importer check below; run that one locally.

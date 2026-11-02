@@ -156,7 +156,9 @@ Memory (macOS `footprint` of the test Chrome's processes, sampled every
 - First load: the GPU process holds 7.6 GB once the model is loaded; the
   whole browser peaked at 11.2 GB during the load.
 - In use, before LT-242: the GPU process grew with every long prompt and
-  came back only when the page was reloaded. The ship gate's one 32.9 GB
+  came back only when the page was reloaded: 7.6 to 12.7 GB over one
+  6-question set in the app. The page's JavaScript heap stayed flat (about
+  32 MB); the growth was WebGPU buffers. The ship gate's one 32.9 GB
   sample was this growth after 76 minutes in one tab. The cause was a leak in
   WebLLM 0.2.85: it kept the logits of every 1,024-token prefill chunk but
   the last, 121 MB each on this model. The app now applies WebLLM 0.2.86's
