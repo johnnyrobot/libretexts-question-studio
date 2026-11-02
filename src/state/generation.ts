@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import {
+  GPU_RESTARTING,
   runGeneration,
   writeNewVersion,
   type GenerationPlan,
@@ -107,7 +108,7 @@ async function runSet(
     const firstType = plan.resume?.firstType ?? (await db.items.where('setId').equals(setId).count())
     try {
       if (restart) {
-        update({ status: 'Restarting the model…' })
+        update({ status: GPU_RESTARTING })
         await provider.recover?.(showLoadProgress)
       }
       const result = await runGeneration(setId, source, plan, provider, signal, {
@@ -116,9 +117,11 @@ async function runSet(
         onProgress: (done, total) => update({ done, total }),
         onModelEvent: showModelEvent,
       }, embedder)
+      // Counting the questions the stopped run wrote, when this one tries it again.
+      const outcome = { ...result, created: state.written }
       await db.sets.update(setId, {
-        status: result.created === 0 && (result.skipped || result.errors.length) ? 'failed' : 'complete',
-        error: resultError(result),
+        status: outcome.created === 0 && (outcome.skipped || outcome.errors.length) ? 'failed' : 'complete',
+        error: resultError(outcome),
         updatedAt: Date.now(),
       })
       update({ running: false, status: `Done — ${state.written} question(s) written.` })
@@ -219,7 +222,8 @@ function failureMessage(error: unknown, written: number): string {
 
 // A run loads the model again once for each step a lost GPU interrupts
 // (pipeline.ts), and so does a new version, so by now it is the instructor's
-// turn: a run they can try again from where it stopped (retryGeneration).
+// turn: a run they can try again from where it stopped (retryGeneration),
+// a new version they can ask for again.
 function gpuLostMessage(written: number): string {
   const kept = written ? ' The questions written so far were kept.' : ''
   return `The graphics processor stopped responding, so writing stopped.${kept} Close other apps or tabs that use it heavily, then try again.`

@@ -1647,6 +1647,31 @@ describe('a lost GPU', () => {
     expect(await db.items.where('setId').equals('set-1').count()).toBe(1)
   })
 
+  it('gives the next section its own reload when a section left out after one', async () => {
+    const provider = inBrowser()
+    const original = provider.complete.bind(provider)
+    const twoPages: StoredSource = {
+      ...source,
+      pages: [source.pages[0], { title: 'Respiration', url: null, pageId: '2', paragraphs: [{ index: 0, text: 'Cells release energy from glucose.', start: 0, end: 34 }] }],
+    }
+    // Each section's concepts lose the GPU once; the first section's then never parse.
+    const lost = new Set<string>()
+    provider.complete = (request) => {
+      if (request.schemaName !== 'concept_batch') return original(request)
+      const page = request.prompt.includes('glucose') ? 'Respiration' : 'Photosynthesis'
+      if (!lost.has(page)) {
+        lost.add(page)
+        return completeWithRetries(request, async () => {
+          throw new Error(DEVICE_LOST_ERROR)
+        })
+      }
+      return page === 'Photosynthesis' ? completeWithRetries(request, async () => ({ text: '{"oops":', usage: null })) : original(request)
+    }
+    const result = await runGeneration('set-1', twoPages, plan, provider, new AbortController().signal, callbacks)
+    expect(provider.recover).toHaveBeenCalledTimes(2)
+    expect(result.created).toBe(1)
+  })
+
   it('ends the run at a second loss, keeping the questions written', async () => {
     const provider = inBrowser()
     // Once the first question is in, the GPU fails every time.

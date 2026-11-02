@@ -116,10 +116,11 @@ describe('retryGeneration', () => {
   void _
 
   // Writes essay questions on the in-browser engine; once one is written, the
-  // GPU is lost on every call until the test fixes it.
+  // GPU is lost on every call until the test fixes it. Garbled, the fixed
+  // model's questions never parse.
   function flakyGpu() {
     let written = 0
-    const gpu = { fixed: false }
+    const gpu = { fixed: false, garbled: false }
     const provider: LLMProvider = {
       id: 'local',
       model: 'fake',
@@ -131,6 +132,7 @@ describe('retryGeneration', () => {
             return { text: JSON.stringify({ concepts: [concept] }), usage: null }
           }
           if (written && !gpu.fixed) throw new Error(DEVICE_LOST_ERROR)
+          if (gpu.garbled) return { text: '{"oops":', usage: null }
           written++
           return { text: JSON.stringify({ ...essay, citation_paragraphs: [0] }), usage: null }
         }),
@@ -151,6 +153,15 @@ describe('retryGeneration', () => {
     expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
     const items = await db.items.where('setId').equals('set-1').sortBy('position')
     expect(items.map((item) => item.position)).toEqual([0, 1, 2])
+  })
+
+  it('counts the questions the stopped run wrote when the rest cannot be written', async () => {
+    const { provider, gpu } = flakyGpu()
+    await startGeneration('set-1', source, { itemTypes: ['essay'], perPage: 3, reviewPass: false }, provider)
+    Object.assign(gpu, { fixed: true, garbled: true })
+    await retryGeneration('set-1')
+    // Not "No questions could be written": the first run's question is there.
+    expect(await db.sets.get('set-1')).toMatchObject({ status: 'complete', error: null })
   })
 
   it('has nothing to try again after a run that ended another way', async () => {

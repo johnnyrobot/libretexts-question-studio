@@ -317,13 +317,14 @@ export async function runGeneration(
         if (signal.aborted || !(await recovery.reloadAfter(error))) throw error
         return conceptsOf(index, finding)
       })
-      recovery.stepDone()
     } catch (error) {
       if (signal.aborted || error instanceof GpuLost) throw error
       leaveOut(error, current.count - first)
       done += current.count - first
       callbacks.onProgress(done, total)
       continue
+    } finally {
+      recovery.stepDone()
     }
 
     for (let j = first; j < current.count; ) {
