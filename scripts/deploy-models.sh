@@ -34,7 +34,7 @@ case "$BUILD" in *[!a-z0-9._-]* | .*) echo "Not a build name: $BUILD" >&2; exit 
 
 SOCKET=$(mktemp -u "${TMPDIR:-/tmp}/deploy-models.XXXXXX")
 ssh -o ControlMaster=yes -o ControlPath="$SOCKET" -o ControlPersist=600 -fN "$HOST"
-trap 'ssh -o ControlPath="$SOCKET" -O exit "$HOST" 2>/dev/null || true; rm -f "${CURRENT:-}" "${EDITED:-}"' EXIT
+trap 'ssh -o ControlPath="$SOCKET" -O exit "$HOST" 2>/dev/null || true; rm -f "${CURRENT:-}" "${EDITED:-}" "${HEADERS:-}" "${BODY:-}"' EXIT
 remote() { ssh -o ControlPath="$SOCKET" "$HOST" "$@"; }
 
 # The Caddy change: /models/* is left out of the app's no-cache rule and
@@ -133,4 +133,10 @@ if [ "$CADDY_DONE" = 0 ]; then
 fi
 
 echo "== Check"
-curl -sfI "https://qtistudio.libretexts.dev/models/$BUILD/resolve/main/mlc-chat-config.json" | grep -i -E '^(HTTP|cache-control|access-control-allow-origin|content-length)'
+URL=https://qtistudio.libretexts.dev/models/$BUILD/resolve/main/mlc-chat-config.json
+HEADERS=$(mktemp) BODY=$(mktemp)
+curl -sf -D "$HEADERS" -o "$BODY" -H 'Origin: https://qtistudio.libretexts.dev' "$URL"
+grep -i -E '^(HTTP|cache-control|access-control-allow-origin|content-length)' "$HEADERS"
+cmp -s "$BODY" "$STAGE/mlc-chat-config.json" || { echo "The served mlc-chat-config.json is not the staged one." >&2; exit 1; }
+grep -qi '^cache-control: public, max-age=31536000, immutable' "$HEADERS" || { echo "The model files are not served with the immutable header." >&2; exit 1; }
+echo "Served, the same as staged, with the immutable header."

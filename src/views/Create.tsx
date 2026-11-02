@@ -599,7 +599,7 @@ function Configure({ source }: { source: StoredSource }) {
             <div role="status">
               {warnMatching && (
                 <p id="matching-note" className="notice">
-                  In testing, about 2 in 5 matching questions from Gemma 4 E4B, the default in-browser model, had a wrong answer
+                  In testing, about 2 in 5 matching questions from Gemma 4 E4B had a wrong answer
                   key. On the OpenAI engine, GPT-6 Luna wrote them much better.
                 </p>
               )}

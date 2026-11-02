@@ -13,12 +13,14 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 // Its own file because both in-browser runtimes are stand-ins here: each keeps
-// its downloaded models in `downloaded`, as the browser's cache would.
+// its downloaded models in `downloaded`, as the browser's cache would, and the
+// files of a download that stopped part way in `partial`.
 const TUNED_9B = 'qwen35-9b-ftds-q4f16_1-v1'
 const GEMMA = 'onnx-community/gemma-4-E4B-it-ONNX:q4f16'
 
-const { downloaded, failLoad, fakeRuntime } = vi.hoisted(() => {
+const { downloaded, partial, failLoad, fakeRuntime } = vi.hoisted(() => {
   const downloaded = new Set<string>()
+  const partial = new Set<string>()
   const failLoad = { value: false }
   const fakeRuntime = async () => {
     const { setLoadedLocalModel } = await import('../lib/llm/local-models')
@@ -32,14 +34,17 @@ const { downloaded, failLoad, fakeRuntime } = vi.hoisted(() => {
         setLoadedLocalModel(id, () => undefined)
       },
       unloadLocalModel: () => setLoadedLocalModel(null),
-      deleteCachedModel: async (id: string) => void downloaded.delete(id),
+      async deleteCachedModel(id: string) {
+        downloaded.delete(id)
+        partial.delete(id)
+      },
       createProvider: () => {
         throw new Error('not used')
       },
       embedder: { isCached: async () => true, downloadBytes: async () => null },
     }
   }
-  return { downloaded, failLoad, fakeRuntime }
+  return { downloaded, partial, failLoad, fakeRuntime }
 })
 vi.mock('../lib/llm/local', fakeRuntime)
 vi.mock('../lib/llm/transformers', fakeRuntime)
@@ -47,6 +52,7 @@ vi.mock('../lib/llm/transformers', fakeRuntime)
 let cleanup: (() => void) | null = null
 beforeEach(async () => {
   downloaded.clear()
+  partial.clear()
   failLoad.value = false
   await db.settings.clear()
   vi.stubGlobal('navigator', {
@@ -94,6 +100,17 @@ describe('a teacher who had Gemma 4 E4B', () => {
 
     expect([...downloaded]).toEqual([TUNED_9B])
     expect(view.container.textContent).toContain('Gemma 4 E4B’s downloaded files were deleted to free disk space.')
+  })
+
+  it('also frees what a stopped Gemma download left behind', async () => {
+    partial.add(GEMMA)
+    const view = await render()
+
+    await act(async () => view.button('Download and load')!.click())
+    await settle()
+
+    expect([...partial]).toEqual([])
+    expect([...downloaded]).toEqual([TUNED_9B])
   })
 
   it('keeps Gemma’s files when the tuned 9B does not load', async () => {

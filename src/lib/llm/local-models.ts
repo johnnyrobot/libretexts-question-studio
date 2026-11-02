@@ -104,17 +104,18 @@ export function localRuntime(model: LocalModel): Promise<LocalRuntime> {
 }
 
 // Deletes the downloaded files of the model `model` replaces, both builds,
-// and returns its label if there were any. Call it only once `model` has
-// loaded, so a failed download never leaves a teacher with neither.
+// and returns its label if either was fully downloaded. Every build is
+// deleted, since a download that stopped part way still left files. Call it
+// only once `model` has loaded, so a failed download never leaves a teacher
+// with neither.
 export async function freeReplacedModel(model: LocalModel): Promise<string | null> {
   if (!model.replaces) return null
   const replaced = localModel(model.replaces)
   const runtime = await localRuntime(replaced)
   const builds = [...new Set([replaced.build(true), replaced.build(false)])]
   const cached = await Promise.all(builds.map((build) => runtime.isModelCached(build).catch(() => false)))
-  const freed = builds.filter((_, i) => cached[i])
-  for (const build of freed) await runtime.deleteCachedModel(build)
-  return freed.length ? replaced.label : null
+  for (const build of builds) await runtime.deleteCachedModel(build)
+  return cached.includes(true) ? replaced.label : null
 }
 
 export interface GpuSupport {
