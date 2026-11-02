@@ -642,7 +642,7 @@ describe('ticking Matching on Choose the questions', () => {
   })
 
   it('warns on the in-browser Qwen3.5 4B too', async () => {
-    await saveEngineSettings({ localModel: 'qwen3.5-4b' })
+    await saveEngineSettings({ pickedLocalModel: 'qwen3.5-4b' })
     const view = await openConfigure()
     await view.tick('Matching')
     expect(view.note()).toBe(WARNING)

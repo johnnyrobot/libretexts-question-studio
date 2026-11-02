@@ -14,9 +14,8 @@ import {
   type ResolvedUrl,
 } from '../lib/content/sources'
 import { ITEM_TYPE_LABELS, ITEM_TYPES, type ItemType } from '../lib/generation/schema'
-import { localModel } from '../lib/llm/local-models'
 import { db, newId, type StoredSource } from '../lib/storage/db'
-import { createEmbedder, createProvider, useEngineSettings } from '../state/engine'
+import { chosenLocalModel, createEmbedder, createProvider, useEngineSettings } from '../state/engine'
 import { startGeneration, useGeneration } from '../state/generation'
 import { bookLinkFor, navigate, pageLinkFor } from '../router'
 
@@ -624,7 +623,7 @@ function Configure({ source }: { source: StoredSource }) {
         <div className="action-bar">
           <p className="muted">
             About {calls} model calls with{' '}
-            {engine.provider === 'openai' ? `OpenAI ${engine.openaiModel}` : localModel(engine.localModel).label}
+            {engine.provider === 'openai' ? `OpenAI ${engine.openaiModel}` : chosenLocalModel(engine).label}
             {engine.provider === 'local' && total > 30 && '. Large sets take a long time in the browser.'}
           </p>
           <button type="button" className="primary" disabled={types.length === 0 || generation.running} onClick={start}>

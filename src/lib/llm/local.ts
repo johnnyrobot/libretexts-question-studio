@@ -16,18 +16,46 @@ import {
   type CompletionUsage,
   type LLMProvider,
 } from './types'
-import { loadedLocalModel, setLoadedLocalModel, unloadAnyLocalModel, type LoadProgress } from './local-models'
+import { loadedLocalModel, localModel, setLoadedLocalModel, unloadAnyLocalModel, type LoadProgress } from './local-models'
 import type { GpuLostMessage } from './local.worker'
 
-// In-browser generation with WebLLM (WebGPU), for Qwen3.5 4B. Qwen3.5 is
-// Apache-2.0, ships prebuilt for WebLLM, and its hybrid attention keeps an 8K
+// In-browser generation with WebLLM (WebGPU), for Qwen3.5: the tuned 9B and
+// the stock 4B. Qwen3.5 is Apache-2.0 and its hybrid attention keeps an 8K
 // context cheap.
-// Weights download once from Hugging Face into the Cache API and are reused.
-// This module is ~6 MB with WebLLM, so it is only loaded on demand.
+// Weights download once into the Cache API and are reused: the 4B from Hugging
+// Face, the tuned 9B from this site. This module is ~6 MB with WebLLM, so it
+// is only loaded on demand.
 
 const CONTEXT_WINDOW = 8192
 
-export const appConfig: AppConfig = { ...prebuiltAppConfig, cacheBackend: 'cache' }
+// Where this site serves its own model builds, one folder per build that never
+// changes (scripts/deploy-models.sh). Development points it at a local mirror
+// (scripts/serve-models.py) with VITE_MODEL_BASE.
+const MODEL_BASE = new URL(import.meta.env.VITE_MODEL_BASE ?? '/models/', globalThis.location?.href ?? 'http://localhost/')
+
+// Qwen3.5 9B with the LT-207 LoRA merged in, built with MLC as q4f16_1 on
+// WebLLM's stock 9B GPU code. The hashes pin the files that decide what runs;
+// models/<build>/SHA256SUMS pins every file.
+const TUNED_9B = localModel('qwen3.5-9b-ftds').build(true)
+const tuned9B = {
+  model: new URL(TUNED_9B, MODEL_BASE).href,
+  model_id: TUNED_9B,
+  model_lib: new URL(`${TUNED_9B}/Qwen3.5-9B-q4f16_1_cs1k-webgpu.wasm`, MODEL_BASE).href,
+  vram_required_MB: 6433.01,
+  low_resource_required: false,
+  required_features: ['shader-f16'],
+  integrity: {
+    config: 'sha256-ermWxbWrIF7YJto8OUo3MRceMa4nfljW3DVbQn//+yY=',
+    model_lib: 'sha256-MBTB2JWAg+32IRRVlqbXqDIXiu8q7+SKDb3hbTj3yFc=',
+    tokenizer: { 'tokenizer.json': 'sha256-X55NSQGpK5l+RjwfRgVQiLbMpcphplItG59kxLuBy0I=' },
+  },
+}
+
+export const appConfig: AppConfig = {
+  ...prebuiltAppConfig,
+  model_list: [...prebuiltAppConfig.model_list, tuned9B],
+  cacheBackend: 'cache',
+}
 
 export function gpuMemoryMB(modelId: string): number | null {
   return appConfig.model_list.find((m) => m.model_id === modelId)?.vram_required_MB ?? null

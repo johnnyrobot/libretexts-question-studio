@@ -11,7 +11,7 @@ browser.
   - Close the tab and come back: nothing has to be regenerated.
 - **LibreTexts only.** Find a book from the full LibreTexts catalog, paste any LibreTexts page, chapter or book URL, or paste text copied from a page. Then pick whole chapters, sections or single pages.
 - **Two AI engines:**
-  - **In-browser** (default): Gemma 4 E4B on WebGPU via Transformers.js (one-time 4.9 GB download), or Qwen3.5 4B via WebLLM (2.4 GB). Free and private, and the text never leaves the device.
+  - **In-browser** (default): Qwen3.5 9B tuned for writing questions, on WebGPU via WebLLM (one-time 5.1 GB download from this site; needs a GPU with 16-bit shader support), or Gemma 4 E4B via Transformers.js (4.9 GB, the default where 16-bit shaders are missing), or Qwen3.5 4B via WebLLM (2.4 GB). Free and private, and the text never leaves the device. Once the tuned 9B has loaded, Gemma 4 E4B's downloaded files are deleted, so the browser keeps one 5 GB model.
   - **OpenAI, bring your own key:** GPT-6 Luna (or GPT-5.6 Luna) at high reasoning effort, called directly from the browser.
 - **ADAPT-ready export.**
   - The export is Canvas-style QTI 1.2, the only QTI format ADAPT's Bulk Import accepts, checked against ADAPT's own PHP parser. It also imports into Canvas.
@@ -68,6 +68,23 @@ npm install --prefix /tmp/php-wasm @php-wasm/node   # once, ~470 MB
 PHP_WASM_DIR=/tmp/php-wasm npm run verify:adapt
 ```
 
+The tuned Qwen3.5 9B comes from this site's `/models/<build>/` folder, not
+Hugging Face, so in development it needs a local copy of that folder. The
+weights stay outside git; `models/<build>/` holds only the build's `MODEL.md`
+(what it is, how it was made, its licence) and `SHA256SUMS`.
+
+```bash
+python3 -I scripts/stage-model.py qwen35-9b-ftds-q4f16_1-v1 ~/model-stage <source folder>...
+python3 -I scripts/serve-models.py ~/model-stage     # http://localhost:8790/models/
+VITE_MODEL_BASE=http://localhost:8790/models/ npm run dev
+```
+
+`stage-model.py` copies each file `SHA256SUMS` names from the source folders
+and checks its hash. `serve-models.py` serves the staged builds with the same
+caching and CORS headers as the site. On a `localhost` model address WebLLM
+fetches the 6.5 MB model library again on every load (it never caches it
+there); use `http://127.0.0.1:8790/models/` to see the site's behaviour.
+
 ## How it is put together
 
 ```
@@ -83,6 +100,8 @@ src/lib/storage/     Dexie (IndexedDB) schema, encrypted API-key storage
 src/state/           engine settings, background generation runner
 src/views/           Create, Library, Set review, Settings
 tests/adapt-parser/  harness that runs ADAPT's QtiImport.php on our packages
+models/<build>/      MODEL.md and SHA256SUMS of the site's own model builds (no weights)
+scripts/             stage, serve locally, and upload those builds
 ```
 
 **Pipeline.**
@@ -121,17 +140,20 @@ serves static files over HTTPS. Serve it from the root of a site: the built
 pages load all their files from there.
 
 - **Public site:** https://qtistudio.libretexts.dev, static files in `/opt/libretexts/qtistudio/` on the libretexts.dev VPS, served by Caddy. `/assets/*` is cached for a year and everything else is `no-cache`, so a new service worker and catalog reach users. Redeploy with `npm run build && rsync -a --delete dist/ <vps>:/opt/libretexts/qtistudio/`; Caddy needs no reload. Browsers keep downloaded models per site, so the first visit downloads the model again even if it was loaded on localhost.
+- **Model builds:** the tuned Qwen3.5 9B is served from `/models/<build>/` on the same site, from `/opt/libretexts/qtistudio-models/` (outside the app's folder, so the app's `rsync --delete` leaves it alone). Caddy maps WebLLM's `<build>/resolve/main/<file>` requests onto the folder and serves its files with `Cache-Control: public, max-age=31536000, immutable`. A build's folder never changes; a new build gets a new name and a new app release. `scripts/deploy-models.sh <build> <stage root>` uploads one: by default it is a dry run that only reads the server (free space, whether the build is there, the Caddy change it would make) and uploads nothing. The real run (`DRY_RUN=0 DEPLOY_YES=1`) uploads to a `.partial` folder, checks every hash on the server, renames it, adds the `/models/` handle to Caddy the first time (backup, `caddy validate`, reload), and checks the headers. Upload the weights before the app release that uses them.
 
 - **Network access** (used directly from the browser):
   - `api.libretexts.org`: book trees and page text, through the public `cross-library` read proxy.
-  - `huggingface.co` and `*.hf.co`: model weights (Gemma 4, EmbeddingGemma 2, Qwen3.5). ONNX Runtime's WebAssembly is served with the app.
-  - `raw.githubusercontent.com`: WebLLM model libraries.
+  - `huggingface.co` and `*.hf.co`: model weights (Gemma 4, EmbeddingGemma 2, Qwen3.5 4B). ONNX Runtime's WebAssembly is served with the app, and the tuned Qwen3.5 9B with its model library from the site's own `/models/`.
+  - `raw.githubusercontent.com`: WebLLM model libraries for Qwen3.5 4B.
   - `api.openai.com`: only when a key is used.
 - **Content Security Policy:** if you set one, it needs `connect-src` for the hosts above, plus `'wasm-unsafe-eval'` in `script-src` for WebGPU/WASM.
 - **libretexts.org hosting:** hosting on a `*.libretexts.org` subdomain also lets the browser call LibreTexts Commons directly, if live search is wanted later.
 - **Catalog freshness:** `public/catalog.json` is a snapshot, and `npm run build` does not refresh it. Run `npm run catalog` before a build to pick up new books.
 
 ## Question quality
+
+These measurements are from before the tuned Qwen3.5 9B: "the default" below is Gemma 4 E4B, the default until then. The tuned 9B was measured against it on a separate pool; see its [MODEL.md](models/qwen35-9b-ftds-q4f16_1-v1/MODEL.md).
 
 The test set is 22 textbook pages kept out of all prompt tuning and training: 2 pages from each of 11 books in 11 subjects. Each model was asked for 8 questions per page, rotating through the 8 types that have an answer key, with the review on; a question a model could not finish is left out, so each wrote fewer than 176. A math or numerical question needs numbers or a formula from the page: where a run found none, it wrote multiple choice instead. All three Gemma 4 E4B runs also had the answer check, done by the default model in each; GPT-6 Luna's run did not. The default model's and GPT-6 Luna's runs used the app as it was on 2026-10-10, before its newer checks (see **What the numbers cover**). Claude graded all the questions blind against one rubric, with the three models' questions shuffled together; the current-checks run was graded the same way in a later, second round, shuffled together with the default model's 2026-10-10 questions (see **The newer checks made no clear difference**). No LibreTexts instructor has checked Claude's grades; a planned instructor check of a random 20% was not done. Each question gets one verdict:
 
@@ -172,8 +194,9 @@ Claude graded the questions in two rounds, and the second round graded higher: t
 
 ## Known limits
 
-- The in-browser models need WebGPU: recent desktop Chrome or Edge, Safari 26, or Firefox on Windows / Apple Silicon. Phones are not supported. Gemma 4 E4B has only been tested in desktop Chrome on Apple Silicon; Qwen3.5 4B is the fallback.
-- Gemma 4 E4B in the browser writes weaker distractors and more wrong answer keys than GPT-6 Luna (see [Question quality](#question-quality)); Qwen3.5 4B has not been measured. Every question is a draft until an instructor approves it.
+- The in-browser models need WebGPU: recent desktop Chrome or Edge, Safari 26, or Firefox on Windows / Apple Silicon. Phones are not supported. The tuned Qwen3.5 9B and Gemma 4 E4B have only been tested in desktop Chrome on Apple Silicon. The tuned 9B needs a GPU with 16-bit shader support (`shader-f16`; Firefox has none): without it the app defaults to Gemma 4 E4B and shows the 9B greyed out. Qwen3.5 4B is the fallback.
+- The tuned Qwen3.5 9B writes a question in about a minute on an Apple Silicon Mac, slower than Gemma 4 E4B. While it writes, the browser's GPU memory grows (about 0.7 GB a minute in testing) and falls back when the page is reloaded; on a long run with little memory, reload between sets.
+- Gemma 4 E4B in the browser writes weaker distractors and more wrong answer keys than GPT-6 Luna (see [Question quality](#question-quality)); Qwen3.5 4B has not been measured. The tuned Qwen3.5 9B was measured on a separate pool against Gemma 4 E4B (usable 79% vs 65% with a DeepSeek judge, 62% vs 51% with Claude; wrong keys 8% vs 9% and 5% vs 9%); see its [MODEL.md](models/qwen35-9b-ftds-q4f16_1-v1/MODEL.md). Every question is a draft until an instructor approves it.
 - Another app can make the graphics processor reset, which takes the in-browser model with it. The app then loads the model again from the browser's storage, with no new download, and tries the interrupted step once more, keeping the questions already written. If the same step is interrupted again, writing stops and the set offers **Try again**, which writes the questions still missing. Try again lasts until the page is reloaded or another run starts.
 - Images and figures are not used as question material. Image alt text is kept as text.
 - ADAPT grades fill-in-the-blank against a single answer by exact match, ignoring case (alternates are honoured by Canvas only). The app asks for answers in plain words. With the answer check, it also blanks another word when the check fills the blank differently. Questions where it cannot are noted. ADAPT ignores feedback on several types.
