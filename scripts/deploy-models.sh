@@ -135,7 +135,7 @@ fi
 echo "== Check"
 URL=https://qtistudio.libretexts.dev/models/$BUILD/resolve/main/mlc-chat-config.json
 HEADERS=$(mktemp) BODY=$(mktemp)
-curl -sf -D "$HEADERS" -o "$BODY" -H 'Origin: https://qtistudio.libretexts.dev' "$URL"
+curl -sSf -D "$HEADERS" -o "$BODY" -H 'Origin: https://qtistudio.libretexts.dev' "$URL"
 grep -i -E '^(HTTP|cache-control|access-control-allow-origin|content-length)' "$HEADERS"
 cmp -s "$BODY" "$STAGE/mlc-chat-config.json" || { echo "The served mlc-chat-config.json is not the staged one." >&2; exit 1; }
 grep -qi '^cache-control: public, max-age=31536000, immutable' "$HEADERS" || { echo "The model files are not served with the immutable header." >&2; exit 1; }

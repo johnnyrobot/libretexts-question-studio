@@ -111,6 +111,7 @@ describe('a teacher who had Gemma 4 E4B', () => {
 
     expect([...partial]).toEqual([])
     expect([...downloaded]).toEqual([TUNED_9B])
+    expect(view.container.textContent).not.toContain('downloaded files were deleted')
   })
 
   it('keeps Gemma’s files when the tuned 9B does not load', async () => {
